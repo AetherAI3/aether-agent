@@ -9,7 +9,8 @@ import { defaultTokenStore } from "./core/auth.js";
 import { ApiClient } from "./core/transport.js";
 import type { AppContext, GlobalFlags } from "./core/context.js";
 import { cmdChat } from "./commands/chat.js";
-import { cmdLogin, cmdLogout } from "./commands/login.js";
+import { cmdLogin, cmdLogout, type LoginOpts } from "./commands/login.js";
+import { cmdAuth } from "./commands/auth.js";
 import { cmdModels, cmdAgents } from "./commands/models.js";
 import { cmdRun } from "./commands/run.js";
 import { cmdReceipt } from "./commands/receipt.js";
@@ -29,9 +30,9 @@ Usage:
   aether run <neo|kronus> "<task>"   Stream an orchestrator run
   aether models [use <id>]     List models + orchestrators / set default
   aether agents                List orchestrators (Neo / Kronus)
-  aether login                 Authorize via aethersystems.net (paste token)
-       [--token t | --username u --password p | --no-browser]
-  aether logout                Log out + clear stored token
+  aether auth login            Authorize via browser (or --with-token / --token)
+  aether auth status           Show login state    aether auth token   Print token
+  aether auth refresh          Refresh a session   aether auth logout  Log out
   aether audit [limit]         Recent audit chain-of-custody trail
   aether receipt <order_id>    Export the proof package for an audit entry
   aether config [show|get <k>|set <k> <v>]
@@ -56,6 +57,7 @@ async function main(argv: string[]): Promise<number> {
       username: { type: "string" },
       password: { type: "string" },
       "license-key": { type: "string" },
+      "with-token": { type: "boolean", default: false },
       "no-browser": { type: "boolean", default: false },
       json: { type: "boolean", default: false },
       audit: { type: "boolean", default: false },
@@ -88,18 +90,23 @@ async function main(argv: string[]): Promise<number> {
   };
   const ctx: AppContext = { cfg, api, tokens, flags };
 
+  const loginOpts: LoginOpts = {
+    token: sf(values["token"]),
+    username: sf(values["username"]),
+    password: sf(values["password"]),
+    licenseKey: sf(values["license-key"]),
+    withToken: Boolean(values["with-token"]),
+    noBrowser: Boolean(values["no-browser"]),
+  };
+
   const rest = positionals.slice(1);
   switch (cmd) {
     case undefined:
       return cmdChat(ctx, "");
+    case "auth":
+      return cmdAuth(ctx, rest, loginOpts);
     case "login":
-      return cmdLogin(ctx, {
-        token: sf(values["token"]),
-        username: sf(values["username"]),
-        password: sf(values["password"]),
-        licenseKey: sf(values["license-key"]),
-        noBrowser: Boolean(values["no-browser"]),
-      });
+      return cmdLogin(ctx, loginOpts);
     case "logout":
       return cmdLogout(ctx);
     case "audit":

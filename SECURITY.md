@@ -39,6 +39,6 @@ Out of scope here (report to Aether AI directly, same address):
 ## Good hygiene for users
 
 - Never commit a token. `.env` and `.aether-token` are git-ignored by default.
-- Rotate your CLI token at [aethersystems.net/account](https://aethersystems.net/account)
-  if you suspect it leaked, then `aether logout` and `aether login` again.
+- Rotate your CLI token at [aethersystems.net/platform](https://aethersystems.net/platform)
+  if you suspect it leaked, then `aether auth logout` and `aether auth login` again.
 - Prefer `aether login` (browser) over pasting long-lived tokens into scripts.

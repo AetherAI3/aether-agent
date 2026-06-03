@@ -16,9 +16,10 @@ export const LOGIN_PATH = "/auth/login";
 export const LOGOUT_PATH = "/auth/logout";
 export const VERIFY_PATH = "/auth/verify";
 export const REFRESH_PATH = "/auth/refresh";
-// Account page where you sign in and copy your CLI token. `aether login` opens
-// this; override with AETHER_LOGIN_URL.
-export const LOGIN_URL = process.env["AETHER_LOGIN_URL"] ?? "https://aethersystems.net/account";
+// OAuth / account platform: `aether auth login` opens this to sign in and mint
+// or copy a CLI API token. Override with AETHER_LOGIN_URL.
+export const PLATFORM_URL =
+  process.env["AETHER_LOGIN_URL"] ?? "https://aethersystems.net/platform";
 // request audit (chain of custody) (integrity id = commitment_hash).
 export const AUDIT_TRAIL_PATH = "/audit/trail/live"; // entries carry commitment_hash
 export const EXPORT_PROOF_PATH = "/audit/export-proof"; // {entry_ids} -> proof package

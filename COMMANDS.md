@@ -63,18 +63,27 @@ aether models use sonnet
 ### `aether agents`
 Lists only the orchestrators (Neo / Kronus), filtered from the same catalog.
 
-### `aether login [flags]`
-Authorize with your Aether account.
+### `aether auth <subcommand>` (GitHub-`gh`-style)
+One credential for the CLI, desktop, and web. `aether login` / `aether logout`
+are aliases for `auth login` / `auth logout`.
+
+| Subcommand | Does |
+|---|---|
+| `aether auth login` | Default: open `aethersystems.net/platform`, paste the CLI token. |
+| `aether auth logout` | Clear the stored credential (best-effort server notify). |
+| `aether auth status` | Show login state: token type (API token `aek_` vs session), masked token, base URL, tier. |
+| `aether auth token` | Print the stored token (for scripts / CI). |
+| `aether auth refresh` | Refresh a session token (API tokens don't expire). |
+
+`auth login` flags:
 | Flag | Meaning |
 |---|---|
-| *(none)* | Open `aethersystems.net/account`, then paste your CLI token. |
-| `--token <t>` | Store a token directly (no browser). |
+| *(none)* | Browser OAuth: open the platform, paste the token. |
+| `--with-token` | Read the token from **stdin** (`aether auth login --with-token < token.txt`). |
+| `--token <t>` | Store a token directly. |
 | `--username <u> --password <p>` | Headless credential login. |
 | `--license-key <k>` | Supply a license key alongside credentials. |
 | `--no-browser` | Print the URL instead of opening a browser. |
-
-### `aether logout`
-Clears your stored token (and best-effort notifies the server).
 
 ### `aether audit [limit]`
 Lists recent chain-of-custody entries for your account (default 50). Each row:
@@ -131,7 +140,7 @@ aether config set autoApply true
 | Var | Default | Meaning |
 |---|---|---|
 | `AETHER_BASE_URL` | `https://api.aethersystems.net` | Aether API base URL. |
-| `AETHER_LOGIN_URL` | `https://aethersystems.net/account` | Page `aether login` opens. |
+| `AETHER_LOGIN_URL` | `https://aethersystems.net/platform` | Page `aether auth login` opens. |
 | `AETHER_TOKEN` | *(unset)* | Inject a session token (CI / headless / embedding). |
 | `AETHER_CONFIG_DIR` | `~/.config/aether` | Config + token directory. |
 

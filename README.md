@@ -67,17 +67,48 @@ The model list, your plan tier, and what you're allowed to run all come from one
 - 🧩 **Embeddable core** — the same client that powers this CLI is a library (`createClient`), so the desktop app and the web chat route through the *exact* same path.
 - 🪶 **Light + boring to install** — a single Node binary, `npm i -g aether-code`, no native deps.
 
-## One login
+## Install
+
+```bash
+# npm — any platform
+npm install -g aether-code
+
+# macOS / Linux / WSL
+curl -fsSL https://aethersystems.net/install.sh | sh
+
+# Windows — PowerShell
+irm https://aethersystems.net/install.ps1 | iex
+
+# run without installing
+npx aether-code
+```
+
+Aether Code needs **Node.js ≥ 20**. The installers just verify Node and run the
+npm global install — no native deps, no daemon, no background service.
+
+## Sign in
 
 Aether Code requires an Aether account — it's the gate in front of the model fleet.
 
 ```bash
-aether login
-# → opens https://aethersystems.net/account in your browser
-# → sign in, copy your CLI token, paste it back into the terminal
+aether auth login
+# → opens aethersystems.net/platform in your browser
+# → sign in, create a CLI token, paste it back into the terminal
 ```
 
-The token is stored locally (`~/.config/aether/`, `chmod 600`) and sent as a Bearer credential on every request. Manage your plan, usage, and tokens at **[aethersystems.net/account](https://aethersystems.net/account)**. Headless? `aether login --token <t>` or set `AETHER_TOKEN` in the environment.
+The token is stored locally (`~/.config/aether/`, `chmod 600`) and sent as a Bearer
+credential on every request. Manage your plan, usage, and tokens at
+**[aethersystems.net/platform](https://aethersystems.net/platform)**.
+
+```bash
+aether auth status     # who you are, which token, what tier
+aether auth token      # print the token (for scripts / CI)
+aether auth refresh    # refresh a session token
+aether auth logout     # sign out
+```
+
+Headless / CI: `aether auth login --with-token < token.txt`,
+`aether auth login --token <t>`, or set `AETHER_TOKEN`.
 
 > No account yet? Create one at [aethersystems.net](https://aethersystems.net). The free tier gets you Haiku + a couple of fast models; paid tiers unlock Opus, the premium models, and the orchestrators.
 
@@ -92,7 +123,8 @@ The handful you'll actually reach for — full reference in [`COMMANDS.md`](COMM
 | `aether run neo "<task>"` | Hand a multi-step task to an orchestrator (Neo / Kronus). |
 | `aether models` | List every model + orchestrator you can use (🔒 = locked on your tier). |
 | `aether models use <id>` | Set your default model. |
-| `aether login` / `aether logout` | Authorize via aethersystems.net / clear your token. |
+| `aether auth login` / `logout` | Authorize via aethersystems.net/platform / sign out. |
+| `aether auth status` / `token` | Show login state / print the token for scripts. |
 | `aether audit [n]` | Recent chain-of-custody receipts for your account. |
 | `aether receipt <id>` | Export the cryptographic proof package for one entry. |
 | `aether config` | Show or edit local settings (default model, permission mode). |
@@ -110,7 +142,7 @@ The handful you'll actually reach for — full reference in [`COMMANDS.md`](COMM
 
 ```bash
 npm i -g aether-code        # or: npx aether-code
-aether login               # authorize via aethersystems.net
+aether auth login          # authorize via aethersystems.net/platform
 aether "refactor src/auth.ts to use async/await and add tests"
 ```
 
