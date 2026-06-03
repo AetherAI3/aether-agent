@@ -20,6 +20,11 @@ export const REFRESH_PATH = "/auth/refresh";
 // or copy a CLI API token. Override with AETHER_LOGIN_URL.
 export const PLATFORM_URL =
   process.env["AETHER_LOGIN_URL"] ?? "https://aethersystems.net/platform";
+// Device Authorization Grant (RFC 8628) — `aether auth login` default flow.
+export const DEVICE_CODE_PATH = "/auth/device/code"; // CLI requests a user_code
+export const DEVICE_TOKEN_PATH = "/auth/device/token"; // CLI polls until approved
+// API-key management (locked contract): GET/POST/DELETE.
+export const API_KEYS_PATH = "/account/api-keys";
 // request audit (chain of custody) (integrity id = commitment_hash).
 export const AUDIT_TRAIL_PATH = "/audit/trail/live"; // entries carry commitment_hash
 export const EXPORT_PROOF_PATH = "/audit/export-proof"; // {entry_ids} -> proof package

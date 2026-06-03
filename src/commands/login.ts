@@ -11,7 +11,8 @@ import { spawn } from "node:child_process";
 import { stdin, stdout } from "node:process";
 import type { AppContext } from "../core/context.js";
 import { loginWithPassword } from "../core/auth.js";
-import { PLATFORM_URL, LOGOUT_PATH } from "../core/transport.js";
+import { LOGOUT_PATH } from "../core/transport.js";
+import { requestDeviceCode, pollForToken } from "../core/device.js";
 
 export interface LoginOpts {
   token?: string;
@@ -57,20 +58,32 @@ export async function cmdLogin(ctx: AppContext, opts: LoginOpts): Promise<number
       return 1;
     }
   }
-  // 4. Default: browser OAuth. Open the platform, paste the token back.
-  process.stdout.write(
-    `Authorize Aether at:\n  ${PLATFORM_URL}\n` +
-      "Sign in, create a CLI token, and paste it below.\n\n",
-  );
-  if (!opts.noBrowser) openBrowser(PLATFORM_URL);
-  const token = await promptHidden("paste token: ");
-  if (!token) {
-    process.stderr.write("no token entered\n");
-    return 2;
+  // 4. Default: device authorization grant through the portal (RFC 8628).
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+  let code;
+  try {
+    code = await requestDeviceCode(ctx.api);
+  } catch (err) {
+    process.stderr.write(
+      `✗ could not start login: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    return 1;
   }
-  await ctx.tokens.set(token);
-  process.stdout.write("Logged in.\n");
-  return 0;
+  process.stdout.write(
+    `\nTo sign in, open:\n  ${code.verification_uri}\n` +
+      `and enter the code:\n\n    ${code.user_code}\n\n`,
+  );
+  if (!opts.noBrowser) openBrowser(code.verification_uri_complete);
+  process.stdout.write("Waiting for approval in your browser…\n");
+  try {
+    const token = await pollForToken(ctx.api, code, sleep);
+    await ctx.tokens.set(token);
+    process.stdout.write("✓ Logged in.\n");
+    return 0;
+  } catch (err) {
+    process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
 }
 
 export async function cmdLogout(ctx: AppContext): Promise<number> {
