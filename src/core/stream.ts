@@ -18,6 +18,10 @@ export type StreamFrame =
   | { type: "usage"; uvt: number; cents: number }
   | { type: "done"; uvt: number; cents: number; inputTokens?: number; outputTokens?: number }
   | { type: "error"; msg: string; errorCode?: string; refId?: string }
+  // The server-signed chain-of-custody for this turn (commitment + attestation).
+  // The server signs but never stores it — the client decides whether to persist
+  // (the CLI logs it locally; a web client may show-then-discard).
+  | { type: "custody"; custody: Record<string, unknown> }
   // orchestrator-only (/project/stream)
   | { type: "connected" }
   | { type: "progress"; text?: string }
@@ -57,6 +61,11 @@ export function normalizeFrame(obj: Record<string, unknown>): StreamFrame | null
         msg: String(obj["msg"] ?? obj["message"] ?? ""),
         errorCode: strOrUndef(obj["error_code"] ?? obj["errorCode"]),
         refId: strOrUndef(obj["ref_id"] ?? obj["refId"]),
+      };
+    case "custody":
+      return {
+        type: "custody",
+        custody: (obj["custody"] as Record<string, unknown>) ?? {},
       };
     case "connected":
       return { type: "connected" };

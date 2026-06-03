@@ -24,6 +24,17 @@ test("normalizeFrame error uses contract keys msg/error_code/ref_id", () => {
   assert.deepEqual(f, { type: "error", msg: "boom", errorCode: "E42", refId: "r1" });
 });
 
+test("normalizeFrame surfaces the custody frame (client decides to save)", () => {
+  const custody = {
+    protocol: "custody-1",
+    order_id: "chat_abc",
+    commitment: { record: {}, signature: { ed25519: "deadbeef" } },
+    attestation: { record: {}, env_hash: "f00d" },
+  };
+  const f = normalizeFrame({ type: "custody", custody });
+  assert.deepEqual(f, { type: "custody", custody });
+});
+
 test("normalizeFrame supports ping/reasoning/open liveness frames", () => {
   assert.deepEqual(normalizeFrame({ type: "ping" }), { type: "ping" });
   assert.deepEqual(normalizeFrame({ type: "open" }), { type: "open" });

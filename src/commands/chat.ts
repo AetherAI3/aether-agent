@@ -9,6 +9,7 @@ import { CHAT_STREAM_PATH, CHAT_PATH } from "../core/transport.js";
 import { decodeSse } from "../core/stream.js";
 import { Renderer } from "../core/render.js";
 import { StreamUnavailableError } from "../core/errors.js";
+import { appendCustody } from "../core/custody.js";
 import { handleSlash } from "./slash.js";
 
 // the Aether API ChatResponse: { response, commitment_hash, verified, threat_level }.
@@ -29,7 +30,12 @@ export async function runTurn(ctx: AppContext, prompt: string): Promise<void> {
   const renderer = new Renderer({ json: ctx.flags.json, audit: ctx.flags.audit });
   try {
     const stream = await ctx.api.stream(CHAT_STREAM_PATH, req);
-    for await (const frame of decodeSse(stream)) renderer.frame(frame);
+    for await (const frame of decodeSse(stream)) {
+      // The server signs each turn and returns it; persist the signed receipt
+      // locally (best-effort, never breaks the chat).
+      if (frame.type === "custody") appendCustody(frame.custody);
+      renderer.frame(frame);
+    }
   } catch (err) {
     if (err instanceof StreamUnavailableError) {
       // Contract fail-soft: fall back to the non-streaming request/response.

@@ -71,6 +71,12 @@ export class Renderer {
       case "project_done":
         this.out.write(`\n✓ project done\n`);
         break;
+      case "custody": {
+        // Persistence happens in the chat loop; here we only confirm receipt.
+        const orderId = String(f.custody["order_id"] ?? "");
+        this.err.write(`  ⛓ signed · ${orderId.slice(0, 8)}\n`);
+        break;
+      }
       case "done":
         this.done(f);
         break;
