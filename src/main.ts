@@ -1,0 +1,130 @@
+#!/usr/bin/env node
+// Aether Code — CLI entry. Parses global flags, builds the AppContext, and
+// dispatches to a command. The CLI is the front door; all enforcement (UVT)
+// and signing (Aether audit) happen server-side on Aether's servers.
+
+import { parseArgs } from "node:util";
+import { loadConfig } from "./core/config.js";
+import { defaultTokenStore } from "./core/auth.js";
+import { ApiClient } from "./core/transport.js";
+import type { AppContext, GlobalFlags } from "./core/context.js";
+import { cmdChat } from "./commands/chat.js";
+import { cmdLogin, cmdLogout } from "./commands/login.js";
+import { cmdModels, cmdAgents } from "./commands/models.js";
+import { cmdRun } from "./commands/run.js";
+import { cmdReceipt } from "./commands/receipt.js";
+import { cmdAudit } from "./commands/audit.js";
+import { cmdConfig } from "./commands/config.js";
+
+const VERSION = "0.0.1";
+
+/** Coerce a parsed flag value to string | undefined. */
+const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+
+const HELP = `Aether Code — an open-source coding agent for your terminal.
+
+Usage:
+  aether                       Start an interactive coding REPL
+  aether "<prompt>"            One-shot coding turn
+  aether run <neo|kronus> "<task>"   Stream an orchestrator run
+  aether models [use <id>]     List models + orchestrators / set default
+  aether agents                List orchestrators (Neo / Kronus)
+  aether login                 Authorize via aethersystems.net (paste token)
+       [--token t | --username u --password p | --no-browser]
+  aether logout                Log out + clear stored token
+  aether audit [limit]         Recent audit chain-of-custody trail
+  aether receipt <order_id>    Export the proof package for an audit entry
+  aether config [show|get <k>|set <k> <v>]
+
+Global flags:
+  --model <id>   Force a model     --agent <id>   Force an orchestrator
+  --cwd <dir>    Workspace dir      --json         Emit raw frames as JSON
+  --audit        Show signature     -y, --yes      Auto-confirm prompts
+  -h, --help     This help          -v, --version  Print version
+`;
+
+async function main(argv: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    strict: false,
+    options: {
+      model: { type: "string" },
+      agent: { type: "string" },
+      cwd: { type: "string" },
+      token: { type: "string" },
+      username: { type: "string" },
+      password: { type: "string" },
+      "license-key": { type: "string" },
+      "no-browser": { type: "boolean", default: false },
+      json: { type: "boolean", default: false },
+      audit: { type: "boolean", default: false },
+      yes: { type: "boolean", short: "y", default: false },
+      help: { type: "boolean", short: "h", default: false },
+      version: { type: "boolean", short: "v", default: false },
+    },
+  });
+
+  if (values["version"]) {
+    process.stdout.write(VERSION + "\n");
+    return 0;
+  }
+  const cmd = positionals[0];
+  if (values["help"] || cmd === "help") {
+    process.stdout.write(HELP);
+    return 0;
+  }
+
+  const cfg = loadConfig();
+  const tokens = defaultTokenStore();
+  const api = new ApiClient(cfg.baseUrl, tokens);
+  const flags: GlobalFlags = {
+    model: typeof values["model"] === "string" ? values["model"] : undefined,
+    agent: typeof values["agent"] === "string" ? values["agent"] : undefined,
+    json: Boolean(values["json"]),
+    audit: Boolean(values["audit"]),
+    yes: Boolean(values["yes"]),
+    cwd: typeof values["cwd"] === "string" ? (values["cwd"] as string) : process.cwd(),
+  };
+  const ctx: AppContext = { cfg, api, tokens, flags };
+
+  const rest = positionals.slice(1);
+  switch (cmd) {
+    case undefined:
+      return cmdChat(ctx, "");
+    case "login":
+      return cmdLogin(ctx, {
+        token: sf(values["token"]),
+        username: sf(values["username"]),
+        password: sf(values["password"]),
+        licenseKey: sf(values["license-key"]),
+        noBrowser: Boolean(values["no-browser"]),
+      });
+    case "logout":
+      return cmdLogout(ctx);
+    case "audit":
+      return cmdAudit(ctx, rest);
+    case "models":
+      return cmdModels(ctx, rest);
+    case "agents":
+      return cmdAgents(ctx);
+    case "run":
+      return cmdRun(ctx, rest[0] ?? "", rest.slice(1).join(" "));
+    case "receipt":
+      return cmdReceipt(ctx, rest[0] ?? "");
+    case "config":
+      return cmdConfig(ctx, rest);
+    case "chat":
+      return cmdChat(ctx, rest.join(" "));
+    default:
+      // Bare prompt: `aether "fix the bug"` — cmd is the first prompt word.
+      return cmdChat(ctx, [cmd, ...rest].join(" "));
+  }
+}
+
+main(process.argv.slice(2))
+  .then((code) => process.exit(code))
+  .catch((err) => {
+    process.stderr.write(`\n✗ ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  });

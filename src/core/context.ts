@@ -1,0 +1,27 @@
+// AppContext — assembled once in main, threaded to every command.
+
+import type { AetherConfig } from "../types.js";
+import type { ApiClient } from "./transport.js";
+import type { TokenStore } from "./auth.js";
+
+export interface GlobalFlags {
+  /** Forced model id (--model). */
+  model?: string;
+  /** Orchestrator agent id (--agent / `run <agent>`). */
+  agent?: string;
+  /** Emit raw frames as JSON lines (--json). */
+  json: boolean;
+  /** Show audit signature inline (--audit). */
+  audit: boolean;
+  /** Auto-confirm prompts (--yes). */
+  yes: boolean;
+  /** Working directory for the coding workspace (--cwd). */
+  cwd: string;
+}
+
+export interface AppContext {
+  cfg: AetherConfig;
+  api: ApiClient;
+  tokens: TokenStore;
+  flags: GlobalFlags;
+}

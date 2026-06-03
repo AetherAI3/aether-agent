@@ -1,0 +1,61 @@
+{
+  "name": "aether-code",
+  "version": "0.1.0",
+  "description": "An open-source coding agent for your terminal — every Aether model and orchestrator in any repo, signed in with your Aether account.",
+  "type": "module",
+  "bin": {
+    "aether": "dist/src/main.js",
+    "aether-code": "dist/src/main.js"
+  },
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "COMMANDS.md",
+    "LICENSE",
+    "NOTICE.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node --experimental-strip-types src/main.ts",
+    "start": "node dist/src/main.js",
+    "test": "npm run build && node --test dist/test/",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "keywords": [
+    "aether",
+    "coding-agent",
+    "cli",
+    "llm",
+    "ai",
+    "terminal",
+    "agent",
+    "neo",
+    "kronus"
+  ],
+  "license": "Apache-2.0",
+  "author": "Brandon Barrante (Aether AI)",
+  "homepage": "https://aethersystems.net",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DBarr3/aether-code"
+  },
+  "bugs": {
+    "url": "https://github.com/DBarr3/aether-code/issues"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  }
+}

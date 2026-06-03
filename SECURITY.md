@@ -1,0 +1,44 @@
+# Security Policy
+
+## Reporting a vulnerability
+
+**Please do not open a public issue for security reports.**
+
+Email **security@aethersystems.net** with:
+
+- a description of the issue and its impact,
+- steps to reproduce (a proof of concept if you have one),
+- the affected version / commit.
+
+We aim to acknowledge within 3 business days and to keep you updated through
+remediation. Coordinated disclosure is appreciated — give us a reasonable window
+to ship a fix before going public, and we'll credit you (if you want) in the
+release notes.
+
+## Scope
+
+This repository is the **Aether Code client**. In scope:
+
+- the CLI and the embeddable library in this repo,
+- local handling of tokens, config, and file edits,
+- anything that could leak a credential or write outside the workspace.
+
+Out of scope here (report to Aether AI directly, same address):
+
+- the hosted Aether API, models, billing, or account platform,
+- denial-of-service against the hosted service,
+- findings that require a malicious server you control.
+
+## What the client guarantees
+
+- Tokens are stored locally with `0600` permissions and never logged.
+- File edits are path-guarded to the working directory.
+- Only the prompt and the context you send leave your machine; there is no
+  background upload of your repository.
+
+## Good hygiene for users
+
+- Never commit a token. `.env` and `.aether-token` are git-ignored by default.
+- Rotate your CLI token at [aethersystems.net/account](https://aethersystems.net/account)
+  if you suspect it leaked, then `aether logout` and `aether login` again.
+- Prefer `aether login` (browser) over pasting long-lived tokens into scripts.
