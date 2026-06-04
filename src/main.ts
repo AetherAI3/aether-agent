@@ -54,6 +54,12 @@ aether code flags:
   --quiet        Plain output (strip the personality frames)
   --interactive  Pause at each stage boundary to type a steer (TTY only)
   --no-log       Disable the local session log (~/.aether-code/logs)
+  --swarm <N>    N-agent swarm (gated; local-only; see docs/SWARM_PLAN.md)
+
+Local model tiers (--model, via Ollama):
+  light        gemma4:e4b        runs where a 30B won't (Google sampling)
+  strong-local qwen3-coder:30b   default depth · qwen3-coder-next for ~16 GB
+  (profiles in the brain set per-model sampling + tool-call handling)
 `;
 
 async function main(argv: string[]): Promise<number> {
@@ -84,6 +90,7 @@ async function main(argv: string[]): Promise<number> {
       quiet: { type: "boolean", default: false },
       interactive: { type: "boolean", default: false },
       "no-log": { type: "boolean", default: false },
+      swarm: { type: "string" },
     },
   });
 
@@ -150,6 +157,7 @@ async function main(argv: string[]): Promise<number> {
         quiet: Boolean(values["quiet"]),
         interactive: Boolean(values["interactive"]),
         noLog: Boolean(values["no-log"]),
+        swarm: Number(sf(values["swarm"]) ?? "1") || 1,
       });
     case "chat":
       return cmdChat(ctx, rest.join(" "));

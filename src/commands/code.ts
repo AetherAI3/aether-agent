@@ -33,6 +33,8 @@ export interface CodeOpts {
   interactive?: boolean;
   /** Disable the local session log. */
   noLog?: boolean;
+  /** Number of swarm workers (gated — see the swarm guard below). */
+  swarm?: number;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -41,6 +43,20 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   if (!task.trim()) {
     process.stderr.write('✗ nothing to do — try: aether code "fix the failing tests"\n');
     return 1;
+  }
+  // Swarm is GATED on purpose. The brainstorm sequences it last: "never swarm an
+  // unproven loop — you'd multiply the failure." It is also LOCAL-ONLY (the cloud
+  // path has its own orchestration). The runtime is specified in docs/SWARM_PLAN.md
+  // and is built only after single-agent emission is proven (TESTING_HANDOFF §8).
+  if ((opts.swarm ?? 1) > 1) {
+    process.stderr.write(
+      "✗ --swarm is gated.\n" +
+        "  N-agent swarms multiply the #1 risk (tool-call emission fraying). Prove the\n" +
+        "  single-agent loop first — run TESTING_HANDOFF.md §8 and confirm late-third\n" +
+        "  emission holds. The runtime + build order live in docs/SWARM_PLAN.md.\n" +
+        "  Swarm is also local-only; it will require --local when enabled.\n",
+    );
+    return 2;
   }
   const cwd = ctx.flags.cwd;
   const poolGb = opts.pool > 0 ? opts.pool : 5;

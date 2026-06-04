@@ -14,7 +14,8 @@ import {
 } from "../src/core/brain_protocol.js";
 import { ToolExecutor } from "../src/core/tool_executor.js";
 import { EventQueue, type Brain, type TaskCommand } from "../src/core/brain.js";
-import { hostLoop } from "../src/commands/code.js";
+import { hostLoop, cmdCode } from "../src/commands/code.js";
+import type { AppContext } from "../src/core/context.js";
 
 // The fixture is a source asset (not compiled); resolve it from the repo root.
 // Compiled location is dist/test/bridge.test.js -> ../.. = repo root.
@@ -255,6 +256,27 @@ test("every fixture event decodes to its declared type", () => {
   for (const cmd of fx.commands) {
     const wire = JSON.parse(encodeCommand(cmd));
     assert.equal(wire.type, cmd.type);
+  }
+});
+
+// --- swarm is gated (never swarm an unproven loop) -------------------------
+test("--swarm > 1 is refused with exit 2 and never spawns a brain", async () => {
+  const ctx = {
+    cfg: {},
+    api: {},
+    tokens: {},
+    flags: { json: false, audit: false, yes: false, cwd: process.cwd() },
+  } as unknown as AppContext;
+  const orig = process.stderr.write.bind(process.stderr);
+  let captured = "";
+  process.stderr.write = ((s: string) => ((captured += s), true)) as typeof process.stderr.write;
+  try {
+    const code = await cmdCode(ctx, "fix all the things", { local: true, pool: 5, quiet: true, swarm: 4 });
+    assert.equal(code, 2);
+    assert.match(captured, /--swarm is gated/);
+    assert.match(captured, /SWARM_PLAN\.md/);
+  } finally {
+    process.stderr.write = orig;
   }
 });
 
