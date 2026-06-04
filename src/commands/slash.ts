@@ -18,6 +18,7 @@ import type { AppContext } from "../core/context.js";
 import type { CatalogItem, CatalogResponse } from "../types.js";
 import { MODELS_PATH } from "../core/transport.js";
 import { fetchTrail } from "../core/audit.js";
+import { isApiToken } from "./auth.js";
 
 export interface SlashResult {
   exit: boolean;
@@ -83,6 +84,12 @@ export async function handleSlash(
     case "audit":
       await showAudit(ctx, out, arg);
       break;
+    case "doctor":
+      await doctor(ctx, out);
+      break;
+    case "mcp":
+      out.write("MCP servers — coming soon. Aether Code will manage MCP tools here.\n");
+      break;
     case "clear":
       out.write("\x1b[2J\x1b[H");
       break;
@@ -101,11 +108,30 @@ function printHelp(out: Writable): void {
       "/agent <n|id>      switch orchestrator",
       "/tier              plan tier + default",
       "/audit [n]         recent Aether audit trail",
+      "/doctor            diagnose your setup",
+      "/mcp               MCP servers (coming soon)",
       "/clear             clear screen",
       "/exit              leave",
       "",
     ].join("\n"),
   );
+}
+
+async function doctor(ctx: AppContext, out: Writable): Promise<void> {
+  out.write("Aether Code · doctor\n");
+  out.write(`  api:    ${ctx.cfg.baseUrl}\n`);
+  const t = await ctx.tokens.get();
+  if (!t) {
+    out.write("  auth:   ✗ not logged in — run: aether auth login\n");
+  } else {
+    out.write(`  auth:   ✓ ${isApiToken(t) ? "API token" : "session token"}\n`);
+  }
+  try {
+    const cat = await getCatalog(ctx);
+    out.write(`  server: ✓ reachable (tier ${cat.tier})\n`);
+  } catch {
+    out.write("  server: ✗ unreachable or token rejected\n");
+  }
 }
 
 async function showList(ctx: AppContext, out: Writable, kind: Kind): Promise<void> {

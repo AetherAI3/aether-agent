@@ -11,6 +11,10 @@ import { Renderer } from "../core/render.js";
 import { StreamUnavailableError } from "../core/errors.js";
 import { appendCustody } from "../core/custody.js";
 import { handleSlash } from "./slash.js";
+import { userInfo } from "node:os";
+import { renderSplash } from "../ui/splash.js";
+import { promptPrefix } from "../ui/prompt.js";
+import { VERSION } from "../version.js";
 
 // the Aether API ChatResponse: { response, commitment_hash, verified, threat_level }.
 interface ChatJsonResponse {
@@ -65,15 +69,18 @@ export async function cmdChat(ctx: AppContext, prompt: string): Promise<number> 
 
 async function repl(ctx: AppContext): Promise<number> {
   const rl = createInterface({ input: process.stdin });
+  const username = userInfo().username || "you";
+  const p = promptPrefix(username);
+  const model = ctx.flags.model ?? ctx.cfg.defaultModel ?? "auto";
   process.stdout.write(
-    "Aether Code — front door to api.aethersystems.net\n" +
-      "Type a prompt, or /help for commands. /exit to quit.\n\n",
+    renderSplash({ version: VERSION, model: model || "auto", effort: "default" }) + "\n\n",
   );
-  process.stdout.write("aether› ");
+  process.stdout.write("Type a prompt, or /help for commands. /exit to quit.\n\n");
+  process.stdout.write(p);
   for await (const line of rl) {
     const t = line.trim();
     if (!t) {
-      process.stdout.write("aether› ");
+      process.stdout.write(p);
       continue;
     }
     if (t.startsWith("/")) {
@@ -83,7 +90,7 @@ async function repl(ctx: AppContext): Promise<number> {
       } catch (err) {
         printError(err);
       }
-      process.stdout.write("aether› ");
+      process.stdout.write(p);
       continue;
     }
     try {
@@ -91,7 +98,7 @@ async function repl(ctx: AppContext): Promise<number> {
     } catch (err) {
       printError(err);
     }
-    process.stdout.write("\naether› ");
+    process.stdout.write("\n" + p);
   }
   rl.close();
   process.stdout.write("\n");
