@@ -181,23 +181,79 @@ the manifest says `ok` — **the full loop works.**
 
 ---
 
-## 8. Stress tool-call emission (the flagged risk)
+## 8. Stress tool-call emission — THE actual proof (measure degradation, not totals)
 
-The #1 risk is the local brain parsing Ollama's tool-call output reliably over a
-long run. Point it at a repo with **10–50 failing tests** and let it run:
+Step 7's a−b bug is too easy; a 30B will likely one-shot it. That proves the loop
+*executes* — it says nothing about emission holding up. The #1 risk (the local
+brain parsing Ollama's tool calls reliably) only shows under length. And the
+failure signature is **late degradation**: clean early, garbled deep in. A single
+total hides it — you must bucket by session position.
+
+Point it at a repo with **10–50 failing tests** (a real small library at a
+known-broken commit; SWE-bench-style is ideal). Let it run unattended:
 
 ```bash
 node /ABS/PATH/TO/aether-code/dist/src/main.js code --local "fix all failing tests"
 ```
 
-**Watch the session log** (`events.jsonl`): grep for trouble:
-```bash
-grep -c '"type":"error"' ~/.aether-code/logs/<id>/events.jsonl    # want: 0 (or few)
-grep -c '"type":"tool_call"' ~/.aether-code/logs/<id>/events.jsonl # should be many
+Then run the triage script over the session log. Save as `triage_log.py`:
+
+```python
+import json, sys
+events = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()]
+
+# A model turn starts at each `status reasoning` (top of the brain loop). Attribute
+# tool_calls / errors / malformed-args to the turn they occur in.
+turns, cur = [], None
+def new(): return {"tool_calls": 0, "errors": 0, "wrong_id": 0, "malformed": 0}
+for e in events:
+    t = e.get("type")
+    if t == "status" and e.get("phase") == "reasoning":
+        cur = new(); turns.append(cur)
+    if cur is None:
+        cur = new(); turns.append(cur)
+    if t == "tool_call": cur["tool_calls"] += 1
+    elif t == "monologue" and str(e.get("text", "")).startswith("malformed-args"): cur["malformed"] += 1
+    elif t == "error":
+        cur["errors"] += 1
+        if "mismatch" in e.get("msg", ""): cur["wrong_id"] += 1
+
+n = len(turns)
+chk = sum(1 for e in events if e.get("type") == "checkpoint")
+done = [e for e in events if e.get("type") == "done"]
+def s(ts, k): return sum(x[k] for x in ts)
+def rate(ts): return round(s(ts, "tool_calls") / len(ts), 2) if ts else 0.0
+third = max(1, n // 3)
+early, late = turns[:third], turns[-third:]
+
+print(f"model turns        : {n}")
+print(f"tool_calls         : {s(turns,'tool_calls')}")
+print(f"errors             : {s(turns,'errors')}  (wrong_id {s(turns,'wrong_id')}, adapter/other {s(turns,'errors')-s(turns,'wrong_id')})")
+print(f"malformed-args      : {s(turns,'malformed')}")
+print(f"checkpoints         : {chk}")
+print(f"EARLY third  turns={len(early)} tool_calls={s(early,'tool_calls')} errors={s(early,'errors')} malformed={s(early,'malformed')} emission_rate={rate(early)}")
+print(f"LATE  third  turns={len(late)}  tool_calls={s(late,'tool_calls')} errors={s(late,'errors')} malformed={s(late,'malformed')} emission_rate={rate(late)}")
+finish = "done(ok)" if done and done[-1].get("ok") else ("done(fail)" if done else "NO done — STALLED/LOOPED")
+print(f"finish             : {finish}   (premature if checkpoints==0 and finish==done(ok) = no-call-just-prose)")
 ```
-Repeated `error` frames or a stall with no progress = the small model is
-fraying its tool calls. Mitigation: drop the model (`--model qwen3-coder-next`),
-or shorten the task. Report the counts either way.
+
+```bash
+python triage_log.py ~/.aether-code/logs/<id>/events.jsonl
+```
+
+**Read it like this:**
+- `emission_rate` = tool_calls per model turn. **LATE rate << EARLY rate = degradation** (the real failure signature).
+- `malformed-args` rising in the late third = the model fraying its JSON tool calls deep in the run.
+- `wrong_id` > 0 = a correlation break (should be 0 — the host replies in order).
+- `finish = STALLED/LOOPED`, or `done(ok)` with `checkpoints == 0` = **no-call-just-prose** (model talked instead of acting; never grounded on green).
+
+**Regression check** (previously-passing tests re-broken): before the run,
+`pytest -q | tail -1` to record the passing count on a clean checkout; after,
+re-run and confirm no test that passed before now fails. The agent should only
+turn red→green, never green→red.
+
+Mitigation if it degrades: `--model qwen3-coder-next`, or shorter task. Report the
+numbers either way — degradation IS the finding.
 
 ---
 
@@ -238,22 +294,39 @@ node /ABS/PATH/TO/aether-code/dist/src/main.js code --local --no-log "…"   # d
 
 ## Report back — fill this in
 
-```
-ENV:        OS ____  node ____  python ____  ollama ____  model ____  RAM/GPU ____
+These are the exact fields triaged from. The step-8 block is the important one.
 
-Step 2 TS unit:        PASS / FAIL  (pass count: __ / 56)
-Step 3 Py unit:        PASS / FAIL  (notes: ____)
-Step 4 wire smoke:     PASS / FAIL  (saw stage/status/error? ____)
-Step 5 ollama+model:   PASS / FAIL
-Step 7 full loop:      PASS / FAIL
-   - calc.py fixed?        Y / N
-   - pytest green?         Y / N
-   - checkpoint commit?    Y / N
-   - manifest finalStatus: ____
-   - paste the done line:  ____
-Step 8 stress:         tool_call count: ____   error count: ____   converged? Y/N
-First place it broke (if any):  ____
-Session log path:               ____
 ```
+CONFIG
+  model ____   box: OS ____  CPU/GPU ____  RAM ____   ollama ____  node ____  python ____
+
+UNIT (sanity)
+  Step 2 TS:   PASS / FAIL  (__ / 56)
+  Step 3 Py:   PASS / FAIL
+  Step 4 wire: PASS / FAIL
+
+STEP 7 — loop executes (4-point check)
+  file fixed (calc.py = a + b)?   Y / N
+  pytest green?                   Y / N
+  checkpoint commit present?      Y / N
+  manifest finalStatus = ok?      Y / N
+  done line: ____
+
+STEP 8 — emission under length (from triage_log.py)
+  total model turns:        ____
+  tool_call count:          ____
+  error count:              ____  → malformed-JSON ____  · wrong-id ____  · no-call-just-prose ____
+  emission rate EARLY third: ____   LATE third: ____      (late << early = degradation)
+  completed unattended / stalled / looped:   ____
+  regression (any previously-passing test re-broken)?   Y / N  (count: ____)
+  anything qualitatively weird in monologue.txt:  ____
+
+  session log path: ____
+```
+
+The `error count` split maps to the log like this:
+- **malformed-JSON** = `malformed-args` markers (triage script).
+- **wrong-id** = `error` whose msg contains "mismatch" (`wrong_id` in the script).
+- **no-call-just-prose** = `finish` is `STALLED/LOOPED`, or `done(ok)` with `checkpoints == 0`.
 
 Paste that back and I'll triage from the numbers.
