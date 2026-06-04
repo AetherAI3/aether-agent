@@ -16,6 +16,7 @@ import { cmdRun } from "./commands/run.js";
 import { cmdReceipt } from "./commands/receipt.js";
 import { cmdAudit } from "./commands/audit.js";
 import { cmdConfig } from "./commands/config.js";
+import { cmdCode } from "./commands/code.js";
 
 const VERSION = "0.1.0";
 
@@ -27,6 +28,8 @@ const HELP = `Aether Code — an open-source coding agent for your terminal.
 Usage:
   aether                       Start an interactive coding REPL
   aether "<prompt>"            One-shot coding turn
+  aether code "<task>"         Autonomous coding agent (cloud brain, UVT-metered)
+  aether code --local "<task>" Same agent, local Python/Ollama brain (offline)
   aether run <neo|kronus> "<task>"   Stream an orchestrator run
   aether models [use <id>]     List models + orchestrators / set default
   aether agents                List orchestrators (Neo / Kronus)
@@ -42,6 +45,13 @@ Global flags:
   --cwd <dir>    Workspace dir      --json         Emit raw frames as JSON
   --audit        Show signature     -y, --yes      Auto-confirm prompts
   -h, --help     This help          -v, --version  Print version
+
+aether code flags:
+  --local        Use the local brain (Python/Ollama) instead of the cloud
+  --pool <gb>    Context pool size in GB (status-bar reach = pool x 233M)
+  --effort <t>   Effort tier: LOW | MED | MAX | ULTRA | CODEPRO
+  --test-cmd <c> Command the grounding gate runs (default: pytest -q)
+  --quiet        Plain output (strip the personality frames)
 `;
 
 async function main(argv: string[]): Promise<number> {
@@ -64,6 +74,12 @@ async function main(argv: string[]): Promise<number> {
       yes: { type: "boolean", short: "y", default: false },
       help: { type: "boolean", short: "h", default: false },
       version: { type: "boolean", short: "v", default: false },
+      // `aether code` flags:
+      local: { type: "boolean", default: false },
+      pool: { type: "string" },
+      effort: { type: "string" },
+      "test-cmd": { type: "string" },
+      quiet: { type: "boolean", default: false },
     },
   });
 
@@ -121,6 +137,14 @@ async function main(argv: string[]): Promise<number> {
       return cmdReceipt(ctx, rest[0] ?? "");
     case "config":
       return cmdConfig(ctx, rest);
+    case "code":
+      return cmdCode(ctx, rest.join(" "), {
+        local: Boolean(values["local"]),
+        pool: Number(sf(values["pool"]) ?? "5") || 5,
+        effort: sf(values["effort"]),
+        testCmd: sf(values["test-cmd"]),
+        quiet: Boolean(values["quiet"]),
+      });
     case "chat":
       return cmdChat(ctx, rest.join(" "));
     default:
