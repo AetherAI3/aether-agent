@@ -3,16 +3,14 @@
 // sink. With { json: true } it passes frames through verbatim (machine mode
 // future web / Jane / MealPlanner reuse).
 //
-// Frame set per the UVT streaming wire contract (the Aether streaming contract). Answer
-// text is `delta`; pre-answer thinking is `reasoning`; `ping`/`open` are
-// liveness/handshake only. Orchestrator runs add task_* lifecycle frames.
-//
-// Aether audit: signing is server-side and is NOT carried on the wire, so the
-// renderer shows no signature. Note surface the sig id (response header or
-// audit-list endpoint) during future work, then re-enable an --audit line.
+// Orchestrator runs render through the agentic-visibility surface (src/ui):
+// a bold "Aether AI" header, kaomoji-personified action lines, and a
+// project-level progress bar (tasks done / tasks started). Plain chat just
+// streams `delta` text.
 
 import type { Writable } from "node:stream";
 import type { StreamFrame } from "./stream.js";
+import { header, actionLine } from "../ui/agent.js";
 
 export interface RenderOptions {
   json: boolean;
@@ -24,10 +22,25 @@ export interface RenderOptions {
 export class Renderer {
   private readonly out: Writable;
   private readonly err: Writable;
+  private agentHeader = false;
+  private tasksStarted = 0;
+  private tasksDone = 0;
 
   constructor(private readonly opts: RenderOptions) {
     this.out = opts.out ?? process.stdout;
     this.err = opts.err ?? process.stderr;
+  }
+
+  /** Project completion fraction so far (done / started). */
+  private projFrac(): number {
+    return this.tasksStarted > 0 ? this.tasksDone / this.tasksStarted : 0;
+  }
+
+  private ensureHeader(): void {
+    if (!this.agentHeader) {
+      this.out.write("\n" + header() + "\n");
+      this.agentHeader = true;
+    }
   }
 
   frame(f: StreamFrame): void {
@@ -38,8 +51,10 @@ export class Renderer {
     switch (f.type) {
       case "open":
       case "ping":
-      case "connected":
         break; // handshake / liveness only
+      case "connected":
+        this.ensureHeader();
+        break;
       case "reasoning":
         this.err.write(f.text); // thinking → stderr, keeps answer on stdout
         break;
@@ -52,24 +67,29 @@ export class Renderer {
       case "progress":
         if (f.text) this.err.write(`\n· ${f.text}\n`);
         break;
-      case "task_start":
-        this.out.write(`\n[task ${f.taskId ?? ""}${f.label ? ` · ${f.label}` : ""}]\n`);
+      case "task_start": {
+        this.ensureHeader();
+        this.tasksStarted += 1;
+        const label = f.label ?? `task ${f.taskId ?? ""}`;
+        this.out.write("\n" + actionLine(label, "active", f.taskId ?? "", this.projFrac()) + "\n");
         break;
+      }
       case "task_progress":
         if (f.delta) this.out.write(f.delta);
         if (f.uvt != null) this.err.write(`\r⟢ ${f.uvt} UVT · ${(f.cents ?? 0).toFixed(2)}¢   `);
         break;
       case "task_done":
-        this.out.write(`\n✓ task ${f.taskId ?? ""} done\n`);
+        this.tasksDone += 1;
+        this.out.write("\n" + actionLine(`${f.taskId ?? "task"} done`, "logging", "", this.projFrac()) + "\n");
         break;
       case "task_failed":
-        this.err.write(`\n✗ task ${f.taskId ?? ""} failed${f.msg ? `: ${f.msg}` : ""}\n`);
+        this.err.write("\n" + actionLine(`${f.taskId ?? "task"} failed`, "error", f.msg ?? "", this.projFrac()) + "\n");
         break;
       case "task_blocked":
-        this.err.write(`\n⏸ task ${f.taskId ?? ""} blocked${f.msg ? `: ${f.msg}` : ""}\n`);
+        this.err.write("\n" + actionLine(`${f.taskId ?? "task"} blocked`, "idle", f.msg ?? "", this.projFrac()) + "\n");
         break;
       case "project_done":
-        this.out.write(`\n✓ project done\n`);
+        this.out.write("\n" + actionLine("project complete", "active", "", 1) + "\n");
         break;
       case "custody": {
         // Persistence happens in the chat loop; here we only confirm receipt.
