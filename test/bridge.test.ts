@@ -138,7 +138,9 @@ test("hostLoop executes a tool_call and feeds the result back", async () => {
     const brain = new FakeBrain();
     const exec = new ToolExecutor(dir);
     const seen: string[] = [];
-    const code = await hostLoop(brain, exec, (ev) => seen.push(ev.type), {
+    const code = await hostLoop(brain, exec, (ev) => {
+      seen.push(ev.type);
+    }, {
       type: "task",
       text: "write x.txt",
       cwd: dir,

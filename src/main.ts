@@ -52,6 +52,8 @@ aether code flags:
   --effort <t>   Effort tier: LOW | MED | MAX | ULTRA | CODEPRO
   --test-cmd <c> Command the grounding gate runs (default: pytest -q)
   --quiet        Plain output (strip the personality frames)
+  --interactive  Pause at each stage boundary to type a steer (TTY only)
+  --no-log       Disable the local session log (~/.aether-code/logs)
 `;
 
 async function main(argv: string[]): Promise<number> {
@@ -80,6 +82,8 @@ async function main(argv: string[]): Promise<number> {
       effort: { type: "string" },
       "test-cmd": { type: "string" },
       quiet: { type: "boolean", default: false },
+      interactive: { type: "boolean", default: false },
+      "no-log": { type: "boolean", default: false },
     },
   });
 
@@ -144,6 +148,8 @@ async function main(argv: string[]): Promise<number> {
         effort: sf(values["effort"]),
         testCmd: sf(values["test-cmd"]),
         quiet: Boolean(values["quiet"]),
+        interactive: Boolean(values["interactive"]),
+        noLog: Boolean(values["no-log"]),
       });
     case "chat":
       return cmdChat(ctx, rest.join(" "));
