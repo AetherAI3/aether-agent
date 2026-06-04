@@ -1,0 +1,259 @@
+# Testing Handoff — AetherCode terminal + local Ollama brain
+
+Goal: pull both repos, run the unit suites, then prove the **full local loop**
+(`aether code --local` → Python brain → Ollama → tool calls → tests → checkpoint
+→ done). Work top to bottom; each step says what PASS looks like. Report-back
+template at the bottom.
+
+Two repos, two roles (see `docs/CONTRACTS.md` / `docs/BRIDGE_PROTOCOL.md`):
+- **aether-code** (this repo, TypeScript) — the terminal host: renders + executes tools.
+- **Unlimited-Context-LLM** (Python) — `aether_agent` headless brain: decides, emits events.
+
+Baseline tag on both: **`frozen-seam-v1`**.
+
+> **Name clash, read once:** both packages install a console script called
+> `aether`. To avoid ambiguity this handoff calls the **TS host** as
+> `node <aether-code>/dist/src/main.js` and the **brain** as
+> `python -m aether_agent.headless`. Don't rely on a bare `aether` on PATH.
+
+---
+
+## 0. Prerequisites
+
+| Need | Version | Check |
+|---|---|---|
+| Node | ≥ 20 (tested 22) | `node -v` |
+| Python | ≥ 3.10 (tested 3.13) | `python --version` |
+| git | any | `git --version` |
+| Ollama | latest | `ollama --version` |
+| Hardware for 30B | ~24–32 GB RAM or a real GPU (~20–22 GB at Q4_K_M) | — |
+
+If the commits are **not pushed yet**, push from the build machine first:
+
+```bash
+# build machine (where the code was written)
+cd aether-code            && git push origin main --tags
+cd ../Unlimited-Context   && git push origin main --tags
+```
+
+Testing on the build machine itself? Skip the clones in Step 1 and `cd` to the
+existing dirs.
+
+---
+
+## 1. Pull
+
+```bash
+git clone https://github.com/DBarr3/aether-code.git
+git clone https://github.com/DBarr3/Unlimited-Context-LLM.git
+cd aether-code          && git checkout frozen-seam-v1 && cd ..
+cd Unlimited-Context-LLM && git checkout frozen-seam-v1 && cd ..
+```
+
+(Or `git checkout main` for the latest, incl. lifecycle + logs.)
+
+---
+
+## 2. Build + unit-test the TS host (no Ollama needed)
+
+```bash
+cd aether-code
+npm install
+npm run build
+node --test dist/test/*.test.js
+```
+
+**PASS:** `# pass 56  # fail 0`.
+
+> Use the explicit `dist/test/*.test.js` glob. `npm test` uses a directory arg
+> (`node --test dist/test/`) that fails on Windows/Node 22 — known, not a defect.
+
+---
+
+## 3. Install + unit-test the Python brain (no Ollama needed)
+
+```bash
+cd ../Unlimited-Context-LLM
+python -m venv .venv
+# activate:  Linux/macOS:  source .venv/bin/activate
+#            Windows PS  :  .venv\Scripts\Activate.ps1
+pip install -e .
+pytest tests/test_bridge.py tests/test_aether_agent.py -q
+```
+
+**PASS:** all green (20 in `test_bridge.py`, 5 in `test_aether_agent.py`).
+`pip install -e .` pulls numpy + registers the `aether_agent` package and the
+`aether` script.
+
+Full engine suite (optional): `pytest -q` (needs numpy; some tests want a model).
+
+---
+
+## 4. Cross-language wire smoke (no Ollama needed)
+
+Proves the Python brain's NDJSON parses in the TS host without a model. From
+`Unlimited-Context-LLM` (venv active):
+
+```bash
+# Linux/macOS
+printf '%s\n' '{"type":"task","text":"hi","pool_gb":5}' \
+  | python -m aether_agent.headless 2>/dev/null > /tmp/out.ndjson
+node -e 'const{parseEventLine}=require("../aether-code/dist/src/core/brain_protocol.js");
+require("fs").readFileSync("/tmp/out.ndjson","utf8").split("\n").filter(Boolean)
+.forEach(l=>{const e=parseEventLine(l);console.log(e?("OK "+e.type):("FAIL "+l))})'
+```
+
+**PASS:** three lines — `OK stage`, `OK status`, `OK error` (the `error` is the
+expected "Cannot reach Ollama" — there's no model yet; the point is the wire
+decodes). On Windows PowerShell, drop the output to a repo-local file instead of
+`/tmp` (node maps `/tmp` to `C:\tmp`).
+
+---
+
+## 5. Stand up Ollama + the model
+
+```bash
+ollama pull qwen3-coder:30b     # ~20 GB download
+ollama serve                    # if not already running as a service
+ollama list                     # PASS: qwen3-coder:30b is listed
+```
+
+Light machine? `qwen3-coder:30b` is the depth build; for ~16 GB use
+`qwen3-coder-next` (do NOT use `gemma3` — custom terms), then pass
+`--model qwen3-coder-next` in Step 7.
+
+**Make the brain importable by the host.** The TS host spawns `python -m
+aether_agent.headless`. If you used a venv, point the host at that interpreter:
+
+```bash
+# Linux/macOS
+export AETHER_PYTHON="$(pwd)/.venv/bin/python"
+# Windows PowerShell
+$env:AETHER_PYTHON = "$PWD\.venv\Scripts\python.exe"
+```
+
+Sanity: `"$AETHER_PYTHON" -c "import aether_agent; print('ok')"` → `ok`.
+
+---
+
+## 6. Make a tiny broken repo (the test target)
+
+```bash
+mkdir agent-target && cd agent-target && git init -q
+printf 'def add(a, b):\n    return a - b\n' > calc.py          # BUG: minus
+printf 'from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n' > test_calc.py
+git add -A && git commit -qm "init: failing suite"
+pytest -q   # PASS-for-this-step: shows 1 failed (the bug is real)
+```
+
+---
+
+## 7. Run the full local loop (THE proof)
+
+From inside `agent-target/`, invoke the TS host (adjust the path to aether-code):
+
+```bash
+node /ABS/PATH/TO/aether-code/dist/src/main.js code --local "fix the failing test in calc.py"
+#   add --model qwen3-coder-next on light machines
+#   add --quiet to strip the personality frames
+```
+
+**Watch for, in order:**
+- `Aether AI · neo-lite` header,
+- `* recon`, then `* execute` stage lines,
+- `⌁ skill fix-failing-tests` (the procedure layer fired),
+- `: read_file calc.py`, `: write_file calc.py`, `: run_tests …` tool lines,
+- a live pool-fill status bar (`local/cache … |████░░| %`),
+- `[▪]→[▪▪] checkpoint <sha>` after tests go green,
+- a done line ending `[ OKAY ]`,
+- `⤷ log: ~/.aether-code/logs/<session-id>`.
+
+**PASS (verify after it exits):**
+```bash
+cat calc.py                      # return a + b  (fixed)
+pytest -q                        # 1 passed
+git log --oneline                # an "aether: step N green" checkpoint commit
+cat ~/.aether-code/logs/*/manifest.json   # "finalStatus": "ok", toolCalls > 0
+```
+
+If `calc.py` is fixed AND `pytest` is green AND a checkpoint commit exists AND
+the manifest says `ok` — **the full loop works.**
+
+---
+
+## 8. Stress tool-call emission (the flagged risk)
+
+The #1 risk is the local brain parsing Ollama's tool-call output reliably over a
+long run. Point it at a repo with **10–50 failing tests** and let it run:
+
+```bash
+node /ABS/PATH/TO/aether-code/dist/src/main.js code --local "fix all failing tests"
+```
+
+**Watch the session log** (`events.jsonl`): grep for trouble:
+```bash
+grep -c '"type":"error"' ~/.aether-code/logs/<id>/events.jsonl    # want: 0 (or few)
+grep -c '"type":"tool_call"' ~/.aether-code/logs/<id>/events.jsonl # should be many
+```
+Repeated `error` frames or a stall with no progress = the small model is
+fraying its tool calls. Mitigation: drop the model (`--model qwen3-coder-next`),
+or shorten the task. Report the counts either way.
+
+---
+
+## 9. Interactive + logs (optional)
+
+```bash
+node /ABS/PATH/TO/aether-code/dist/src/main.js code --local --interactive "fix the test"
+# pauses at each stage; press Enter to continue, or type a steer note
+node /ABS/PATH/TO/aether-code/dist/src/main.js code --local --no-log "…"   # disable the log
+```
+
+---
+
+## NOT in scope yet (don't expect these)
+
+- **ON-vs-OFF kill-gate** (`bench/drift_vs_window.py`) — the honest promote gate
+  (Unlimited Context ON vs naive truncation OFF on a ~200-failing suite). Harness
+  not built; this handoff proves the loop runs, not that the context engine wins.
+- **Cloud brain tool round-trip** — `aether code` without `--local` streams the
+  server brain, which runs tools server-side; it won't drive local file edits
+  until the server emits `tool_call` frames (known gap, host unchanged when it lands).
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| `Cannot reach Ollama at http://localhost:11434` | `ollama serve` not running |
+| `model 'qwen3-coder:30b' … pull` | `ollama pull qwen3-coder:30b` |
+| Host hangs after the task, no events | `AETHER_PYTHON` wrong, or `aether_agent` not importable by it — re-run the Step 5 sanity import |
+| `refusing path outside workspace` | working as designed — run from inside the target repo, paths stay in cwd |
+| Garbled kaomoji in a Windows console | cosmetic only; the wire is ASCII-safe, the loop is unaffected |
+| `node --test dist/test/` finds nothing | use the `dist/test/*.test.js` glob (Step 2 note) |
+| Two `aether` commands collide on PATH | use `node dist/src/main.js` (host) and `python -m aether_agent.headless` (brain) |
+
+---
+
+## Report back — fill this in
+
+```
+ENV:        OS ____  node ____  python ____  ollama ____  model ____  RAM/GPU ____
+
+Step 2 TS unit:        PASS / FAIL  (pass count: __ / 56)
+Step 3 Py unit:        PASS / FAIL  (notes: ____)
+Step 4 wire smoke:     PASS / FAIL  (saw stage/status/error? ____)
+Step 5 ollama+model:   PASS / FAIL
+Step 7 full loop:      PASS / FAIL
+   - calc.py fixed?        Y / N
+   - pytest green?         Y / N
+   - checkpoint commit?    Y / N
+   - manifest finalStatus: ____
+   - paste the done line:  ____
+Step 8 stress:         tool_call count: ____   error count: ____   converged? Y/N
+First place it broke (if any):  ____
+Session log path:               ____
+```
+
+Paste that back and I'll triage from the numbers.
