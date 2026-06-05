@@ -1,7 +1,7 @@
 # Aether Code — Command Reference
 
-Every command, flag, slash command, and environment variable. For the quick
-tour, see the [README](README.md).
+Complete reference for every command, flag, slash command, and environment
+variable. For a quick tour, see the [README](README.md).
 
 ```
 aether [global flags] <command> [args]
@@ -50,7 +50,7 @@ aether run kronus "audit this service for race conditions and fix them"
 ```
 > Orchestrators are gated to paid tiers. Neo is available on Solo+; Kronus on Pro+.
 
-### `aether models [use <id>]`
+### `aether models [use <id>]` — list / pick a model
 - `aether models` — list every model **and** orchestrator visible to your tier.
   `*` = your current default, `🔒` = locked on your plan, `cap N` = monthly UVT
   ceiling for that model on your tier.
@@ -60,12 +60,12 @@ aether models
 aether models use sonnet
 ```
 
-### `aether agents`
+### `aether agents` — list orchestrators
 Lists only the orchestrators (Neo / Kronus), filtered from the same catalog.
 
-### `aether auth <subcommand>` (GitHub-`gh`-style)
-One credential for the CLI, desktop, and web. `aether login` / `aether logout`
-are aliases for `auth login` / `auth logout`.
+### `aether auth <subcommand>` — credentials
+Modeled on GitHub's `gh auth`. One credential for the CLI, desktop, and web.
+`aether login` / `aether logout` are aliases for `auth login` / `auth logout`.
 
 | Subcommand | Does |
 |---|---|
@@ -85,21 +85,21 @@ are aliases for `auth login` / `auth logout`.
 | `--license-key <k>` | Supply a license key alongside credentials. |
 | `--no-browser` | Print the URL instead of opening a browser. |
 
-### `aether audit [limit]`
+### `aether audit [limit]` — recent receipts
 Lists recent chain-of-custody entries for your account (default 50). Each row:
 `timestamp · event · commitment_hash · order_id`.
 ```bash
 aether audit 20
 ```
 
-### `aether receipt <order_id>`
+### `aether receipt <order_id>` — export proof
 Exports the cryptographic proof package for one audit entry. Find ids with
 `aether audit`.
 ```bash
 aether receipt chat_8f3a...
 ```
 
-### `aether config [show|get|set]`
+### `aether config [show|get|set]` — local settings
 Local settings, stored at `~/.config/aether/config.json`.
 ```bash
 aether config                       # show all
@@ -139,7 +139,7 @@ aether config set autoApply true
 
 | Var | Default | Meaning |
 |---|---|---|
-| `AETHER_BASE_URL` | `https://api.aethersystems.net` | Aether API base URL. |
+| `AETHER_BASE_URL` | `https://api.aethersystems.net` | Overrides the config `baseUrl`. |
 | `AETHER_LOGIN_URL` | `https://aethersystems.net/platform` | Page `aether auth login` opens. |
 | `AETHER_TOKEN` | *(unset)* | Inject a session token (CI / headless / embedding). |
 | `AETHER_CONFIG_DIR` | `~/.config/aether` | Config + token directory. |
