@@ -12,7 +12,7 @@ import {
   PROTOCOL_VERSION,
   type BrainEvent,
 } from "../src/core/brain_protocol.js";
-import { ToolExecutor } from "../src/core/tool_executor.js";
+import { ToolExecutor, capHeadTail } from "../src/core/tool_executor.js";
 import { EventQueue, type Brain, type TaskCommand } from "../src/core/brain.js";
 import { hostLoop, cmdCode } from "../src/commands/code.js";
 import type { AppContext } from "../src/core/context.js";
@@ -125,6 +125,17 @@ test("ToolExecutor refuses a path escaping the workspace", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("capHeadTail keeps the END (pytest summary) when output is over the cap", () => {
+  // simulate pytest: tracebacks first, the count summary LAST
+  const big = "TRACEBACK\n".repeat(2000) + "\n23 failed, 1 passed in 1.2s";
+  const capped = capHeadTail(big, 8000);
+  assert.ok(capped.length <= 8200, "capped near the limit");
+  assert.match(capped, /23 failed, 1 passed/, "the summary at the END survives");
+  assert.match(capped, /chars elided/, "elision marker present");
+  // short text passes through untouched
+  assert.equal(capHeadTail("short", 8000), "short");
 });
 
 test("unknown tool returns a clear error, never throws", () => {

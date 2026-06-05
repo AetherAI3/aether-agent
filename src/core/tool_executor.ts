@@ -68,7 +68,7 @@ export class ToolExecutor {
       return { output: `[timeout after ${Math.round(timeoutMs / 1000)}s]`, exitCode: 124 };
     }
     const code = r.status ?? 1;
-    const body = ((r.stdout ?? "") + (r.stderr ?? "")).slice(0, MAX_OUTPUT);
+    const body = capHeadTail((r.stdout ?? "") + (r.stderr ?? ""), MAX_OUTPUT);
     return { output: `[exit ${code}]\n${body}`, exitCode: code };
   }
 
@@ -124,6 +124,16 @@ export class ToolExecutor {
     // Surface the new short sha so the brain can emit a checkpoint event.
     const sha = this.run("git rev-parse --short HEAD");
     const head = sha.exitCode === 0 ? sha.output.replace(/^\[exit 0\]\n/, "").trim() : "";
-    return { output: `${r.output}\n${head}`.slice(0, MAX_OUTPUT), exitCode: r.exitCode };
+    return { output: capHeadTail(`${r.output}\n${head}`, MAX_OUTPUT), exitCode: r.exitCode };
   }
+}
+
+/** Cap text to `max` chars keeping BOTH ends. Test runners print detail first and
+ * the summary (`N failed`, final assertion) LAST — a head-only slice loses the
+ * count the brain parses. Keep ~1/3 head + ~2/3 tail with an elision marker. */
+export function capHeadTail(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const head = Math.floor(max / 3);
+  const tail = max - head;
+  return text.slice(0, head) + `\n…[${text.length - max} chars elided]…\n` + text.slice(text.length - tail);
 }
