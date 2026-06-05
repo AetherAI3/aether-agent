@@ -17,6 +17,10 @@ import { CloudBrain } from "../core/brain_cloud.js";
 import { ToolExecutor } from "../core/tool_executor.js";
 import { HostRenderer } from "../ui/host_render.js";
 import { SessionLog } from "../core/session_log.js";
+import { StatusRenderer } from "../ui/status_renderer.js";
+import { AnimationController } from "../ui/animations.js";
+import { HeartbeatIndicator } from "../ui/heartbeat.js";
+import { LocalAgentSource, bindEventSource } from "../core/agent_events.js";
 
 export interface CodeOpts {
   /** Use the local Python/Ollama brain instead of the cloud API. */
@@ -64,7 +68,6 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
 
   const brain: Brain = opts.local ? new LocalBrain() : new CloudBrain(ctx.api);
   const exec = new ToolExecutor(cwd, opts.testCmd);
-  const renderer = new HostRenderer({ poolGb, quiet: opts.quiet, json: ctx.flags.json });
   const log = opts.noLog
     ? null
     : new SessionLog({ task, model: ctx.flags.model ?? "", poolGb, brain: brainKind }, nowIso());
@@ -79,15 +82,50 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   };
 
   const interactive = Boolean(opts.interactive) && Boolean(process.stdin.isTTY);
-
-  const onEvent = async (ev: BrainEvent): Promise<void> => {
-    renderer.event(ev);
-    log?.event(ev, nowIso());
-    if (interactive && ev.type === "stage") await stageGate(brain, ev.name);
-  };
   const onToolResult = (id: string, result: ToolResult): void => log?.toolResult(id, result, nowIso());
 
+  // Presentation fork — TTY (and not --json/--quiet) gets the live animated
+  // status line; everything else (pipes, --json, --quiet, CI) gets the plain
+  // HostRenderer. The animation layer is strictly downstream of the event data,
+  // so the §8 emission logs are never polluted.
+  const animated =
+    !ctx.flags.json && !opts.quiet && Boolean(process.stdout.isTTY) && process.env["AETHER_NO_ANIM"] !== "1";
+
+  let onEvent: (ev: BrainEvent) => void | Promise<void>;
+  let teardown = (): void => {};
+
+  if (animated) {
+    const sr = new StatusRenderer({ mode: brainKind === "local" ? "local" : "api" });
+    sr.start();
+    const anim = new AnimationController({
+      onFrame: (stage, art) => sr.setStage(stage, art),
+      onProgress: (used, c) => sr.setProgress(used, c),
+    });
+    const hb = new HeartbeatIndicator({ onFrame: (g) => sr.setHeartbeat(g) });
+    const source = new LocalAgentSource();
+    bindEventSource(source, sr, anim, { hb, heartbeatTimeoutMs: 5000 });
+    onEvent = async (ev: BrainEvent): Promise<void> => {
+      log?.event(ev, nowIso());
+      source.feedBrain(ev); // adapter -> animation/status (presentation only)
+      if (interactive && ev.type === "stage") await stageGate(brain, ev.name);
+    };
+    teardown = (): void => {
+      source.close();
+      anim.stop();
+      hb.stop();
+      sr.end();
+    };
+  } else {
+    const renderer = new HostRenderer({ poolGb, quiet: opts.quiet, json: ctx.flags.json });
+    onEvent = async (ev: BrainEvent): Promise<void> => {
+      renderer.event(ev);
+      log?.event(ev, nowIso());
+      if (interactive && ev.type === "stage") await stageGate(brain, ev.name);
+    };
+  }
+
   const code = await hostLoop(brain, exec, onEvent, taskCmd, onToolResult);
+  teardown();
   log?.close(code === 0 ? "ok" : "failed", nowIso());
   if (log) process.stderr.write(`\n  ⤷ log: ${log.dir}\n`);
   return code;
