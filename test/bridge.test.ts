@@ -285,6 +285,39 @@ test("every fixture event decodes to its declared type", () => {
   }
 });
 
+test("fixture message shapes match the canonical wire key-set exactly (strong drift detector)", () => {
+  // The type-only check above missed the v1->v2 drift (done/task gained fields, fixture didn't).
+  // This pins the EXACT wire key-set per message + full type coverage, so the next additive
+  // field on the wire FAILS here unless the fixture (and PROTOCOL_VERSION) are updated.
+  const fx = JSON.parse(readFileSync(FIXTURE, "utf8"));
+  const wireKeys: Record<string, string[]> = {
+    stage: ["type", "name", "face"],
+    monologue: ["type", "text", "depth"],
+    skill: ["type", "name", "reason"],
+    turn: ["type", "n", "tool_calls", "malformed", "invented", "no_call", "fail_count"],
+    tool_call: ["type", "id", "name", "args"],
+    telemetry: ["type", "tokens", "tps", "ctx_used", "ctx_cap", "vram"],
+    status: ["type", "phase", "pool_used", "pool_cap"],
+    checkpoint: ["type", "git_sha"],
+    done: ["type", "ok", "result", "remaining", "reason"],
+    error: ["type", "msg"],
+    task: ["type", "text", "cwd", "pool_gb", "effort", "model", "test_cmd"],
+    tool_result: ["type", "id", "output", "exit_code"],
+    control: ["type", "action", "note"],
+  };
+  const seen = new Set<string>();
+  for (const msg of [...fx.events, ...fx.commands] as Array<Record<string, unknown>>) {
+    const t = msg["type"] as string;
+    const expect = wireKeys[t];
+    assert.ok(expect, `unknown fixture message type: ${t}`);
+    assert.deepEqual(Object.keys(msg).sort(), [...expect].sort(), `${t} wire shape drift`);
+    seen.add(t);
+  }
+  for (const t of Object.keys(wireKeys)) {
+    assert.ok(seen.has(t), `fixture missing message type: ${t}`);
+  }
+});
+
 // --- swarm is gated (never swarm an unproven loop) -------------------------
 test("--swarm > 1 is refused with exit 2 and never spawns a brain", async () => {
   const ctx = {
