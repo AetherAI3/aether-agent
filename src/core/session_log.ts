@@ -70,14 +70,26 @@ export class SessionLog {
     );
   }
 
-  /** Finalize the manifest. `finalStatus` is derived from the brain's ground-truth
-   * done event (ok | incomplete | stalled | no-progress | max-turns | unverified |
-   * error) — never from the loop-exit reason. `remaining` = failing tests if not ok. */
-  close(finalStatus: string, ended: string, remaining = 0): void {
+  /** Finalize the manifest. `finalStatus` is derived from the HOST's own final
+   * test run (ground truth), never from the brain's self-report. `remaining` =
+   * failing tests when not ok (only written when > 0). */
+  close(
+    finalStatus:
+      | "ok"
+      | "incomplete"
+      | "unverified"
+      | "stalled"
+      | "no-progress"
+      | "max-turns"
+      | "failed"
+      | "error",
+    ended: string,
+    remaining = 0,
+  ): void {
     this.writeManifest({ ended, finalStatus, remaining });
   }
 
-  private writeManifest(end: { ended: string; finalStatus: string; remaining: number } | null): void {
+  private writeManifest(end: { ended: string; finalStatus: string; remaining?: number } | null): void {
     writeFileSync(
       this.manifestPath,
       JSON.stringify(
@@ -90,9 +102,9 @@ export class SessionLog {
           started: this.started,
           ended: end?.ended ?? null,
           finalStatus: end?.finalStatus ?? "running",
-          remaining: end?.remaining ?? null,
           events: this.events,
           toolCalls: this.toolCalls,
+          ...(end?.remaining != null && end.remaining > 0 && { remaining: end.remaining }),
         },
         null,
         2,

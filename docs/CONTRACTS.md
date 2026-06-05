@@ -8,7 +8,7 @@ bug.
 
 ---
 
-## 1. AetherCode ↔ Brain bridge event protocol  ·  `PROTOCOL_VERSION = 1`
+## 1. AetherCode ↔ Brain bridge event protocol  ·  `PROTOCOL_VERSION = 2`
 
 The event seam between the headless brain (decides) and the TS host (renders +
 executes). Full prose + rationale: [`BRIDGE_PROTOCOL.md`](./BRIDGE_PROTOCOL.md).
@@ -37,9 +37,12 @@ integer, and a bump falsely signals "breaking" to them. Additive changes are
 instead recorded here + mirrored in both codecs + added to the fixture so the
 conformance test covers them. (Receivers MUST already ignore unknown `type`s.)
 
-History (additive, still v1):
-- `turn` event + `done.remaining`/`done.reason` + `task.test_cmd` — the loop-fix
-  patch (final verification gate). v1 consumers ignore them.
+History:
+- **v2** — `turn` event + `done.remaining`/`done.reason` + `task.test_cmd` (the
+  loop-fix / final-verification-gate patch). All additions are backward-tolerant
+  (old consumers ignore the new event + optional fields); the integer was bumped
+  to 2 alongside the parallel build's schema rev so the conformance fixture +
+  moat-seal CI stay in lockstep across repos.
 
 ### Messages (wire = NDJSON, one JSON object per line, keys snake_case, ASCII-safe)
 

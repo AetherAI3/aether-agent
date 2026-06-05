@@ -85,13 +85,6 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   const interactive = Boolean(opts.interactive) && Boolean(process.stdin.isTTY);
   const onToolResult = (id: string, result: ToolResult): void => log?.toolResult(id, result, nowIso());
 
-  // Capture the brain's ground-truth terminal event so the manifest's finalStatus
-  // comes from a real final test run, never from the loop-exit code.
-  let done: Extract<BrainEvent, { type: "done" }> | null = null;
-  const capture = (ev: BrainEvent): void => {
-    if (ev.type === "done") done = ev;
-  };
-
   // Presentation fork — TTY (and not --json/--quiet) gets the live animated
   // status line; everything else (pipes, --json, --quiet, CI) gets the plain
   // HostRenderer. The animation layer is strictly downstream of the event data,
@@ -113,7 +106,6 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     const source = new LocalAgentSource();
     bindEventSource(source, sr, anim, { hb, heartbeatTimeoutMs: 5000 });
     onEvent = async (ev: BrainEvent): Promise<void> => {
-      capture(ev);
       log?.event(ev, nowIso());
       source.feedBrain(ev); // adapter -> animation/status (presentation only)
       if (interactive && ev.type === "stage") await stageGate(brain, ev.name);
@@ -127,7 +119,6 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   } else {
     const renderer = new HostRenderer({ poolGb, quiet: opts.quiet, json: ctx.flags.json });
     onEvent = async (ev: BrainEvent): Promise<void> => {
-      capture(ev);
       renderer.event(ev);
       log?.event(ev, nowIso());
       if (interactive && ev.type === "stage") await stageGate(brain, ev.name);
@@ -137,12 +128,25 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   const code = await hostLoop(brain, exec, onEvent, taskCmd, onToolResult);
   teardown();
 
-  // finalStatus from the brain's ground-truth done event (Fix 1), not the exit code.
-  const d = done as Extract<BrainEvent, { type: "done" }> | null;
-  const finalStatus = d ? (d.ok ? "ok" : d.reason || "incomplete") : "error";
-  log?.close(finalStatus, nowIso(), d && !d.ok ? d.remaining : 0);
+  // ── Final verification gate: ground truth, never the brain's self-report ──
+  // The host runs the test command ITSELF and derives finalStatus from the exit
+  // code — it does not trust the brain's done event. Only "ok" when the final
+  // verify is green; "incomplete" (with the failing count) whenever tests fail.
+  let finalStatus: "ok" | "incomplete" | "unverified" = "unverified";
+  let remaining = 0;
+  if (opts.testCmd) {
+    const verify = exec.execute("run_tests", {});
+    if (verify.exitCode === 0) {
+      finalStatus = "ok";
+    } else {
+      finalStatus = "incomplete";
+      const m = verify.output.match(/(\d+) failed/);
+      remaining = m ? parseInt(m[1]!, 10) : -1;
+    }
+  }
+  log?.close(finalStatus, nowIso(), remaining);
   if (log) process.stderr.write(`\n  ⤷ log: ${log.dir} · ${finalStatus}\n`);
-  return code;
+  return finalStatus === "incomplete" ? 1 : code;
 }
 
 /** Pause at a stage boundary; an entered line becomes a /steer, blank resumes. */
