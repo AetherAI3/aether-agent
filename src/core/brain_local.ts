@@ -39,7 +39,9 @@ export class LocalBrain implements Brain {
   }
 
   run(task: TaskCommand): AsyncIterable<BrainEvent> {
-    const python = this.opts.python ?? process.env["AETHER_PYTHON"] ?? "python";
+    // `||` not `??` — an empty AETHER_PYTHON ("" from a failed shell export) must
+    // fall back to "python", or spawn() throws "argument 'file' cannot be empty".
+    const python = this.opts.python || process.env["AETHER_PYTHON"] || "python";
     const mod = this.opts.module ?? "aether_agent.headless";
     const child = spawn(python, ["-m", mod], {
       cwd: task.cwd,
