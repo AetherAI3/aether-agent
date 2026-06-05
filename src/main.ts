@@ -57,9 +57,10 @@ aether code flags:
   --swarm <N>    N-agent swarm (gated; local-only; see docs/SWARM_PLAN.md)
 
 Local model tiers (--model, via Ollama):
-  light        gemma4:e4b        runs where a 30B won't (Google sampling)
-  strong-local qwen3-coder:30b   default depth · qwen3-coder-next for ~16 GB
-  (profiles in the brain set per-model sampling + tool-call handling)
+  small (universal) qwen2.5-coder:7b   ~4.7GB · fits 8GB GPU · best small tools
+  gemma option      gemma3:4b          ~3.3GB · gemma3n:e4b for the efficient e4b
+  depth             qwen3-coder:30b    needs ~24GB RAM/VRAM
+  (NOTE: 'gemma4' is not a real Ollama tag. profiles set per-model sampling.)
 `;
 
 async function main(argv: string[]): Promise<number> {
