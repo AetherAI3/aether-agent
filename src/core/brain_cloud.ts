@@ -43,14 +43,14 @@ export class CloudBrain implements Brain {
         const ev = mapFrame(frame);
         if (ev) queue.push(ev);
       }
-      queue.push({ type: "done", ok: true, result: "" });
+      queue.push({ type: "done", ok: true, result: "", remaining: 0, reason: "" });
     } catch (err) {
       if (err instanceof StreamUnavailableError) {
         // Fail-soft: non-streaming fallback (contract `{"stream": false}`).
         try {
           const r = await this.api.postJson<{ response?: string }>(CHAT_PATH, req);
           queue.push({ type: "monologue", text: r.response ?? "", depth: 0 });
-          queue.push({ type: "done", ok: true, result: r.response ?? "" });
+          queue.push({ type: "done", ok: true, result: r.response ?? "", remaining: 0, reason: "" });
         } catch (e2) {
           queue.push({ type: "error", msg: e2 instanceof Error ? e2.message : String(e2) });
         }

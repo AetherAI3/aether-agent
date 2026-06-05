@@ -91,7 +91,7 @@ test("mapBrainEvent adapts the bridge vocabulary to the UI slice", () => {
     used: 1,
     cap: 2,
   });
-  assert.equal(mapBrainEvent({ type: "done", ok: true, result: "" })!.type, "done");
+  assert.equal(mapBrainEvent({ type: "done", ok: true, result: "", remaining: 0, reason: "" })!.type, "done");
   assert.equal(mapBrainEvent({ type: "skill", name: "s", reason: "r" })!.type, "log");
   assert.equal(mapBrainEvent({ type: "telemetry", tokens: 0, tps: 0, ctxUsed: 0, ctxCap: 0, vram: 0 }), null);
 });

@@ -38,6 +38,32 @@ test("checkpoint event maps git_sha", () => {
   assert.deepEqual(ev, { type: "checkpoint", gitSha: "a1b2c3d4e5" });
 });
 
+test("turn event maps the per-turn diag fields (null fail_count preserved)", () => {
+  const ev = parseEventLine(
+    '{"type":"turn","n":4,"tool_calls":2,"malformed":1,"invented":0,"no_call":false,"fail_count":null}',
+  );
+  assert.deepEqual(ev, {
+    type: "turn",
+    n: 4,
+    toolCalls: 2,
+    malformed: 1,
+    invented: 0,
+    noCall: false,
+    failCount: null,
+  });
+});
+
+test("done carries remaining + reason (ground-truth finalStatus)", () => {
+  const ev = parseEventLine('{"type":"done","ok":false,"result":"(incomplete — 24 failing)","remaining":24,"reason":"stalled"}');
+  assert.deepEqual(ev, {
+    type: "done",
+    ok: false,
+    result: "(incomplete — 24 failing)",
+    remaining: 24,
+    reason: "stalled",
+  });
+});
+
 test("parseEventLine drops blanks and malformed lines", () => {
   assert.equal(parseEventLine(""), null);
   assert.equal(parseEventLine("   "), null);
@@ -124,7 +150,7 @@ class FakeBrain implements Brain {
   sendToolResult(id: string, result: { output: string; exitCode: number }): void {
     this.toolResults.push({ id, output: result.output, exitCode: result.exitCode });
     // The brain "decides" it's done after the tool result lands.
-    this.q.push({ type: "done", ok: true, result: "wrote x.txt" });
+    this.q.push({ type: "done", ok: true, result: "wrote x.txt", remaining: 0, reason: "" });
     this.q.end();
   }
   control(): void {}
@@ -173,7 +199,7 @@ class TwoCallBrain implements Brain {
     if (this.step === 1) {
       this.q.push({ type: "tool_call", id: "B", name: "read_file", args: { path: "b.txt" } });
     } else {
-      this.q.push({ type: "done", ok: true, result: "ok" });
+      this.q.push({ type: "done", ok: true, result: "ok", remaining: 0, reason: "" });
       this.q.end();
     }
   }

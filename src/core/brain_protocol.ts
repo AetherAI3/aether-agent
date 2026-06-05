@@ -18,16 +18,28 @@ export type BrainEvent =
   | { type: "stage"; name: string; face: string }
   | { type: "monologue"; text: string; depth: number }
   | { type: "skill"; name: string; reason: string } // a procedure packet was pinned
+  // per-assistant-turn diagnostics (the §8 emission curve feed)
+  | {
+      type: "turn";
+      n: number;
+      toolCalls: number;
+      malformed: number;
+      invented: number;
+      noCall: boolean;
+      failCount: number | null;
+    }
   | { type: "tool_call"; id: string; name: string; args: Record<string, unknown> }
   | { type: "telemetry"; tokens: number; tps: number; ctxUsed: number; ctxCap: number; vram: number }
   | { type: "status"; phase: string; poolUsed: number; poolCap: number }
   | { type: "checkpoint"; gitSha: string }
-  | { type: "done"; ok: boolean; result: string }
+  // ok is derived from a real final test run; remaining = failing tests when not ok;
+  // reason ∈ "" | "stalled" | "no-progress" | "max-turns" | "unverified".
+  | { type: "done"; ok: boolean; result: string; remaining: number; reason: string }
   | { type: "error"; msg: string };
 
 // --- host -> brain commands ------------------------------------------------
 export type HostCommand =
-  | { type: "task"; text: string; cwd: string; poolGb: number; effort?: string; model?: string }
+  | { type: "task"; text: string; cwd: string; poolGb: number; effort?: string; model?: string; testCmd?: string }
   | { type: "tool_result"; id: string; output: string; exitCode: number }
   | { type: "control"; action: "pause" | "resume" | "steer"; note?: string };
 
@@ -57,6 +69,16 @@ export function decodeEvent(obj: Record<string, unknown>): BrainEvent | null {
       return { type: "monologue", text: str(obj["text"]), depth: num(obj["depth"]) };
     case "skill":
       return { type: "skill", name: str(obj["name"]), reason: str(obj["reason"]) };
+    case "turn":
+      return {
+        type: "turn",
+        n: num(obj["n"]),
+        toolCalls: num(obj["tool_calls"]),
+        malformed: num(obj["malformed"]),
+        invented: num(obj["invented"]),
+        noCall: Boolean(obj["no_call"]),
+        failCount: obj["fail_count"] == null ? null : num(obj["fail_count"]),
+      };
     case "tool_call":
       return {
         type: "tool_call",
@@ -83,7 +105,13 @@ export function decodeEvent(obj: Record<string, unknown>): BrainEvent | null {
     case "checkpoint":
       return { type: "checkpoint", gitSha: str(obj["git_sha"]) };
     case "done":
-      return { type: "done", ok: Boolean(obj["ok"]), result: str(obj["result"]) };
+      return {
+        type: "done",
+        ok: Boolean(obj["ok"]),
+        result: str(obj["result"]),
+        remaining: num(obj["remaining"]),
+        reason: str(obj["reason"]),
+      };
     case "error":
       return { type: "error", msg: str(obj["msg"]) };
     default:
@@ -117,6 +145,8 @@ export function encodeCommand(cmd: HostCommand): string {
         pool_gb: cmd.poolGb,
         effort: cmd.effort ?? "",
         model: cmd.model ?? "",
+        // default pytest -q on the brain side; pass through what the host has.
+        test_cmd: cmd.testCmd ?? "pytest -q",
       };
       break;
     case "tool_result":

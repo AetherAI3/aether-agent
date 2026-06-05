@@ -70,12 +70,14 @@ export class SessionLog {
     );
   }
 
-  /** Finalize the manifest with the end time + status. */
-  close(finalStatus: "ok" | "failed" | "error", ended: string): void {
-    this.writeManifest({ ended, finalStatus });
+  /** Finalize the manifest. `finalStatus` is derived from the brain's ground-truth
+   * done event (ok | incomplete | stalled | no-progress | max-turns | unverified |
+   * error) — never from the loop-exit reason. `remaining` = failing tests if not ok. */
+  close(finalStatus: string, ended: string, remaining = 0): void {
+    this.writeManifest({ ended, finalStatus, remaining });
   }
 
-  private writeManifest(end: { ended: string; finalStatus: string } | null): void {
+  private writeManifest(end: { ended: string; finalStatus: string; remaining: number } | null): void {
     writeFileSync(
       this.manifestPath,
       JSON.stringify(
@@ -88,6 +90,7 @@ export class SessionLog {
           started: this.started,
           ended: end?.ended ?? null,
           finalStatus: end?.finalStatus ?? "running",
+          remaining: end?.remaining ?? null,
           events: this.events,
           toolCalls: this.toolCalls,
         },

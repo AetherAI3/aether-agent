@@ -20,7 +20,7 @@ test("SessionLog writes events.jsonl, monologue.txt, and a manifest", () => {
     log.event({ type: "tool_call", id: "c1", name: "run_tests", args: {} }, TS);
     log.toolResult("c1", { output: "[exit 0]\nok", exitCode: 0 }, TS);
     log.event({ type: "checkpoint", gitSha: "a1b2c3d4e5" }, TS);
-    log.event({ type: "done", ok: true, result: "all green" }, TS);
+    log.event({ type: "done", ok: true, result: "all green", remaining: 0, reason: "" }, TS);
     log.close("ok", TS);
 
     // events.jsonl: one JSON object per line, ts stamped, tool_result recorded

@@ -25,14 +25,21 @@ constant. A failing conformance test = drift; fix the code or bump the version.
 
 ### Versioning rule
 
-Bump `PROTOCOL_VERSION` (here + both mirrors + both fixtures) on ANY of:
-- adding/removing/renaming a message `type`,
-- adding/removing/renaming a field,
-- changing a field's type or wire key (snake_case).
+`PROTOCOL_VERSION` is the **MAJOR** (breaking) integer. Bump it (here + both
+mirrors + both fixtures) only on a BREAKING change:
+- removing/renaming a message `type` or field,
+- changing a field's type or wire key, or making an optional field required.
 
-Adding a new *optional* field that both sides tolerate is a minor change but
-still bumps — the fixture is exact-match. Receivers MUST ignore unknown message
-`type`s (forward-compat) but tests pin the known set.
+**Additive, forward-compatible changes do NOT bump the integer** — a new message
+`type`, or a new OPTIONAL field on an existing message, that old (v1) consumers
+safely IGNORE. This is deliberate: the parallel S1–S9 sessions gate on the
+integer, and a bump falsely signals "breaking" to them. Additive changes are
+instead recorded here + mirrored in both codecs + added to the fixture so the
+conformance test covers them. (Receivers MUST already ignore unknown `type`s.)
+
+History (additive, still v1):
+- `turn` event + `done.remaining`/`done.reason` + `task.test_cmd` — the loop-fix
+  patch (final verification gate). v1 consumers ignore them.
 
 ### Messages (wire = NDJSON, one JSON object per line, keys snake_case, ASCII-safe)
 
@@ -43,18 +50,19 @@ still bumps — the fixture is exact-match. Receivers MUST ignore unknown messag
 | `stage` | `name, face` | staged-lifecycle marker |
 | `monologue` | `text, depth` | nested reasoning-tree line |
 | `skill` | `name, reason` | a procedure packet was pinned |
+| `turn` | `n, tool_calls, malformed, invented, no_call, fail_count` | per-assistant-turn diag (§8 emission curve) |
 | `tool_call` | `id, name, args` | host must execute + reply with `tool_result` (same `id`) |
 | `telemetry` | `tokens, tps, ctx_used, ctx_cap, vram` | live effort/velocity |
 | `status` | `phase, pool_used, pool_cap` | drives the pool bar (`pool_cap = pool_gb × 233M`) |
 | `checkpoint` | `git_sha` | a verified step was committed |
-| `done` | `ok, result` | run finished |
+| `done` | `ok, result, remaining, reason` | run finished; `ok` from a real final test run (see invariant 5) |
 | `error` | `msg` | run aborted |
 
 **host → brain (commands)**
 
 | type | fields | meaning |
 |---|---|---|
-| `task` | `text, cwd, pool_gb, effort, model` | starts a run (first message) |
+| `task` | `text, cwd, pool_gb, effort, model, test_cmd` | starts a run (first message). `test_cmd`="" → unverifiable run |
 | `tool_result` | `id, output, exit_code` | reply to a `tool_call` (id MUST echo) |
 | `control` | `action (pause\|resume\|steer), note` | interactive control |
 
@@ -75,6 +83,13 @@ still bumps — the fixture is exact-match. Receivers MUST ignore unknown messag
    emits no `tool_call` frame, so `CloudBrain.sendToolResult` is a no-op. When
    the server adds `tool_call` frames + an upstream channel it implements the
    same round-trip — no host change. This is a known divergence, not silent.
+5. **`done.ok` is ground-truth, never self-report.** The brain runs the test
+   command one final time before `done` and derives `ok` from its exit code — an
+   agent must never emit `ok:true` that contradicts its own last `run_tests`. A
+   no-tool-call turn means "verify, then keep going or stall", NOT "success".
+   `done.reason` ∈ {"", stalled, no-progress, max-turns, unverified}; the host
+   manifest's `finalStatus` mirrors it (`ok` only on a verified green;
+   `unverified` when `task.test_cmd`=""). `remaining` = failing tests when not ok.
 
 ---
 

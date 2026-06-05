@@ -173,11 +173,18 @@ node /ABS/PATH/TO/aether-code/dist/src/main.js code --local "fix the failing tes
 cat calc.py                      # return a + b  (fixed)
 pytest -q                        # 1 passed
 git log --oneline                # an "aether: step N green" checkpoint commit
-cat ~/.aether-code/logs/*/manifest.json   # "finalStatus": "ok", toolCalls > 0
+cat ~/.aether-code/logs/*/manifest.json   # "finalStatus": "ok", "remaining": 0, toolCalls > 0
 ```
 
 If `calc.py` is fixed AND `pytest` is green AND a checkpoint commit exists AND
 the manifest says `ok` — **the full loop works.**
+
+> **`finalStatus` is now ground-truth** (loop-fix patch): the brain runs the test
+> command one final time before `done` and derives `ok` from it. Possible values:
+> `ok` (verified green), `incomplete`/`stalled`/`no-progress`/`max-turns`
+> (tried, didn't converge — `remaining` = failing count), or `unverified` (no
+> test gate). It can NEVER report `ok` while tests fail. A run that "did nothing
+> and claimed success" is now impossible — that was the bug this patch fixed.
 
 ---
 
@@ -202,39 +209,36 @@ Then run the triage script over the session log. Save as `triage_log.py`:
 import json, sys
 events = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()]
 
-# A model turn starts at each `status reasoning` (top of the brain loop). Attribute
-# tool_calls / errors / malformed-args to the turn they occur in.
-turns, cur = [], None
-def new(): return {"tool_calls": 0, "errors": 0, "wrong_id": 0, "malformed": 0}
-for e in events:
-    t = e.get("type")
-    if t == "status" and e.get("phase") == "reasoning":
-        cur = new(); turns.append(cur)
-    if cur is None:
-        cur = new(); turns.append(cur)
-    if t == "tool_call": cur["tool_calls"] += 1
-    elif t == "monologue" and str(e.get("text", "")).startswith("malformed-args"): cur["malformed"] += 1
-    elif t == "error":
-        cur["errors"] += 1
-        if "mismatch" in e.get("msg", ""): cur["wrong_id"] += 1
+# Per-turn diagnostics come straight from the `turn` events the brain now emits:
+# {type:"turn", n, tool_calls, malformed, invented, no_call, fail_count}
+turns = [e for e in events if e.get("type") == "turn"]
+errs = [e for e in events if e.get("type") == "error"]
+chk = sum(1 for e in events if e.get("type") == "checkpoint")
+done = next((e for e in events if e.get("type") == "done"), None)
 
 n = len(turns)
-chk = sum(1 for e in events if e.get("type") == "checkpoint")
-done = [e for e in events if e.get("type") == "done"]
-def s(ts, k): return sum(x[k] for x in ts)
-def rate(ts): return round(s(ts, "tool_calls") / len(ts), 2) if ts else 0.0
+def s(ts, k): return sum(int(x.get(k) or 0) for x in ts)
+def rate(ts):  # tool_calls per turn — the emission health number
+    return round(s(ts, "tool_calls") / len(ts), 2) if ts else 0.0
 third = max(1, n // 3)
 early, late = turns[:third], turns[-third:]
+wrong_id = sum(1 for e in errs if "mismatch" in e.get("msg", ""))
+no_call = sum(1 for x in turns if x.get("no_call"))
 
 print(f"model turns        : {n}")
 print(f"tool_calls         : {s(turns,'tool_calls')}")
-print(f"errors             : {s(turns,'errors')}  (wrong_id {s(turns,'wrong_id')}, adapter/other {s(turns,'errors')-s(turns,'wrong_id')})")
-print(f"malformed-args      : {s(turns,'malformed')}")
-print(f"checkpoints         : {chk}")
-print(f"EARLY third  turns={len(early)} tool_calls={s(early,'tool_calls')} errors={s(early,'errors')} malformed={s(early,'malformed')} emission_rate={rate(early)}")
-print(f"LATE  third  turns={len(late)}  tool_calls={s(late,'tool_calls')} errors={s(late,'errors')} malformed={s(late,'malformed')} emission_rate={rate(late)}")
-finish = "done(ok)" if done and done[-1].get("ok") else ("done(fail)" if done else "NO done — STALLED/LOOPED")
-print(f"finish             : {finish}   (premature if checkpoints==0 and finish==done(ok) = no-call-just-prose)")
+print(f"malformed-args      : {s(turns,'malformed')}   invented-tool: {s(turns,'invented')}")
+print(f"no-call turns       : {no_call}   wrong-id errors: {wrong_id}   checkpoints: {chk}")
+print(f"EARLY third  turns={len(early)} tool_calls={s(early,'tool_calls')} malformed={s(early,'malformed')} invented={s(early,'invented')} emission_rate={rate(early)}")
+print(f"LATE  third  turns={len(late)}  tool_calls={s(late,'tool_calls')} malformed={s(late,'malformed')} invented={s(late,'invented')} emission_rate={rate(late)}")
+
+# failing-count progress curve (did it actually grind the bugs down?)
+curve = [x.get("fail_count") for x in turns if x.get("fail_count") is not None]
+print(f"fail_count curve    : {curve}")
+if done:
+    print(f"finish             : ok={done.get('ok')}  reason={done.get('reason') or '-'}  remaining={done.get('remaining')}")
+else:
+    print("finish             : NO done event — STALLED/LOOPED")
 ```
 
 ```bash
