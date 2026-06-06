@@ -2,7 +2,7 @@
 
 # ⌨️ Aether Code
 
-An **open-source coding agent for your terminal** — every Aether model and orchestrator, in any repo, behind **one login**.
+A coding agent for your terminal** — every Aether model and orchestrator, in any repo, behind **one login**.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-06b6d4)](LICENSE) [![Node](https://img.shields.io/badge/node-%E2%89%A520-14b8a6)](https://nodejs.org) [![Built by Aether](https://img.shields.io/badge/built%20by-Aether-7c3aed)](https://aethersystems.net)
 
