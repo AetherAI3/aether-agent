@@ -32,16 +32,8 @@ A coding agent for your terminal** — every Aether model and orchestrator, in a
 </div>
 
 ---
-
-## The problem
-
-Every terminal coding agent ships welded to one vendor's model. You want Opus for the gnarly refactor, a cheap fast model for the boilerplate, a long-context model for the giant file, an **orchestrator** for the multi-step build — and you end up juggling four CLIs, four logins, four billing pages. Worse, most of them want your source pushed to *their* cloud just to think about it.
-
-You shouldn't have to pick your model by picking your tool.
-
-## The fix
-
-Aether Code is **one terminal over the whole Aether model fleet.** Switch models mid-session like changing a setting. Reach the **Neo** and **Kronus** orchestrators when a task needs a planner + sub-agents, not just a chat. One account, one usage balance, one audit trail — and your repository stays on your disk. Aether Code is the *hands*; Aether runs the *brains*.
+## What it does
+Aether Code is **one terminal over the whole Aether model fleet.** Switch /models and run multiple coding agents from our api. Reach the **Neo** and **Kronus** orchestrators when a task needs a planner + sub-agents, not just a chat. One account, one usage balance, one audit trail (/logs) — and your repository stays on your disk. Aether Code is the *hands*; Aether runs the *brains*.
 
 <p align="center"><strong>Four tools, four logins ✗ &nbsp;→&nbsp; One terminal, every model ✓</strong></p>
 
