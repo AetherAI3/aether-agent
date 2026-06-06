@@ -22,7 +22,7 @@ An **open-source coding agent for your terminal** — every Aether model and orc
   <a href="#the-fix">Fix</a> ·
   <a href="#how-it-works-60-seconds">How it works</a> ·
   <a href="#what-you-get">What you get</a> ·
-  <a href="#one-login">Login</a> ·
+  <a href="#sign-in">Sign in</a> ·
   <a href="#commands">Commands</a> ·
   <a href="#quickstart">Quickstart</a> ·
   <a href="#embed-the-core">Embed</a> ·
@@ -132,10 +132,11 @@ The handful you'll actually reach for — full reference in [`COMMANDS.md`](COMM
 **Inside the REPL**, Claude-Code-style slash commands:
 
 ```text
-/models            list models            /agents         list orchestrators
-/model <n|id>      switch model           /agent <n|id>   switch orchestrator
-/tier              plan + default         /audit [n]      recent receipts
-/clear             clear screen           /help           commands     /exit
+/models           list models           /agents          list orchestrators
+/model <n|id>     switch model           /agent <n|id>    switch orchestrator
+/tier             plan + default         /audit [n]       recent receipts
+/clear            clear screen           /help            list commands
+/exit, /quit      leave the REPL
 ```
 
 ## Quickstart
