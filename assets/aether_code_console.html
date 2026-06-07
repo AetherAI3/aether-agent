@@ -1,0 +1,65 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- Source mockup for the README hero image (assets/aether_code_console.png).
+     Mirrors the real terminal: splash from src/ui/splash.ts, the pool-fill
+     status bar from src/ui/statusbar.ts, and the theme from src/ui/theme.ts.
+     Re-screenshot this file to regenerate the PNG. -->
+<title>aether code — console</title>
+<style>
+  html,body{margin:0;min-height:100%;background:#04080a;}
+  body{min-height:100vh;box-sizing:border-box;padding:48px;
+    display:flex;align-items:center;justify-content:center;
+    background-image:radial-gradient(120% 85% at 50% 4%,#0a1a1e 0%,#04080a 62%);
+    font-family:'Cascadia Mono','Consolas','DejaVu Sans Mono',monospace;}
+  .win{display:inline-block;background:#060c0e;border:1px solid #103038;
+    border-radius:9px;box-shadow:0 24px 80px rgba(0,0,0,.7),
+    0 0 0 1px rgba(26,166,183,.06),0 0 60px rgba(26,166,183,.12);overflow:hidden;
+    margin:0;}
+  .bar{height:30px;display:flex;align-items:center;gap:8px;padding:0 12px;
+    background:linear-gradient(#0c1c20,#081418);border-bottom:1px solid #103038;}
+  .bar .dot{width:11px;height:11px;border-radius:50%;}
+  .bar .x{background:#ff5f56;} .bar .y{background:#ffbd2e;} .bar .z{background:#27c93f;}
+  .bar .title{margin-left:8px;color:#5a8a90;font-size:12px;letter-spacing:.04em;}
+  pre.term{margin:0;padding:18px 22px 20px;white-space:pre;tab-size:2;
+    font-size:16px;line-height:1.34;color:#cfe0e2;position:relative;}
+  pre.term::after{content:"";position:absolute;inset:0;pointer-events:none;
+    background:repeating-linear-gradient(0deg,transparent 0 2px,rgba(0,0,0,.18) 2px 3px);
+    mix-blend-mode:multiply;}
+  .c{color:#22c2d6;text-shadow:0 0 6px rgba(26,166,183,.45);}
+  .i{color:#87d7ff;text-shadow:0 0 6px rgba(135,215,255,.4);}
+  .g{color:#56d364;text-shadow:0 0 6px rgba(63,185,80,.45);}
+  .d{color:#7f8c8c;} .m{color:#4a5a5c;} .b{font-weight:700;}
+  .cur{display:inline-block;width:.62em;height:1.05em;vertical-align:-2px;
+    background:#22c2d6;box-shadow:0 0 8px rgba(26,166,183,.7);margin-left:2px;}
+</style></head><body>
+  <div class="win">
+    <div class="bar"><span class="dot x"></span><span class="dot y"></span>
+      <span class="dot z"></span>
+      <span class="title">aether code &mdash; session</span></div>
+    <pre class="term"><span class="i">   ▄▄███▄▄    </span>  <span class="b"><span class="c">AETHER CODE</span></span>
+<span class="i">  ▄█████████▄ </span>  <span class="d">v0.1.0</span>
+<span class="i">  ███▄███▄███ </span>  [ <span class="c">/model</span> - opus ]  [ <span class="c">/effort</span> MAX ]
+<span class="i">  ▀████▄████▀ </span>  <span class="d">/mcp     need to fix aether code? run /doctor</span>
+<span class="i">    ▀ ▀ ▀ ▀   </span>
+
+<span class="d">  an open-source coding agent for your terminal — cloud or </span><span class="c">--local</span><span class="d">.</span>
+<span class="d">  type a prompt, or </span><span class="c">/help</span><span class="d"> for commands. </span><span class="c">/exit</span><span class="d"> to quit.</span>
+
+<span class="c b">aether›</span> refactor src/auth.ts to use async/await and add tests
+
+<span class="c">  scanning repo (ノ￣ー￣)ノ⌨</span><span class="d">   mapping imports of src/auth.ts</span>
+<span class="c">●</span>  read   <span class="i">src/auth.ts</span>            <span class="d">142 lines</span>
+<span class="c">●</span>  read   <span class="i">src/session.ts</span>          <span class="d"> 88 lines</span>
+<span class="c">  reasoning (๑•̀ㅂ•́)و✧✎</span><span class="d">   4 callbacks → async · wrap login() in try/catch</span>
+<span class="c">●</span>  edit   <span class="i">src/auth.ts</span>            <span class="d">callback → async/await   (4 hunks)</span>
+<span class="c">●</span>  write  <span class="i">tests/auth.test.ts</span>     <span class="d">6 cases — login · refresh · expiry · bad-token</span>
+<span class="c">  grounding ( Ò﹏Ó)✎</span><span class="d">   running test command</span>
+<span class="g">●  [PASS]</span>  <span class="d">6 passed in 0.42s</span>
+<span class="m">·</span>  <span class="d">edited 2 files (+118 −74)  ·  receipt a91f4c2</span>
+
+<span class="d">  anchoring context ＿φ(°-°=) local/cache  </span>[ <span class="c">412.6M</span> / <span class="d">1.17B</span> tokens ] |<span class="c">███████████</span><span class="m">░░░░░░░░░░░░░░░░░░░</span>| <span class="c">35.4%</span>
+
+<span class="m">────────────────────────────────────────────────────────────────────────</span>
+<span class="m"> </span><span class="c b">aether›</span>  <span class="cur"></span>
+<span class="m">────────────────────────────────────────────────────────────────────────</span></pre>
+  </div>
+</body></html>
