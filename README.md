@@ -179,7 +179,8 @@ The handful you'll actually reach for — full reference in [`COMMANDS.md`](COMM
 /models            list models            /agents         list orchestrators
 /model <n|id>      switch model           /agent <n|id>   switch orchestrator
 /tier              plan + default         /audit [n]      recent receipts
-/clear             clear screen           /help           commands     /exit
+/clear             clear screen           /help           list commands
+/exit, /quit       leave the REPL
 ```
 
 ## Quickstart
