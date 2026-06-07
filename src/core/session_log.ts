@@ -18,6 +18,20 @@ export function logsRoot(): string {
   return process.env["AETHER_LOG_DIR"] ?? join(homedir(), ".aether-code", "logs");
 }
 
+/** The terminal status of a run. Derived by the host's verify gate (verify_gate.ts)
+ * from a real final test run — NEVER from the brain's self-report. "ok" only when the
+ * host's tests are green; the breaker reasons (stalled/no-progress/max-turns) are the
+ * brain's, surfaced through when the host is red; "unverified" when there is no gate. */
+export type FinalStatus =
+  | "ok"
+  | "incomplete"
+  | "unverified"
+  | "stalled"
+  | "no-progress"
+  | "max-turns"
+  | "failed"
+  | "error";
+
 export interface SessionMeta {
   task: string;
   model: string;
@@ -73,19 +87,7 @@ export class SessionLog {
   /** Finalize the manifest. `finalStatus` is derived from the HOST's own final
    * test run (ground truth), never from the brain's self-report. `remaining` =
    * failing tests when not ok (only written when > 0). */
-  close(
-    finalStatus:
-      | "ok"
-      | "incomplete"
-      | "unverified"
-      | "stalled"
-      | "no-progress"
-      | "max-turns"
-      | "failed"
-      | "error",
-    ended: string,
-    remaining = 0,
-  ): void {
+  close(finalStatus: FinalStatus, ended: string, remaining = 0): void {
     this.writeManifest({ ended, finalStatus, remaining });
   }
 
