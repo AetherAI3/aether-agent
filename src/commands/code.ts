@@ -25,6 +25,8 @@ import { HeartbeatIndicator } from "../ui/heartbeat.js";
 import { LocalAgentSource, bindEventSource } from "../core/agent_events.js";
 import { phaseVerb } from "../ui/phase_verb.js";
 import { lineDiff, renderDiff } from "../ui/diff_render.js";
+import { loadSession, replayLines } from "../core/session_resume.js";
+import { resumeHint } from "./resume.js";
 
 export interface CodeOpts {
   /** Use the local Python/Ollama brain instead of the cloud API. */
@@ -43,6 +45,8 @@ export interface CodeOpts {
   noLog?: boolean;
   /** Number of swarm workers (gated — see the swarm guard below). */
   swarm?: number;
+  /** Resume a prior local session id: replay its transcript before this run. */
+  resume?: string;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -76,6 +80,17 @@ export function editPreview(cwd: string, ev: BrainEvent): string | null {
   return renderDiff(path, ops);
 }
 
+/** Replay a prior local session's transcript into the active surface. Fail-soft:
+ * a missing/unreadable session prints a note and does not abort the new run. */
+function replaySession(id: string, emit: (line: string) => void): void {
+  try {
+    const prior = loadSession(id);
+    for (const line of replayLines(prior.events)) emit(line);
+  } catch (err) {
+    process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
 export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Promise<number> {
   if (!task.trim()) {
     process.stderr.write('✗ nothing to do — try: aether code "fix the failing tests"\n');
@@ -105,6 +120,15 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     ? null
     : new SessionLog({ task, model: ctx.flags.model ?? "", poolGb, brain: brainKind }, nowIso());
 
+  // Ctrl-C prints the exact command to re-enter this session. Registered BEFORE
+  // the renderer's own SIGINT handler so this fires first.
+  if (log) {
+    process.once("SIGINT", () => {
+      process.stderr.write("\n" + resumeHint(log.sessionId) + "\n");
+      process.exit(130);
+    });
+  }
+
   const taskCmd: TaskCommand = {
     type: "task",
     text: task,
@@ -131,6 +155,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   if (animated) {
     const sr = new StatusRenderer({ mode: brainKind === "local" ? "local" : "api" });
     sr.start();
+    if (opts.resume) replaySession(opts.resume, (line) => sr.log(line));
     const anim = new AnimationController({
       onFrame: (stage, art) => sr.setStage(stage, art),
       onProgress: (used, c) => sr.setProgress(used, c),
@@ -155,6 +180,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     };
   } else {
     const renderer = new HostRenderer({ poolGb, quiet: opts.quiet, json: ctx.flags.json });
+    if (opts.resume) replaySession(opts.resume, (line) => process.stdout.write(line + "\n"));
     onEvent = async (ev: BrainEvent): Promise<void> => {
       renderer.event(ev);
       log?.event(ev, nowIso());

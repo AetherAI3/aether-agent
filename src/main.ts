@@ -31,6 +31,8 @@ Usage:
   aether "<prompt>"            One-shot coding turn
   aether code "<task>"         Autonomous coding agent (cloud brain, UVT-metered)
   aether code --local "<task>" Same agent, local Python/Ollama brain (offline)
+  aether resume [id]           Replay a local session (latest if no id)
+  aether code --resume <id>    Resume a paused coding session
   aether run <neo|kronus> "<task>"   Stream an orchestrator run
   aether models [use <id>]     List models + orchestrators / set default
   aether agents                List orchestrators (Neo / Kronus)
@@ -93,6 +95,7 @@ async function main(argv: string[]): Promise<number> {
       interactive: { type: "boolean", default: false },
       "no-log": { type: "boolean", default: false },
       swarm: { type: "string" },
+      resume: { type: "string" },
     },
   });
 
@@ -172,7 +175,12 @@ async function main(argv: string[]): Promise<number> {
         interactive: Boolean(values["interactive"]),
         noLog: Boolean(values["no-log"]),
         swarm: Number(sf(values["swarm"]) ?? "1") || 1,
+        resume: sf(values["resume"]),
       });
+    case "resume": {
+      const { cmdResume } = await import("./commands/resume.js");
+      return cmdResume(ctx, rest[0] ?? "");
+    }
     case "chat":
       return cmdChat(ctx, rest.join(" "));
     default:
