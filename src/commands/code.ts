@@ -28,6 +28,8 @@ import { phaseVerb } from "../ui/phase_verb.js";
 import { lineDiff, renderDiff } from "../ui/diff_render.js";
 import { loadSession, replayLines } from "../core/session_resume.js";
 import { resumeHint } from "./resume.js";
+import { createWorktree, mergeHint, type Worktree } from "../core/worktree.js";
+import { parseRepoSpec, ensureLocalClone, prCreateHint, type RepoSpec } from "../core/repo.js";
 
 export interface CodeOpts {
   /** Use the local Python/Ollama brain instead of the cloud API. */
@@ -48,6 +50,10 @@ export interface CodeOpts {
   swarm?: number;
   /** Resume a prior local session id: replay its transcript before this run. */
   resume?: string;
+  /** Isolate the run in a fresh git worktree on an auto-named branch. */
+  worktree?: boolean;
+  /** Work on a GitHub repo (owner/name): clone via gh/git, then worktree it. */
+  repo?: string;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -111,7 +117,35 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     );
     return 2;
   }
-  const cwd = ctx.flags.cwd;
+  // --repo owner/name: bring the user's GitHub repo local (their own gh/git
+  // auth — no backend token) so the agent can work on it. --repo implies a
+  // worktree so the run lands on an isolated branch ready for a PR.
+  let repoSpec: RepoSpec | null = null;
+  let repoRoot = ctx.flags.cwd;
+  if (opts.repo) {
+    try {
+      repoSpec = parseRepoSpec(opts.repo);
+      const co = ensureLocalClone(repoSpec);
+      repoRoot = co.dir;
+      process.stderr.write(`⎇ repo ${repoSpec.full} ${co.cloned ? "(cloned)" : "(reusing local clone)"}\n  ${co.dir}\n`);
+    } catch (err) {
+      process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+      return 1;
+    }
+  }
+  // --worktree (or implied by --repo): cut a fresh git worktree off the repo and
+  // run the agent there, so its edits land on an isolated branch, not your tree.
+  let worktree: Worktree | null = null;
+  if (opts.worktree || opts.repo) {
+    try {
+      worktree = createWorktree(repoRoot, task);
+      process.stderr.write(`⌥ worktree ${worktree.branch}\n  ${worktree.dir}\n`);
+    } catch (err) {
+      process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+      return 1;
+    }
+  }
+  const cwd = worktree ? worktree.dir : ctx.flags.cwd;
   const poolGb = opts.pool > 0 ? opts.pool : 5;
   const brainKind: "local" | "cloud" = opts.local ? "local" : "cloud";
 
@@ -217,6 +251,8 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     const tail = remaining > 0 ? ` (${remaining} failing)` : "";
     process.stderr.write(`\n  ⤷ log: ${log.dir} · ${finalStatus}${tail}\n`);
   }
+  if (worktree) process.stderr.write(mergeHint(worktree));
+  if (repoSpec && worktree) process.stderr.write(prCreateHint(repoSpec, worktree.branch));
   // Process exit follows the HOST: 0 only on a verified-green run. With no gate
   // ("unverified") there is no ground truth, so the loop's own code stands.
   if (finalStatus === "ok") return 0;

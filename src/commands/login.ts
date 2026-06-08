@@ -7,12 +7,12 @@
 //   --no-browser        print the URL instead of opening it
 
 import { createInterface } from "node:readline";
-import { spawn } from "node:child_process";
 import { stdin, stdout } from "node:process";
 import type { AppContext } from "../core/context.js";
 import { loginWithPassword } from "../core/auth.js";
 import { LOGOUT_PATH } from "../core/transport.js";
 import { requestDeviceCode, pollForToken } from "../core/device.js";
+import { openBrowser } from "../core/browser.js";
 
 export interface LoginOpts {
   token?: string;
@@ -98,20 +98,6 @@ export async function cmdLogout(ctx: AppContext): Promise<number> {
   await ctx.tokens.clear();
   process.stdout.write("Logged out.\n");
   return 0;
-}
-
-/** Open a URL in the default browser, cross-platform. Best-effort, non-fatal. */
-function openBrowser(url: string): void {
-  try {
-    const cmd =
-      process.platform === "win32" ? "cmd" : process.platform === "darwin" ? "open" : "xdg-open";
-    const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
-    const child = spawn(cmd, args, { stdio: "ignore", detached: true });
-    child.on("error", () => {});
-    child.unref();
-  } catch {
-    // Headless / no browser — the URL was already printed above.
-  }
 }
 
 function readStdin(): Promise<string> {

@@ -6,8 +6,11 @@ import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { AetherConfig } from "../types.js";
 
+// The public API front door. The backend is exposed under /cloud (VPS1 proxy →
+// VPS2); the apex returns an info blob, so the /cloud suffix is required for
+// every API call (auth, chat, github connect). Override with AETHER_BASE_URL.
 export const DEFAULT_CONFIG: AetherConfig = {
-  baseUrl: "https://api.aethersystems.net",
+  baseUrl: "https://api.aethersystems.net/cloud",
   defaultModel: "",
   permissionMode: "ask",
   autoApply: false,
@@ -24,14 +27,23 @@ export function configPath(): string {
 
 export function loadConfig(): AetherConfig {
   const path = configPath();
-  if (!existsSync(path)) return { ...DEFAULT_CONFIG };
-  try {
-    const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<AetherConfig>;
-    return { ...DEFAULT_CONFIG, ...raw };
-  } catch {
-    // Corrupt config must never brick the CLI — fall back to defaults.
-    return { ...DEFAULT_CONFIG };
+  let cfg: AetherConfig;
+  if (!existsSync(path)) {
+    cfg = { ...DEFAULT_CONFIG };
+  } else {
+    try {
+      const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<AetherConfig>;
+      cfg = { ...DEFAULT_CONFIG, ...raw };
+    } catch {
+      // Corrupt config must never brick the CLI — fall back to defaults.
+      cfg = { ...DEFAULT_CONFIG };
+    }
   }
+  // Env override wins (matches the upstream CLI), so a single env var can point
+  // every API call at a staging/self-hosted backend without editing config.json.
+  const envBase = process.env["AETHER_BASE_URL"];
+  if (envBase) cfg = { ...cfg, baseUrl: envBase };
+  return cfg;
 }
 
 export function saveConfig(cfg: AetherConfig): void {
