@@ -14,9 +14,6 @@ import { cmdLogin, cmdLogout, type LoginOpts } from "./commands/login.js";
 import { cmdAuth } from "./commands/auth.js";
 import { cmdModels, cmdAgents } from "./commands/models.js";
 import { cmdRun } from "./commands/run.js";
-import { cmdReceipt } from "./commands/receipt.js";
-import { cmdAudit } from "./commands/audit.js";
-import { cmdConfig } from "./commands/config.js";
 import { cmdCode } from "./commands/code.js";
 
 const VERSION = "0.1.0";
@@ -153,18 +150,24 @@ async function main(argv: string[]): Promise<number> {
       return cmdLogin(ctx, loginOpts);
     case "logout":
       return cmdLogout(ctx);
-    case "audit":
+    case "audit": {
+      const { cmdAudit } = await import("./commands/audit.js");
       return cmdAudit(ctx, rest);
+    }
     case "models":
       return cmdModels(ctx, rest);
     case "agents":
       return cmdAgents(ctx);
     case "run":
       return cmdRun(ctx, rest[0] ?? "", rest.slice(1).join(" "));
-    case "receipt":
+    case "receipt": {
+      const { cmdReceipt } = await import("./commands/receipt.js");
       return cmdReceipt(ctx, rest[0] ?? "");
-    case "config":
+    }
+    case "config": {
+      const { cmdConfig } = await import("./commands/config.js");
       return cmdConfig(ctx, rest);
+    }
     case "code":
       return cmdCode(ctx, rest.join(" "), {
         local: Boolean(values["local"]),

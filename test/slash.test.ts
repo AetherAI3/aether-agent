@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolveSelection, handleSlash } from "../src/commands/slash.js";
+import { resolveSelection, handleSlash, primeCatalog } from "../src/commands/slash.js";
 import type { CatalogItem } from "../src/types.js";
 import type { AppContext } from "../src/core/context.js";
 
@@ -58,4 +58,16 @@ test("/model switch prompts and, on yes, signals a restart", async () => {
 test("/model switch on no does NOT restart", async () => {
   const res = await handleSlash(fakeCtx(false), "/model opus", { write: () => {} } as never);
   assert.equal(res.restart, undefined);
+});
+
+test("primeCatalog swallows fetch errors (never blocks the prompt)", async () => {
+  const ctx = {
+    api: {
+      getJson: async () => {
+        throw new Error("offline");
+      },
+    },
+  } as unknown as AppContext;
+  await primeCatalog(ctx); // must not throw
+  assert.ok(true);
 });
