@@ -310,6 +310,11 @@ export class TuiLayout {
           i += m[0].length;
           continue;
         }
+        // Lone / non-SGR ESC byte: pass it through but don't count it as a
+        // visible column (it isn't one), so truncation stays accurate.
+        out += s[i];
+        i++;
+        continue;
       }
       out += s[i];
       vis++;

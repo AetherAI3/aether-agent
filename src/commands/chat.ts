@@ -159,6 +159,10 @@ async function repl(ctx: AppContext): Promise<number> {
 
   let pasting = false;
   let pasteAcc = "";
+  // A turn/slash is async; Node still delivers stdin 'data' events while we await.
+  // `busy` blocks edit/submit keys mid-turn so the buffer can't be corrupted by a
+  // reentrant handler. Ctrl-C is always honored (handled before this guard).
+  let busy = false;
   return await new Promise<number>((resolve) => {
     const cleanup = (): void => {
       process.stdout.write("\x1b[?2004l");
@@ -172,6 +176,14 @@ async function repl(ctx: AppContext): Promise<number> {
     };
     const onData = async (chunk: Buffer): Promise<void> => {
       const seq = chunk.toString("utf8");
+      // Ctrl-C interrupts even mid-turn; everything else waits until the turn ends.
+      if (!pasting && seq === "\x03") {
+        cleanup();
+        process.stdout.write("\n");
+        resolve(0);
+        return;
+      }
+      if (busy) return;
       if (pasting) {
         const end = seq.indexOf("\x1b[201~");
         if (end >= 0) {
@@ -247,6 +259,7 @@ async function repl(ctx: AppContext): Promise<number> {
             repaint();
             return;
           }
+          busy = true;
           if (t.startsWith("/")) {
             try {
               const res = await handleSlash(ctx, t, process.stdout);
@@ -261,6 +274,8 @@ async function repl(ctx: AppContext): Promise<number> {
               }
             } catch (err) {
               printError(err);
+            } finally {
+              busy = false;
             }
             repaint();
             return;
@@ -269,6 +284,8 @@ async function repl(ctx: AppContext): Promise<number> {
             await runTurn(ctx, t);
           } catch (err) {
             printError(err);
+          } finally {
+            busy = false;
           }
           repaint();
           return;
