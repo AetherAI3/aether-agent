@@ -21,6 +21,7 @@ import { StatusRenderer } from "../ui/status_renderer.js";
 import { AnimationController } from "../ui/animations.js";
 import { HeartbeatIndicator } from "../ui/heartbeat.js";
 import { LocalAgentSource, bindEventSource } from "../core/agent_events.js";
+import { phaseVerb } from "../ui/phase_verb.js";
 
 export interface CodeOpts {
   /** Use the local Python/Ollama brain instead of the cloud API. */
@@ -42,6 +43,21 @@ export interface CodeOpts {
 }
 
 const nowIso = (): string => new Date().toISOString();
+
+/** Map a BrainEvent onto the pinned status line (verb + streamed tokens).
+ * Exported so the wiring is unit-testable without a real brain. */
+export function applyEventToStatus(
+  sr: { setVerb(v: string, k: string): void; setStreamed(n: number): void },
+  ev: BrainEvent,
+  tick: number,
+): void {
+  if (ev.type === "stage") {
+    const v = phaseVerb(ev.name, tick);
+    sr.setVerb(v.verb, v.kao);
+  } else if (ev.type === "telemetry") {
+    sr.setStreamed(ev.tokens);
+  }
+}
 
 export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Promise<number> {
   if (!task.trim()) {
@@ -105,8 +121,10 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     const hb = new HeartbeatIndicator({ onFrame: (g) => sr.setHeartbeat(g) });
     const source = new LocalAgentSource();
     bindEventSource(source, sr, anim, { hb, heartbeatTimeoutMs: 5000 });
+    let tick = 0;
     onEvent = async (ev: BrainEvent): Promise<void> => {
       log?.event(ev, nowIso());
+      applyEventToStatus(sr, ev, tick++);
       source.feedBrain(ev); // adapter -> animation/status (presentation only)
       if (interactive && ev.type === "stage") await stageGate(brain, ev.name);
     };
