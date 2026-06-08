@@ -57,6 +57,7 @@ aether code flags:
   --interactive  Pause at each stage boundary to type a steer (TTY only)
   --no-log       Disable the local session log (~/.aether-code/logs)
   --worktree     Run in a fresh git worktree on an auto-named branch (isolated)
+  --repo <o/n>   Work on a GitHub repo (clones via your gh/git auth, worktrees it)
   --swarm <N>    N-agent swarm (gated; local-only; see docs/SWARM_PLAN.md)
 
 Local model tiers (--model, via Ollama):
@@ -95,6 +96,7 @@ async function main(argv: string[]): Promise<number> {
       interactive: { type: "boolean", default: false },
       "no-log": { type: "boolean", default: false },
       worktree: { type: "boolean", default: false },
+      repo: { type: "string" },
       swarm: { type: "string" },
       resume: { type: "string" },
     },
@@ -184,6 +186,7 @@ async function main(argv: string[]): Promise<number> {
         interactive: Boolean(values["interactive"]),
         noLog: Boolean(values["no-log"]),
         worktree: Boolean(values["worktree"]),
+        repo: sf(values["repo"]),
         swarm: Number(sf(values["swarm"]) ?? "1") || 1,
         resume: sf(values["resume"]),
       });
