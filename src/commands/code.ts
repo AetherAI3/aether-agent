@@ -19,6 +19,7 @@ import { CloudBrain } from "../core/brain_cloud.js";
 import { ToolExecutor } from "../core/tool_executor.js";
 import { HostRenderer } from "../ui/host_render.js";
 import { SessionLog } from "../core/session_log.js";
+import { finalVerify, type BrainDone } from "../core/verify_gate.js";
 import { StatusRenderer } from "../ui/status_renderer.js";
 import { AnimationController } from "../ui/animations.js";
 import { HeartbeatIndicator } from "../ui/heartbeat.js";
@@ -152,6 +153,17 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   let onEvent: (ev: BrainEvent) => void | Promise<void>;
   let teardown = (): void => {};
 
+  // Capture the brain's terminal event — advisory input to the host verify gate.
+  // `done` (the brain finished its loop): its breaker reason enriches a red result
+  // but never upgrades a red run to "ok". `error` (the brain CRASHED mid-run): the
+  // run is untrustworthy, so a coincidentally-green tree is reported "error", not "ok".
+  let lastDone: BrainDone | null = null;
+  let sawError = false;
+  const captureDone = (ev: BrainEvent): void => {
+    if (ev.type === "done") lastDone = { ok: ev.ok, remaining: ev.remaining, reason: ev.reason };
+    else if (ev.type === "error") sawError = true;
+  };
+
   if (animated) {
     const sr = new StatusRenderer({ mode: brainKind === "local" ? "local" : "api" });
     sr.start();
@@ -169,6 +181,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
       applyEventToStatus(sr, ev, tick++);
       const dp = editPreview(cwd, ev);
       if (dp) sr.log(dp);
+      captureDone(ev);
       source.feedBrain(ev); // adapter -> animation/status (presentation only)
       if (interactive && ev.type === "stage") await stageGate(brain, ev.name);
     };
@@ -186,6 +199,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
       log?.event(ev, nowIso());
       const dp = editPreview(cwd, ev);
       if (dp) process.stdout.write(dp + "\n");
+      captureDone(ev);
       if (interactive && ev.type === "stage") await stageGate(brain, ev.name);
     };
   }
@@ -194,24 +208,20 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   teardown();
 
   // ── Final verification gate: ground truth, never the brain's self-report ──
-  // The host runs the test command ITSELF and derives finalStatus from the exit
-  // code — it does not trust the brain's done event. Only "ok" when the final
-  // verify is green; "incomplete" (with the failing count) whenever tests fail.
-  let finalStatus: "ok" | "incomplete" | "unverified" = "unverified";
-  let remaining = 0;
-  if (opts.testCmd) {
-    const verify = exec.execute("run_tests", {});
-    if (verify.exitCode === 0) {
-      finalStatus = "ok";
-    } else {
-      finalStatus = "incomplete";
-      const m = verify.output.match(/(\d+) failed/);
-      remaining = m ? parseInt(m[1]!, 10) : -1;
-    }
-  }
+  // The host re-runs the test command ITSELF and derives finalStatus from the real
+  // exit code (verify_gate.ts). The brain's `done` is advisory — it only enriches a
+  // red result with its breaker reason and can never upgrade a red run to "ok".
+  const { status: finalStatus, remaining, exitCode: verifyExit } = finalVerify(exec, opts.testCmd, lastDone, sawError);
   log?.close(finalStatus, nowIso(), remaining);
-  if (log) process.stderr.write(`\n  ⤷ log: ${log.dir} · ${finalStatus}\n`);
-  return finalStatus === "incomplete" ? 1 : code;
+  if (log) {
+    const tail = remaining > 0 ? ` (${remaining} failing)` : "";
+    process.stderr.write(`\n  ⤷ log: ${log.dir} · ${finalStatus}${tail}\n`);
+  }
+  // Process exit follows the HOST: 0 only on a verified-green run. With no gate
+  // ("unverified") there is no ground truth, so the loop's own code stands.
+  if (finalStatus === "ok") return 0;
+  if (finalStatus === "unverified") return code;
+  return verifyExit !== 0 ? verifyExit : 1;
 }
 
 /** Pause at a stage boundary; an entered line becomes a /steer, blank resumes. */
