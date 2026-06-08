@@ -1,7 +1,7 @@
 {
   "name": "aether-code",
   "version": "0.1.0",
-  "description": "An open-source coding agent for your terminal — every Aether model and orchestrator in any repo, signed in with your Aether account.",
+  "description": "Open-source terminal coding agent — runs on hosted frontier models (Claude, GPT, DeepSeek, Kimi, Gemma) or fully offline via Ollama. Edits your code, runs your tests, and verifies the result.",
   "type": "module",
   "bin": {
     "aether": "dist/src/main.js",
@@ -30,17 +30,26 @@
     "build": "tsc -p tsconfig.json",
     "dev": "node --experimental-strip-types src/main.ts",
     "start": "node dist/src/main.js",
-    "test": "npm run build && node --test dist/test/",
+    "test": "npm run build && node --test \"dist/test/*.test.js\"",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
   },
   "keywords": [
     "aether",
     "coding-agent",
+    "coding-assistant",
+    "autonomous-agent",
+    "ai-agent",
     "cli",
     "llm",
     "ai",
     "terminal",
     "agent",
+    "ollama",
+    "local-llm",
+    "offline-ai",
+    "claude",
+    "gpt",
+    "deepseek",
     "neo",
     "kronus"
   ],

@@ -1,7 +1,7 @@
 # CONTRACTS — canonical wire protocols
 
 This file is the **single source of truth** for cross-process wire contracts.
-Parallel build sessions (S1–S9) and both bridge mirrors build against THIS doc.
+Both bridge mirrors (TS host + Python brain) build against THIS doc.
 Changing a shape here is a deliberate, versioned act — not a side effect of a
 code edit. If code and this doc disagree, **this doc wins** and the code is the
 bug.
@@ -32,8 +32,8 @@ mirrors + both fixtures) only on a BREAKING change:
 
 **Additive, forward-compatible changes do NOT bump the integer** — a new message
 `type`, or a new OPTIONAL field on an existing message, that old (v1) consumers
-safely IGNORE. This is deliberate: the parallel S1–S9 sessions gate on the
-integer, and a bump falsely signals "breaking" to them. Additive changes are
+safely IGNORE. This is deliberate: downstream consumers gate on the integer, and
+a bump falsely signals "breaking" to them. Additive changes are
 instead recorded here + mirrored in both codecs + added to the fixture so the
 conformance test covers them. (Receivers MUST already ignore unknown `type`s.)
 
@@ -41,8 +41,8 @@ History:
 - **v2** — `turn` event + `done.remaining`/`done.reason` + `task.test_cmd` (the
   loop-fix / final-verification-gate patch). All additions are backward-tolerant
   (old consumers ignore the new event + optional fields); the integer was bumped
-  to 2 alongside the parallel build's schema rev so the conformance fixture +
-  moat-seal CI stay in lockstep across repos.
+  to 2 alongside the schema rev so the conformance fixture stays in lockstep
+  across both repos.
 
 ### Messages (wire = NDJSON, one JSON object per line, keys snake_case, ASCII-safe)
 
@@ -98,10 +98,8 @@ History:
 
 ## Other contracts
 
-- **Universal UVT stream** (chat/orchestrator/MCP SSE): owned by AETHER-CLOUD
-  `docs/superpowers/specs/2026-05-31-uvt-stream-contract.md`; surfaced here by
-  `src/core/stream.ts`. The bridge's `CloudBrain` maps that vocabulary onto the
-  event protocol above.
-- **CLI auth** (device flow + `aek_` PAT): the locked CLI↔portal↔backend
-  contract; see `src/core/device.ts` + the backend `device_authorizations` /
-  `user_api_keys` tables.
+- **Universal UVT stream** (chat/orchestrator/MCP SSE): owned by the Aether
+  platform; surfaced here by `src/core/stream.ts`. The bridge's `CloudBrain` maps
+  that vocabulary onto the event protocol above.
+- **CLI auth** (device flow + `aek_` PAT): the CLI↔platform auth contract; see
+  `src/core/device.ts`.

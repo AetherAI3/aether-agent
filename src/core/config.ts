@@ -6,9 +6,9 @@ import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { AetherConfig } from "../types.js";
 
-// The public API front door. The backend is exposed under /cloud (VPS1 proxy →
-// VPS2); the apex returns an info blob, so the /cloud suffix is required for
-// every API call (auth, chat, github connect). Override with AETHER_BASE_URL.
+// The public API front door. The backend is served under the `/cloud` path; the
+// apex returns an info blob, so the `/cloud` suffix is required for every API
+// call (auth, chat, github connect). Override with AETHER_BASE_URL.
 export const DEFAULT_CONFIG: AetherConfig = {
   baseUrl: "https://api.aethersystems.net/cloud",
   defaultModel: "",

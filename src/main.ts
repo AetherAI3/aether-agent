@@ -58,7 +58,7 @@ aether code flags:
   --no-log       Disable the local session log (~/.aether-code/logs)
   --worktree     Run in a fresh git worktree on an auto-named branch (isolated)
   --repo <o/n>   Work on a GitHub repo (clones via your gh/git auth, worktrees it)
-  --swarm <N>    N-agent swarm (gated; local-only; see docs/SWARM_PLAN.md)
+  --swarm <N>    N-agent swarm (not enabled yet; will be local-only)
 
 Local model tiers (--model, via Ollama):
   small (universal) qwen2.5-coder:7b   ~4.7GB · fits 8GB GPU · best small tools

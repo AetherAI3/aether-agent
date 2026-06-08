@@ -103,17 +103,15 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     process.stderr.write('✗ nothing to do — try: aether code "fix the failing tests"\n');
     return 1;
   }
-  // Swarm is GATED on purpose. The brainstorm sequences it last: "never swarm an
-  // unproven loop — you'd multiply the failure." It is also LOCAL-ONLY (the cloud
-  // path has its own orchestration). The runtime is specified in docs/SWARM_PLAN.md
-  // and is built only after single-agent emission is proven (TESTING_HANDOFF §8).
+  // Swarm is GATED on purpose: never swarm an unproven loop — N agents multiply
+  // the #1 failure (tool-call emission fraying). It is also LOCAL-ONLY (the cloud
+  // path has its own orchestration). Stays gated until the single-agent loop is
+  // proven on real long sessions.
   if ((opts.swarm ?? 1) > 1) {
     process.stderr.write(
-      "✗ --swarm is gated.\n" +
-        "  N-agent swarms multiply the #1 risk (tool-call emission fraying). Prove the\n" +
-        "  single-agent loop first — run TESTING_HANDOFF.md §8 and confirm late-third\n" +
-        "  emission holds. The runtime + build order live in docs/SWARM_PLAN.md.\n" +
-        "  Swarm is also local-only; it will require --local when enabled.\n",
+      "✗ --swarm is not enabled yet.\n" +
+        "  N-agent swarms multiply the #1 risk (tool-call emission fraying), so the\n" +
+        "  single-agent loop is proven first. Swarm will also be local-only (--local).\n",
     );
     return 2;
   }
