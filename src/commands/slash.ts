@@ -49,6 +49,16 @@ async function getCatalog(ctx: AppContext, force = false): Promise<CatalogRespon
   return _catalog;
 }
 
+/** Warm the catalog cache in the background. Fail-soft: a rejected fetch is
+ * swallowed so the prompt is never blocked and the user sees no error. */
+export async function primeCatalog(ctx: AppContext): Promise<void> {
+  try {
+    await getCatalog(ctx, true);
+  } catch {
+    /* offline / token not ready — /models will retry lazily */
+  }
+}
+
 function byKind(cat: CatalogResponse, kind: Kind): CatalogItem[] {
   return cat.models.filter((m) => m.kind === kind);
 }

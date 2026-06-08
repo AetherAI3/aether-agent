@@ -11,10 +11,11 @@ import { decodeSse } from "../core/stream.js";
 import { Renderer } from "../core/render.js";
 import { StreamUnavailableError } from "../core/errors.js";
 import { appendCustody } from "../core/custody.js";
-import { handleSlash } from "./slash.js";
+import { handleSlash, primeCatalog } from "./slash.js";
 import { userInfo } from "node:os";
 import { renderSplash } from "../ui/splash.js";
 import { promptPrefix } from "../ui/prompt.js";
+import { InputBuffer } from "../ui/input_line.js";
 import { VERSION } from "../version.js";
 
 // the Aether API ChatResponse: { response, commitment_hash, verified, threat_level }.
@@ -80,15 +81,210 @@ export async function cmdChat(ctx: AppContext, prompt: string): Promise<number> 
   return repl(ctx);
 }
 
+export type Key =
+  | { kind: "char"; value: string }
+  | { kind: "submit" }
+  | { kind: "backspace" }
+  | { kind: "interrupt" }
+  | { kind: "eof" }
+  | { kind: "left" }
+  | { kind: "right" }
+  | { kind: "home" }
+  | { kind: "end" }
+  | { kind: "up" }
+  | { kind: "down" }
+  | { kind: "word-delete" }
+  | { kind: "paste-start" }
+  | { kind: "paste-end" }
+  | { kind: "ignore" };
+
+/** Decode one raw stdin sequence into a Key. Pure — unit-tested in chat_keys. */
+export function decodeKey(seq: string): Key {
+  switch (seq) {
+    case "\r":
+    case "\n":
+      return { kind: "submit" };
+    case "\x7f":
+    case "\b":
+      return { kind: "backspace" };
+    case "\x03":
+      return { kind: "interrupt" };
+    case "\x04":
+      return { kind: "eof" };
+    case "\x17":
+      return { kind: "word-delete" }; // ctrl-w
+    case "\x1b[D":
+      return { kind: "left" };
+    case "\x1b[C":
+      return { kind: "right" };
+    case "\x1b[H":
+    case "\x1b[1~":
+      return { kind: "home" };
+    case "\x1b[F":
+    case "\x1b[4~":
+      return { kind: "end" };
+    case "\x1b[A":
+      return { kind: "up" };
+    case "\x1b[B":
+      return { kind: "down" };
+    case "\x1b[200~":
+      return { kind: "paste-start" };
+    case "\x1b[201~":
+      return { kind: "paste-end" };
+    default:
+      if (seq.length === 1 && seq >= " ") return { kind: "char", value: seq };
+      return { kind: "ignore" };
+  }
+}
+
 async function repl(ctx: AppContext): Promise<number> {
-  const rl = createInterface({ input: process.stdin });
   const username = userInfo().username || "you";
-  const p = promptPrefix(username);
   const model = ctx.flags.model ?? ctx.cfg.defaultModel ?? "auto";
   process.stdout.write(
     renderSplash({ version: VERSION, model: model || "auto", effort: "default" }) + "\n\n",
   );
   process.stdout.write("Type a prompt, or /help for commands. /exit to quit.\n\n");
+  if (!process.stdin.isTTY) return replLines(ctx);
+  void primeCatalog(ctx); // non-blocking warm; first /models is then instant
+
+  const buf = new InputBuffer();
+  const prompt = promptPrefix(username);
+  const repaint = (): void => {
+    process.stdout.write("\r\x1b[2K" + prompt + buf.value);
+  };
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdout.write("\x1b[?2004h"); // bracketed paste ON
+  repaint();
+
+  let pasting = false;
+  let pasteAcc = "";
+  return await new Promise<number>((resolve) => {
+    const cleanup = (): void => {
+      process.stdout.write("\x1b[?2004l");
+      try {
+        process.stdin.setRawMode(false);
+      } catch {
+        /* terminal already gone */
+      }
+      process.stdin.pause();
+      process.stdin.removeListener("data", onData);
+    };
+    const onData = async (chunk: Buffer): Promise<void> => {
+      const seq = chunk.toString("utf8");
+      if (pasting) {
+        const end = seq.indexOf("\x1b[201~");
+        if (end >= 0) {
+          pasteAcc += seq.slice(0, end);
+          buf.paste(pasteAcc);
+          pasteAcc = "";
+          pasting = false;
+          repaint();
+        } else {
+          pasteAcc += seq;
+        }
+        return;
+      }
+      const k = decodeKey(seq);
+      switch (k.kind) {
+        case "paste-start":
+          pasting = true;
+          pasteAcc = "";
+          return;
+        case "char":
+          buf.insert(k.value);
+          repaint();
+          return;
+        case "backspace":
+          buf.backspace();
+          repaint();
+          return;
+        case "word-delete":
+          buf.deleteWord();
+          repaint();
+          return;
+        case "left":
+          buf.left();
+          repaint();
+          return;
+        case "right":
+          buf.right();
+          repaint();
+          return;
+        case "home":
+          buf.home();
+          repaint();
+          return;
+        case "end":
+          buf.end();
+          repaint();
+          return;
+        case "up":
+          buf.historyUp();
+          repaint();
+          return;
+        case "down":
+          buf.historyDown();
+          repaint();
+          return;
+        case "interrupt":
+          cleanup();
+          process.stdout.write("\n");
+          resolve(0);
+          return;
+        case "eof":
+          if (!buf.value) {
+            cleanup();
+            process.stdout.write("\n");
+            resolve(0);
+          }
+          return;
+        case "submit": {
+          const t = buf.value.trim();
+          process.stdout.write("\n");
+          buf.commit(buf.value);
+          if (!t) {
+            repaint();
+            return;
+          }
+          if (t.startsWith("/")) {
+            try {
+              const res = await handleSlash(ctx, t, process.stdout);
+              if (res.exit) {
+                cleanup();
+                resolve(0);
+                return;
+              }
+              if (res.restart) {
+                applyRestart(ctx.flags, res.restart);
+                process.stdout.write(theme.dim("session restarted — context cleared.\n"));
+              }
+            } catch (err) {
+              printError(err);
+            }
+            repaint();
+            return;
+          }
+          try {
+            await runTurn(ctx, t);
+          } catch (err) {
+            printError(err);
+          }
+          repaint();
+          return;
+        }
+        default:
+          return; // ignore
+      }
+    };
+    process.stdin.on("data", onData);
+  });
+}
+
+/** Non-TTY fallback (pipes / CI): the original line-oriented readline loop. */
+async function replLines(ctx: AppContext): Promise<number> {
+  const rl = createInterface({ input: process.stdin });
+  const p = promptPrefix(userInfo().username || "you");
   process.stdout.write(p);
   for await (const line of rl) {
     const t = line.trim();
