@@ -3,7 +3,8 @@
 // stream, decode frames, render. The agent brain runs on Aether's servers.
 
 import { createInterface } from "node:readline";
-import type { AppContext } from "../core/context.js";
+import type { AppContext, GlobalFlags } from "../core/context.js";
+import { theme } from "../ui/theme.js";
 import { buildChatRequest } from "../core/envelope.js";
 import { CHAT_STREAM_PATH, CHAT_PATH } from "../core/transport.js";
 import { decodeSse } from "../core/stream.js";
@@ -54,6 +55,18 @@ export async function runTurn(ctx: AppContext, prompt: string): Promise<void> {
   }
 }
 
+/** Apply a confirmed model/agent switch: set the new selection, clear the other,
+ * and let the caller start a fresh session (context cleared). */
+export function applyRestart(flags: GlobalFlags, r: { model?: string; agent?: string }): void {
+  if (r.model) {
+    flags.model = r.model;
+    flags.agent = undefined;
+  } else if (r.agent) {
+    flags.agent = r.agent;
+    flags.model = undefined;
+  }
+}
+
 export async function cmdChat(ctx: AppContext, prompt: string): Promise<number> {
   if (prompt.trim()) {
     try {
@@ -87,6 +100,10 @@ async function repl(ctx: AppContext): Promise<number> {
       try {
         const res = await handleSlash(ctx, t, process.stdout);
         if (res.exit) break;
+        if (res.restart) {
+          applyRestart(ctx.flags, res.restart);
+          process.stdout.write(theme.dim("session restarted — context cleared.\n\n"));
+        }
       } catch (err) {
         printError(err);
       }

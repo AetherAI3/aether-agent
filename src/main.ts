@@ -4,6 +4,7 @@
 // and signing (Aether audit) happen server-side on Aether's servers.
 
 import { parseArgs } from "node:util";
+import { createInterface } from "node:readline";
 import { loadConfig } from "./core/config.js";
 import { defaultTokenStore } from "./core/auth.js";
 import { ApiClient } from "./core/transport.js";
@@ -116,7 +117,19 @@ async function main(argv: string[]): Promise<number> {
     yes: Boolean(values["yes"]),
     cwd: typeof values["cwd"] === "string" ? (values["cwd"] as string) : process.cwd(),
   };
-  const ctx: AppContext = { cfg, api, tokens, flags };
+  // y/N confirmation for destructive prompts (e.g. switching model mid-session).
+  // `--yes` short-circuits. Injected on the context so commands stay testable.
+  const confirm = (q: string): Promise<boolean> =>
+    flags.yes
+      ? Promise.resolve(true)
+      : new Promise((res) => {
+          const rl = createInterface({ input: process.stdin, output: process.stderr });
+          rl.question(q, (a) => {
+            rl.close();
+            res(/^y(es)?$/i.test(a.trim()));
+          });
+        });
+  const ctx: AppContext = { cfg, api, tokens, flags, confirm };
 
   const loginOpts: LoginOpts = {
     token: sf(values["token"]),
