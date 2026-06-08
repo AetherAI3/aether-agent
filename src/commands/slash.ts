@@ -106,7 +106,7 @@ export async function handleSlash(
       await doctor(ctx, out);
       break;
     case "mcp":
-      out.write("MCP servers — coming soon. Aether Code will manage MCP tools here.\n");
+      out.write("MCP servers — coming soon. Aether Agent will manage MCP tools here.\n");
       break;
     case "clear":
       out.write("\x1b[2J\x1b[H");
@@ -136,7 +136,7 @@ function printHelp(out: Writable): void {
 }
 
 async function doctor(ctx: AppContext, out: Writable): Promise<void> {
-  out.write("Aether Code · doctor\n");
+  out.write("Aether Agent · doctor\n");
   out.write(`  api:    ${ctx.cfg.baseUrl}\n`);
   const t = await ctx.tokens.get();
   if (!t) {

@@ -1,4 +1,4 @@
-// status_renderer.ts — single stdout authority for the one-shot `aether code`.
+// status_renderer.ts — single stdout authority for the one-shot `aether agent`.
 // Scrollback above (meaningful events) + ONE pinned, animated status line below.
 // log() clears the pinned line, writes the event, repaints the status. No
 // alt-screen (that's TuiLayout, for the persistent REPL) — just a `\r`-pinned

@@ -1,9 +1,9 @@
-// Worktrees — Claude-Code-style isolation for a coding run. `aether code
+// Worktrees — Claude-Code-style isolation for a coding run. `aether agent
 // --worktree "<task>"` spins the agent up in a fresh `git worktree` on a new
 // branch, so its edits never touch your working tree. When the run finishes we
 // print exactly how to merge or throw it away. One flag, zero ceremony.
 //
-// Worktrees live under ~/.aether-code/worktrees/<branch-leaf> (out of the repo
+// Worktrees live under ~/.aether-agent/worktrees/<branch-leaf> (out of the repo
 // so they never pollute `git status`). The branch is auto-named from the task.
 
 import { spawnSync } from "node:child_process";
@@ -22,7 +22,7 @@ export interface Worktree {
 /** Where worktrees are parked. Override with AETHER_WORKTREES_DIR (tests). */
 export function worktreesRoot(): string {
   const base = process.env["AETHER_WORKTREES_DIR"];
-  return base ?? join(homedir(), ".aether-code", "worktrees");
+  return base ?? join(homedir(), ".aether-agent", "worktrees");
 }
 
 /** Slugify a task into a short, branch-safe token. Pure. */

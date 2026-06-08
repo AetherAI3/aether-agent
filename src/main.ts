@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Aether Code — CLI entry. Parses global flags, builds the AppContext, and
+// Aether Agent — CLI entry. Parses global flags, builds the AppContext, and
 // dispatches to a command. The CLI is the front door; all enforcement (UVT)
 // and signing (Aether audit) happen server-side on Aether's servers.
 
@@ -21,15 +21,15 @@ import { cmdGithub } from "./commands/github.js";
 /** Coerce a parsed flag value to string | undefined. */
 const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
-const HELP = `Aether Code — an open-source coding agent for your terminal.
+const HELP = `Aether Agent — an open-source coding agent for your terminal.
 
 Usage:
   aether                       Start an interactive coding REPL
   aether "<prompt>"            One-shot coding turn
-  aether code "<task>"         Autonomous coding agent (cloud brain, UVT-metered)
-  aether code --local "<task>" Same agent, local Python/Ollama brain (offline)
+  aether agent "<task>"         Autonomous coding agent (cloud brain, UVT-metered)
+  aether agent --local "<task>" Same agent, local Python/Ollama brain (offline)
   aether resume [id]           Replay a local session (latest if no id)
-  aether code --resume <id>    Resume a paused coding session
+  aether agent --resume <id>    Resume a paused coding session
   aether run <neo|kronus> "<task>"   Stream an orchestrator run
   aether models [use <id>]     List models + orchestrators / set default
   aether agents                List orchestrators (Neo / Kronus)
@@ -48,14 +48,14 @@ Global flags:
   --audit        Show signature     -y, --yes      Auto-confirm prompts
   -h, --help     This help          -v, --version  Print version
 
-aether code flags:
+aether agent flags:
   --local        Use the local brain (Python/Ollama) instead of the cloud
   --pool <gb>    Context pool size in GB (status-bar reach = pool x 233M)
   --effort <t>   Effort tier: LOW | MED | MAX | ULTRA | CODEPRO
   --test-cmd <c> Command the grounding gate runs (default: pytest -q)
   --quiet        Plain output (strip the personality frames)
   --interactive  Pause at each stage boundary to type a steer (TTY only)
-  --no-log       Disable the local session log (~/.aether-code/logs)
+  --no-log       Disable the local session log (~/.aether-agent/logs)
   --worktree     Run in a fresh git worktree on an auto-named branch (isolated)
   --repo <o/n>   Work on a GitHub repo (clones via your gh/git auth, worktrees it)
   --swarm <N>    N-agent swarm (not enabled yet; will be local-only)
@@ -87,7 +87,7 @@ async function main(argv: string[]): Promise<number> {
       yes: { type: "boolean", short: "y", default: false },
       help: { type: "boolean", short: "h", default: false },
       version: { type: "boolean", short: "v", default: false },
-      // `aether code` flags:
+      // `aether agent` flags:
       local: { type: "boolean", default: false },
       pool: { type: "string" },
       effort: { type: "string" },
@@ -176,8 +176,13 @@ async function main(argv: string[]): Promise<number> {
       const { cmdConfig } = await import("./commands/config.js");
       return cmdConfig(ctx, rest);
     }
-    case "code":
-      return cmdCode(ctx, rest.join(" "), {
+    case "agent":
+    case "code": {
+      const task = rest.join(" ");
+      // No task and not resuming → open the persistent interactive agent REPL
+      // (chat bar ready for the first question), Claude Code style.
+      if (!task && !sf(values["resume"])) return cmdChat(ctx, "");
+      return cmdCode(ctx, task, {
         local: Boolean(values["local"]),
         pool: Number(sf(values["pool"]) ?? "5") || 5,
         effort: sf(values["effort"]),
@@ -190,6 +195,7 @@ async function main(argv: string[]): Promise<number> {
         swarm: Number(sf(values["swarm"]) ?? "1") || 1,
         resume: sf(values["resume"]),
       });
+    }
     case "resume": {
       const { cmdResume } = await import("./commands/resume.js");
       return cmdResume(ctx, rest[0] ?? "");

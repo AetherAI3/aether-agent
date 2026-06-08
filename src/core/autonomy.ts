@@ -1,4 +1,4 @@
-// Autonomy / permission gating. Mirrors Aether Code desktop "skip-perms" +
+// Autonomy / permission gating. Mirrors Aether Agent desktop "skip-perms" +
 // "auto-apply" so the terminal and the IDE enforce edits identically.
 //
 //   ask  → every edit/shell action prompts the user

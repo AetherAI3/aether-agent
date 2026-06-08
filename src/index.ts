@@ -1,6 +1,6 @@
 // @aether/cli public API — the universal LLM route, for embedding.
 //
-// Desktop (Aether Code), web (Aether AI), and the terminal all import this and
+// Desktop (Aether Agent), web (Aether AI), and the terminal all import this and
 // route chat through the same client. The CLI binary (src/main.ts) is just the
 // terminal frontend over this same core.
 

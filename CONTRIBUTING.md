@@ -1,6 +1,6 @@
-# Contributing to Aether Code
+# Contributing to Aether Agent
 
-Thanks for helping out. Aether Code is a small, focused TypeScript client — easy
+Thanks for helping out. Aether Agent is a small, focused TypeScript client — easy
 to read end to end in an afternoon.
 
 ## Setup
@@ -41,7 +41,7 @@ Most features touch a `core/` module + a `commands/` file.
   doing too much.
 - **Comments explain *why*.** The code says what.
 - **No secrets, ever.** No tokens, keys, or internal hostnames in code, tests,
-  comments, or fixtures. Aether Code talks to the public Aether API and nothing
+  comments, or fixtures. Aether Agent talks to the public Aether API and nothing
   else.
 
 ## What makes a great PR

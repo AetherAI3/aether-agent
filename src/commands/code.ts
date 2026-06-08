@@ -1,4 +1,4 @@
-// `aether code [--local] "<task>"` — the hybrid coding terminal. One host loop
+// `aether agent [--local] "<task>"` — the hybrid coding terminal. One host loop
 // drives a pluggable brain: cloud (Aether API, UVT-metered) by default, or the
 // local Python/Ollama brain with --local. Same host, same render, same tools,
 // same commands — only the brain transport differs (specs/aethercode_bridge.md).
@@ -100,7 +100,7 @@ function replaySession(id: string, emit: (line: string) => void): void {
 
 export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Promise<number> {
   if (!task.trim()) {
-    process.stderr.write('✗ nothing to do — try: aether code "fix the failing tests"\n');
+    process.stderr.write('✗ nothing to do — try: aether agent "fix the failing tests"\n');
     return 1;
   }
   // Swarm is GATED on purpose: never swarm an unproven loop — N agents multiply

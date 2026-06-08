@@ -1,5 +1,5 @@
 // src/core/session_resume.ts — local-first session resume. Reads the JSONL the
-// SessionLog already wrote under ~/.aether-code/logs/<id>/ and rehydrates the
+// SessionLog already wrote under ~/.aether-agent/logs/<id>/ and rehydrates the
 // transcript. No backend, works offline. (Cross-device sync is Plan B.)
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";

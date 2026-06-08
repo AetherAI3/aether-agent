@@ -1,4 +1,4 @@
-// Repo target — `aether code --repo owner/name "<task>"`. Brings one of the
+// Repo target — `aether agent --repo owner/name "<task>"`. Brings one of the
 // user's GitHub repos local so an agent run (cloud-brain UVT-metered, or local)
 // can work on it in an isolated worktree, Claude-Code style.
 //
@@ -40,9 +40,9 @@ export function ghAvailable(): boolean {
   return r.status === 0;
 }
 
-/** Local mirror dir for a repo: ~/.aether-code/repos/<owner>-<name>. */
+/** Local mirror dir for a repo: ~/.aether-agent/repos/<owner>-<name>. */
 export function localMirrorDir(spec: RepoSpec): string {
-  return join(homedir(), ".aether-code", "repos", `${spec.owner}-${spec.name}`);
+  return join(homedir(), ".aether-agent", "repos", `${spec.owner}-${spec.name}`);
 }
 
 /** gh/git clone argv for a repo into `dir`. Pure (testable). */
