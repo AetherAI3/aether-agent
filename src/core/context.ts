@@ -24,4 +24,7 @@ export interface AppContext {
   api: ApiClient;
   tokens: TokenStore;
   flags: GlobalFlags;
+  /** Ask the user a yes/no question (readline y/N; `--yes` short-circuits).
+   * Injected so slash-command confirmations are testable. */
+  confirm: (q: string) => Promise<boolean>;
 }
