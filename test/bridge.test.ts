@@ -343,8 +343,8 @@ test("--swarm > 1 is refused with exit 2 and never spawns a brain", async () => 
   try {
     const code = await cmdCode(ctx, "fix all the things", { local: true, pool: 5, quiet: true, swarm: 4 });
     assert.equal(code, 2);
-    assert.match(captured, /--swarm is gated/);
-    assert.match(captured, /SWARM_PLAN\.md/);
+    assert.match(captured, /--swarm is not enabled/);
+    assert.match(captured, /emission fraying/);
   } finally {
     process.stderr.write = orig;
   }

@@ -6,7 +6,7 @@ The event seam between the **headless brain** (decides) and the **TS host**
 - Python brain: `aether_agent/protocol.py` (Unlimited-Context repo)
 - TS host: `src/core/brain_protocol.ts` (this repo)
 
-Design — split by **responsibility, not language** (`specs/aethercode_bridge.md`):
+Design — split by **responsibility, not language**:
 
 > The TS host owns **all rendering** and **all tool execution** (one path-guard).
 > The brain is **headless** — it emits events and never touches the terminal or
@@ -102,4 +102,4 @@ host change** (that is the point of the seam).
 - Cross-language wire proven: Python NDJSON → TS decoder, faces round-trip.
 - **Not yet run:** the live local loop (needs Ollama + `qwen3-coder:30b`) and the
   ON-vs-OFF kill-gate. The flagged risk stands — stress the local brain's
-  tool-call emission over a long session first (`specs/neo_lite_..._killgate.md` §7).
+  tool-call emission over a long session first.
