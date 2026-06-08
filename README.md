@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-06b6d4)](LICENSE) [![Node](https://img.shields.io/badge/node-%E2%89%A520-14b8a6)](https://nodejs.org) [![Built by Aether](https://img.shields.io/badge/built%20by-Aether-7c3aed)](https://aethersystems.net)
 
 ```bash
-npm i -g aether-code     # or run once: npx aether-code
+npm i -g aether-agent     # or run once: npx aether-agent
 ```
 
 </div>
@@ -28,7 +28,7 @@ Either way it's a thin client: edits apply to **your** files on **your** disk, p
 ## Quickstart
 
 ```bash
-npm i -g aether-code                 # needs Node >= 20
+npm i -g aether-agent                # needs Node >= 20
 
 # Path A — hosted models (sign in once):
 aether auth login                    # authorize at aethersystems.net
@@ -144,7 +144,7 @@ Found a vulnerability? See [SECURITY.md](SECURITY.md).
 The CLI is a thin terminal frontend over a small, typed client. Import it and route any surface — desktop app, web chat, your own tool — through the same path.
 
 ```ts
-import { createClient } from "aether-code";
+import { createClient } from "aether-agent";
 
 const aether = createClient({ token: process.env.AETHER_TOKEN });
 

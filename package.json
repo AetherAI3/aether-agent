@@ -1,11 +1,11 @@
 {
-  "name": "aether-code",
+  "name": "aether-agent",
   "version": "0.1.0",
   "description": "Open-source terminal coding agent — runs on hosted frontier models (Claude, GPT, DeepSeek, Kimi, Gemma) or fully offline via Ollama. Edits your code, runs your tests, and verifies the result.",
   "type": "module",
   "bin": {
     "aether": "dist/src/main.js",
-    "aether-code": "dist/src/main.js"
+    "aether-agent": "dist/src/main.js"
   },
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -58,10 +58,10 @@
   "homepage": "https://aethersystems.net",
   "repository": {
     "type": "git",
-    "url": "https://github.com/DBarr3/aether-code"
+    "url": "https://github.com/DBarr3/aether-agent"
   },
   "bugs": {
-    "url": "https://github.com/DBarr3/aether-code/issues"
+    "url": "https://github.com/DBarr3/aether-agent/issues"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

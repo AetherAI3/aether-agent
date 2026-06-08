@@ -172,7 +172,7 @@ See [`.env.example`](.env.example).
 ## Embedding (library API)
 
 ```ts
-import { createClient } from "aether-code";
+import { createClient } from "aether-agent";
 const aether = createClient({ baseUrl, token });
 
 aether.chatStream(prompt, { model?, agent?, manualModel? })  // AsyncIterable<StreamFrame>

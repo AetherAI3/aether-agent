@@ -23,8 +23,8 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
-Write-Host "Installing aether-code..."
-npm install -g aether-code
+Write-Host "Installing aether-agent..."
+npm install -g aether-agent
 
 Write-Host ""
 Write-Host "Aether Code installed."
