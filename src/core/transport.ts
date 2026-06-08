@@ -25,6 +25,12 @@ export const DEVICE_CODE_PATH = "/auth/device/code"; // CLI requests a user_code
 export const DEVICE_TOKEN_PATH = "/auth/device/token"; // CLI polls until approved
 // API-key management (locked contract): GET/POST/DELETE.
 export const API_KEYS_PATH = "/account/api-keys";
+// GitHub Connect (web-canonical GitHub App; Bearer-authed). connect returns an
+// install_url the user approves in the browser; status is polled until linked.
+// Backend mounts these at root (api_server include_router, no prefix).
+export const GITHUB_CONNECT_PATH = "/account/github/connect";
+export const GITHUB_STATUS_PATH = "/account/github/status";
+export const GITHUB_DISCONNECT_PATH = "/account/github/disconnect";
 // request audit (chain of custody) (integrity id = commitment_hash).
 export const AUDIT_TRAIL_PATH = "/audit/trail/live"; // entries carry commitment_hash
 export const EXPORT_PROOF_PATH = "/audit/export-proof"; // {entry_ids} -> proof package

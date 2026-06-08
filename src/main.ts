@@ -16,6 +16,7 @@ import { cmdModels, cmdAgents } from "./commands/models.js";
 import { cmdRun } from "./commands/run.js";
 import { cmdCode } from "./commands/code.js";
 import { VERSION } from "./version.js";
+import { cmdGithub } from "./commands/github.js";
 
 /** Coerce a parsed flag value to string | undefined. */
 const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
@@ -35,6 +36,8 @@ Usage:
   aether auth login            Authorize via browser (or --with-token / --token)
   aether auth status           Show login state    aether auth token   Print token
   aether auth refresh          Refresh a session   aether auth logout  Log out
+  aether github connect        Link GitHub so backend agents can work your repos
+  aether github status         Show GitHub link    aether github disconnect  Unlink
   aether audit [limit]         Recent audit chain-of-custody trail
   aether receipt <order_id>    Export the proof package for an audit entry
   aether config [show|get <k>|set <k> <v>]
@@ -53,6 +56,7 @@ aether code flags:
   --quiet        Plain output (strip the personality frames)
   --interactive  Pause at each stage boundary to type a steer (TTY only)
   --no-log       Disable the local session log (~/.aether-code/logs)
+  --worktree     Run in a fresh git worktree on an auto-named branch (isolated)
   --swarm <N>    N-agent swarm (gated; local-only; see docs/SWARM_PLAN.md)
 
 Local model tiers (--model, via Ollama):
@@ -90,6 +94,7 @@ async function main(argv: string[]): Promise<number> {
       quiet: { type: "boolean", default: false },
       interactive: { type: "boolean", default: false },
       "no-log": { type: "boolean", default: false },
+      worktree: { type: "boolean", default: false },
       swarm: { type: "string" },
       resume: { type: "string" },
     },
@@ -145,6 +150,8 @@ async function main(argv: string[]): Promise<number> {
       return cmdChat(ctx, "");
     case "auth":
       return cmdAuth(ctx, rest, loginOpts);
+    case "github":
+      return cmdGithub(ctx, rest, { noBrowser: Boolean(values["no-browser"]) });
     case "login":
       return cmdLogin(ctx, loginOpts);
     case "logout":
@@ -176,6 +183,7 @@ async function main(argv: string[]): Promise<number> {
         quiet: Boolean(values["quiet"]),
         interactive: Boolean(values["interactive"]),
         noLog: Boolean(values["no-log"]),
+        worktree: Boolean(values["worktree"]),
         swarm: Number(sf(values["swarm"]) ?? "1") || 1,
         resume: sf(values["resume"]),
       });

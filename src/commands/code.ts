@@ -28,6 +28,7 @@ import { phaseVerb } from "../ui/phase_verb.js";
 import { lineDiff, renderDiff } from "../ui/diff_render.js";
 import { loadSession, replayLines } from "../core/session_resume.js";
 import { resumeHint } from "./resume.js";
+import { createWorktree, mergeHint, type Worktree } from "../core/worktree.js";
 
 export interface CodeOpts {
   /** Use the local Python/Ollama brain instead of the cloud API. */
@@ -48,6 +49,8 @@ export interface CodeOpts {
   swarm?: number;
   /** Resume a prior local session id: replay its transcript before this run. */
   resume?: string;
+  /** Isolate the run in a fresh git worktree on an auto-named branch. */
+  worktree?: boolean;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -111,7 +114,19 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     );
     return 2;
   }
-  const cwd = ctx.flags.cwd;
+  // --worktree: cut a fresh git worktree off the current repo and run the agent
+  // there, so its edits land on an isolated branch instead of your working tree.
+  let worktree: Worktree | null = null;
+  if (opts.worktree) {
+    try {
+      worktree = createWorktree(ctx.flags.cwd, task);
+      process.stderr.write(`⌥ worktree ${worktree.branch}\n  ${worktree.dir}\n`);
+    } catch (err) {
+      process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+      return 1;
+    }
+  }
+  const cwd = worktree ? worktree.dir : ctx.flags.cwd;
   const poolGb = opts.pool > 0 ? opts.pool : 5;
   const brainKind: "local" | "cloud" = opts.local ? "local" : "cloud";
 
@@ -217,6 +232,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     const tail = remaining > 0 ? ` (${remaining} failing)` : "";
     process.stderr.write(`\n  ⤷ log: ${log.dir} · ${finalStatus}${tail}\n`);
   }
+  if (worktree) process.stderr.write(mergeHint(worktree));
   // Process exit follows the HOST: 0 only on a verified-green run. With no gate
   // ("unverified") there is no ground truth, so the loop's own code stands.
   if (finalStatus === "ok") return 0;
