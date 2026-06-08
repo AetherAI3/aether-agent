@@ -8,6 +8,8 @@
 // and cloud are indistinguishable UX.
 
 import { createInterface } from "node:readline";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { AppContext } from "../core/context.js";
 import type { Brain, TaskCommand } from "../core/brain.js";
 import type { BrainEvent } from "../core/brain_protocol.js";
@@ -22,6 +24,10 @@ import { StatusRenderer } from "../ui/status_renderer.js";
 import { AnimationController } from "../ui/animations.js";
 import { HeartbeatIndicator } from "../ui/heartbeat.js";
 import { LocalAgentSource, bindEventSource } from "../core/agent_events.js";
+import { phaseVerb } from "../ui/phase_verb.js";
+import { lineDiff, renderDiff } from "../ui/diff_render.js";
+import { loadSession, replayLines } from "../core/session_resume.js";
+import { resumeHint } from "./resume.js";
 
 export interface CodeOpts {
   /** Use the local Python/Ollama brain instead of the cloud API. */
@@ -40,9 +46,51 @@ export interface CodeOpts {
   noLog?: boolean;
   /** Number of swarm workers (gated — see the swarm guard below). */
   swarm?: number;
+  /** Resume a prior local session id: replay its transcript before this run. */
+  resume?: string;
 }
 
 const nowIso = (): string => new Date().toISOString();
+
+/** Map a BrainEvent onto the pinned status line (verb + streamed tokens).
+ * Exported so the wiring is unit-testable without a real brain. */
+export function applyEventToStatus(
+  sr: { setVerb(v: string, k: string): void; setStreamed(n: number): void },
+  ev: BrainEvent,
+  tick: number,
+): void {
+  if (ev.type === "stage") {
+    const v = phaseVerb(ev.name, tick);
+    sr.setVerb(v.verb, v.kao);
+  } else if (ev.type === "telemetry") {
+    sr.setStreamed(ev.tokens);
+  }
+}
+
+/** Colorized diff preview for a write_file edit, or null if not an edit. Reads
+ * the on-disk file as the "before". */
+export function editPreview(cwd: string, ev: BrainEvent): string | null {
+  if (ev.type !== "tool_call" || ev.name !== "write_file") return null;
+  const path = String(ev.args["path"] ?? "");
+  const next = String(ev.args["content"] ?? "");
+  if (!path) return null;
+  const abs = resolve(cwd, path);
+  const prev = existsSync(abs) ? readFileSync(abs, "utf8") : "";
+  const ops = lineDiff(prev, next);
+  if (ops.length === 0) return null;
+  return renderDiff(path, ops);
+}
+
+/** Replay a prior local session's transcript into the active surface. Fail-soft:
+ * a missing/unreadable session prints a note and does not abort the new run. */
+function replaySession(id: string, emit: (line: string) => void): void {
+  try {
+    const prior = loadSession(id);
+    for (const line of replayLines(prior.events)) emit(line);
+  } catch (err) {
+    process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
 
 export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Promise<number> {
   if (!task.trim()) {
@@ -72,6 +120,15 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   const log = opts.noLog
     ? null
     : new SessionLog({ task, model: ctx.flags.model ?? "", poolGb, brain: brainKind }, nowIso());
+
+  // Ctrl-C prints the exact command to re-enter this session. Registered BEFORE
+  // the renderer's own SIGINT handler so this fires first.
+  if (log) {
+    process.once("SIGINT", () => {
+      process.stderr.write("\n" + resumeHint(log.sessionId) + "\n");
+      process.exit(130);
+    });
+  }
 
   const taskCmd: TaskCommand = {
     type: "task",
@@ -110,6 +167,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   if (animated) {
     const sr = new StatusRenderer({ mode: brainKind === "local" ? "local" : "api" });
     sr.start();
+    if (opts.resume) replaySession(opts.resume, (line) => sr.log(line));
     const anim = new AnimationController({
       onFrame: (stage, art) => sr.setStage(stage, art),
       onProgress: (used, c) => sr.setProgress(used, c),
@@ -117,8 +175,12 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     const hb = new HeartbeatIndicator({ onFrame: (g) => sr.setHeartbeat(g) });
     const source = new LocalAgentSource();
     bindEventSource(source, sr, anim, { hb, heartbeatTimeoutMs: 5000 });
+    let tick = 0;
     onEvent = async (ev: BrainEvent): Promise<void> => {
       log?.event(ev, nowIso());
+      applyEventToStatus(sr, ev, tick++);
+      const dp = editPreview(cwd, ev);
+      if (dp) sr.log(dp);
       captureDone(ev);
       source.feedBrain(ev); // adapter -> animation/status (presentation only)
       if (interactive && ev.type === "stage") await stageGate(brain, ev.name);
@@ -131,9 +193,12 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     };
   } else {
     const renderer = new HostRenderer({ poolGb, quiet: opts.quiet, json: ctx.flags.json });
+    if (opts.resume) replaySession(opts.resume, (line) => process.stdout.write(line + "\n"));
     onEvent = async (ev: BrainEvent): Promise<void> => {
       renderer.event(ev);
       log?.event(ev, nowIso());
+      const dp = editPreview(cwd, ev);
+      if (dp) process.stdout.write(dp + "\n");
       captureDone(ev);
       if (interactive && ev.type === "stage") await stageGate(brain, ev.name);
     };

@@ -19,9 +19,13 @@ import type { CatalogItem, CatalogResponse } from "../types.js";
 import { MODELS_PATH } from "../core/transport.js";
 import { fetchTrail } from "../core/audit.js";
 import { isApiToken } from "./auth.js";
+import { theme } from "../ui/theme.js";
 
 export interface SlashResult {
   exit: boolean;
+  /** Set when the user confirmed a model/agent switch: the REPL must restart
+   * the brain + clear context with the new selection. */
+  restart?: { model?: string; agent?: string };
 }
 
 type Kind = "model" | "orchestrator";
@@ -43,6 +47,16 @@ async function getCatalog(ctx: AppContext, force = false): Promise<CatalogRespon
     _catalog = await ctx.api.getJson<CatalogResponse>(MODELS_PATH);
   }
   return _catalog;
+}
+
+/** Warm the catalog cache in the background. Fail-soft: a rejected fetch is
+ * swallowed so the prompt is never blocked and the user sees no error. */
+export async function primeCatalog(ctx: AppContext): Promise<void> {
+  try {
+    await getCatalog(ctx, true);
+  } catch {
+    /* offline / token not ready — /models will retry lazily */
+  }
 }
 
 function byKind(cat: CatalogResponse, kind: Kind): CatalogItem[] {
@@ -72,12 +86,16 @@ export async function handleSlash(
     case "agents":
       await showList(ctx, out, "orchestrator");
       break;
-    case "model":
-      await select(ctx, out, arg, "model");
+    case "model": {
+      const r = await select(ctx, out, arg, "model");
+      if (r) return { exit: false, restart: r };
       break;
-    case "agent":
-      await select(ctx, out, arg, "orchestrator");
+    }
+    case "agent": {
+      const r = await select(ctx, out, arg, "orchestrator");
+      if (r) return { exit: false, restart: r };
       break;
+    }
     case "tier":
       await showTier(ctx, out);
       break;
@@ -148,30 +166,38 @@ async function showList(ctx: AppContext, out: Writable, kind: Kind): Promise<voi
   out.write(kind === "model" ? "switch: /model <n|id>\n" : "switch: /agent <n|id>\n");
 }
 
-async function select(ctx: AppContext, out: Writable, arg: string, kind: Kind): Promise<void> {
+async function select(
+  ctx: AppContext,
+  out: Writable,
+  arg: string,
+  kind: Kind,
+): Promise<{ model?: string; agent?: string } | null> {
   if (!arg) {
     out.write(`usage: /${kind === "model" ? "model" : "agent"} <n|id>\n`);
-    return;
+    return null;
   }
   const cat = await getCatalog(ctx);
   const item = resolveSelection(byKind(cat, kind), arg);
   if (!item) {
     out.write(`no such ${kind}: ${arg}\n`);
-    return;
+    return null;
   }
   if (!item.available) {
     out.write(`${item.id} is locked on tier ${cat.tier}\n`);
-    return;
+    return null;
   }
-  if (kind === "orchestrator") {
-    ctx.flags.agent = item.id;
-    ctx.flags.model = undefined;
-    out.write(`agent → ${item.label}\n`);
-  } else {
-    ctx.flags.model = item.id;
-    ctx.flags.agent = undefined;
-    out.write(`model → ${item.label}\n`);
+  out.write(
+    theme.dim(
+      `⚠ Switching ${kind === "model" ? "model" : "orchestrator"} to ${item.label} will ` +
+        `restart the session and clear context.\n`,
+    ),
+  );
+  const ok = ctx.flags.yes || (await ctx.confirm("Continue? [y/N] "));
+  if (!ok) {
+    out.write("kept current session.\n");
+    return null;
   }
+  return kind === "model" ? { model: item.id } : { agent: item.id };
 }
 
 async function showTier(ctx: AppContext, out: Writable): Promise<void> {

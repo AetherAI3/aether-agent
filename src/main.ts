@@ -4,6 +4,7 @@
 // and signing (Aether audit) happen server-side on Aether's servers.
 
 import { parseArgs } from "node:util";
+import { createInterface } from "node:readline";
 import { loadConfig } from "./core/config.js";
 import { defaultTokenStore } from "./core/auth.js";
 import { ApiClient } from "./core/transport.js";
@@ -13,12 +14,8 @@ import { cmdLogin, cmdLogout, type LoginOpts } from "./commands/login.js";
 import { cmdAuth } from "./commands/auth.js";
 import { cmdModels, cmdAgents } from "./commands/models.js";
 import { cmdRun } from "./commands/run.js";
-import { cmdReceipt } from "./commands/receipt.js";
-import { cmdAudit } from "./commands/audit.js";
-import { cmdConfig } from "./commands/config.js";
 import { cmdCode } from "./commands/code.js";
-
-const VERSION = "0.1.0";
+import { VERSION } from "./version.js";
 
 /** Coerce a parsed flag value to string | undefined. */
 const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
@@ -30,6 +27,8 @@ Usage:
   aether "<prompt>"            One-shot coding turn
   aether code "<task>"         Autonomous coding agent (cloud brain, UVT-metered)
   aether code --local "<task>" Same agent, local Python/Ollama brain (offline)
+  aether resume [id]           Replay a local session (latest if no id)
+  aether code --resume <id>    Resume a paused coding session
   aether run <neo|kronus> "<task>"   Stream an orchestrator run
   aether models [use <id>]     List models + orchestrators / set default
   aether agents                List orchestrators (Neo / Kronus)
@@ -92,6 +91,7 @@ async function main(argv: string[]): Promise<number> {
       interactive: { type: "boolean", default: false },
       "no-log": { type: "boolean", default: false },
       swarm: { type: "string" },
+      resume: { type: "string" },
     },
   });
 
@@ -116,7 +116,19 @@ async function main(argv: string[]): Promise<number> {
     yes: Boolean(values["yes"]),
     cwd: typeof values["cwd"] === "string" ? (values["cwd"] as string) : process.cwd(),
   };
-  const ctx: AppContext = { cfg, api, tokens, flags };
+  // y/N confirmation for destructive prompts (e.g. switching model mid-session).
+  // `--yes` short-circuits. Injected on the context so commands stay testable.
+  const confirm = (q: string): Promise<boolean> =>
+    flags.yes
+      ? Promise.resolve(true)
+      : new Promise((res) => {
+          const rl = createInterface({ input: process.stdin, output: process.stderr });
+          rl.question(q, (a) => {
+            rl.close();
+            res(/^y(es)?$/i.test(a.trim()));
+          });
+        });
+  const ctx: AppContext = { cfg, api, tokens, flags, confirm };
 
   const loginOpts: LoginOpts = {
     token: sf(values["token"]),
@@ -137,18 +149,24 @@ async function main(argv: string[]): Promise<number> {
       return cmdLogin(ctx, loginOpts);
     case "logout":
       return cmdLogout(ctx);
-    case "audit":
+    case "audit": {
+      const { cmdAudit } = await import("./commands/audit.js");
       return cmdAudit(ctx, rest);
+    }
     case "models":
       return cmdModels(ctx, rest);
     case "agents":
       return cmdAgents(ctx);
     case "run":
       return cmdRun(ctx, rest[0] ?? "", rest.slice(1).join(" "));
-    case "receipt":
+    case "receipt": {
+      const { cmdReceipt } = await import("./commands/receipt.js");
       return cmdReceipt(ctx, rest[0] ?? "");
-    case "config":
+    }
+    case "config": {
+      const { cmdConfig } = await import("./commands/config.js");
       return cmdConfig(ctx, rest);
+    }
     case "code":
       return cmdCode(ctx, rest.join(" "), {
         local: Boolean(values["local"]),
@@ -159,7 +177,12 @@ async function main(argv: string[]): Promise<number> {
         interactive: Boolean(values["interactive"]),
         noLog: Boolean(values["no-log"]),
         swarm: Number(sf(values["swarm"]) ?? "1") || 1,
+        resume: sf(values["resume"]),
       });
+    case "resume": {
+      const { cmdResume } = await import("./commands/resume.js");
+      return cmdResume(ctx, rest[0] ?? "");
+    }
     case "chat":
       return cmdChat(ctx, rest.join(" "));
     default:

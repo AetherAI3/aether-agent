@@ -8,6 +8,9 @@
 // up, "N new" hint, End=live, wheel/PgUp/PgDn). NON-TTY -> plain console.log, NO
 // ANSI — keeps the §8 emission logs / triage_log.py clean.
 
+import { stripAnsi } from "./theme.js";
+import { formatElapsed } from "./elapsed.js";
+
 const ESC = "\x1b[";
 const ALT_ON = ESC + "?1049h";
 const ALT_OFF = ESC + "?1049l";
@@ -53,12 +56,15 @@ export interface TuiLayoutOptions {
   banner?: string[];
   mode?: LayoutMode;
   mouse?: boolean;
+  /** Injected clock (ms) for the elapsed figure. Defaults to Date.now. */
+  now?: () => number;
 }
 
 interface StatusParts {
   hb: string;
-  stage: string;
-  art: string;
+  verb: string;
+  kao: string;
+  streamed: number;
   uvtUsed: number;
   uvtCap: number;
 }
@@ -73,7 +79,9 @@ export class TuiLayout {
   offset = 0; // lines up from live bottom; 0 = following the latest
   following = true;
   unseen = 0; // lines that arrived while scrolled up
-  private parts: StatusParts = { hb: "·", stage: "", art: "", uvtUsed: 0, uvtCap: 0 };
+  private parts: StatusParts = { hb: "·", verb: "Working", kao: "", streamed: 0, uvtUsed: 0, uvtCap: 0 };
+  private readonly now: () => number;
+  private readonly startedMs: number;
   private input = "";
   private cols: number;
   private rows: number;
@@ -87,6 +95,8 @@ export class TuiLayout {
     this.banner = opts.banner ?? [];
     this.mode = opts.mode ?? "api";
     this.mouse = opts.mouse ?? true;
+    this.now = opts.now ?? (() => Date.now());
+    this.startedMs = this.now();
     this.cols = process.stdout.columns || 100;
     this.rows = process.stdout.rows || 30;
     this.headerH = Math.max(this.logo.length, this.banner.length, 1);
@@ -227,12 +237,13 @@ export class TuiLayout {
 
   private renderStatus(): void {
     const p = this.parts;
+    const kao = p.kao ? p.kao + " " : "";
+    const elapsed = formatElapsed(this.now() - this.startedMs);
+    const up = p.streamed > 0 ? ` · ↑ ${this.fmt(p.streamed)} tokens` : "";
     const uvt =
-      this.mode === "api"
-        ? `UVT ${this.fmt(p.uvtUsed)}/${this.fmt(p.uvtCap)} ${this.bar(p.uvtUsed, p.uvtCap)}`
-        : "local";
+      this.mode === "api" ? `   UVT ${this.fmt(p.uvtUsed)}/${this.fmt(p.uvtCap)} ${this.bar(p.uvtUsed, p.uvtCap)}` : "";
     const scroll = this.following ? "" : `${DIM}  ▲ paused · ${this.unseen}↓ new · End=live${RST}`;
-    const line = `${p.hb}  ${p.stage ? "* " + p.stage : ""} ${p.art}   ${uvt}${scroll}`;
+    const line = `${p.hb}  ${kao}${p.verb}… ${DIM}(${elapsed}${up})${RST}${uvt}${scroll}`;
     process.stdout.write(at(this.regions.statusRow, 1) + CLR_LINE + this.fit(line, true));
   }
 
@@ -245,9 +256,16 @@ export class TuiLayout {
     if (this.tty) this.renderStatus();
   }
 
-  setStage(stage: string, art: string): void {
-    this.parts.stage = stage;
-    this.parts.art = art;
+  /** Set the activity word + kaomoji (from phaseVerb), mirroring StatusRenderer. */
+  setVerb(verb: string, kao: string): void {
+    this.parts.verb = verb;
+    this.parts.kao = kao;
+    if (this.tty) this.renderStatus();
+  }
+
+  /** Cumulative output tokens streamed this run (the ↑ figure). */
+  setStreamed(n: number): void {
+    this.parts.streamed = n;
     if (this.tty) this.renderStatus();
   }
 
@@ -274,7 +292,35 @@ export class TuiLayout {
 
   private fit(s: string, hasAnsi = false): string {
     if (hasAnsi) return s; // status line owns its own width via the visible parts
-    return s.length > this.cols ? s.slice(0, this.cols) : s;
+    return stripAnsi(s).length > this.cols ? this.sliceVisible(s, this.cols) : s;
+  }
+
+  /** Truncate to `max` VISIBLE columns, preserving ANSI escapes so a gradient
+   * header is never cut mid-escape (which would leak raw bytes / drop color). */
+  private sliceVisible(s: string, max: number): string {
+    if (!s.includes("\x1b")) return s.slice(0, max);
+    let out = "";
+    let vis = 0;
+    let i = 0;
+    while (i < s.length && vis < max) {
+      if (s[i] === "\x1b") {
+        const m = s.slice(i).match(/^\x1b\[[0-9;]*m/);
+        if (m) {
+          out += m[0];
+          i += m[0].length;
+          continue;
+        }
+        // Lone / non-SGR ESC byte: pass it through but don't count it as a
+        // visible column (it isn't one), so truncation stays accurate.
+        out += s[i];
+        i++;
+        continue;
+      }
+      out += s[i];
+      vis++;
+      i++;
+    }
+    return out + "\x1b[0m";
   }
 
   private fmt(n: number): string {
