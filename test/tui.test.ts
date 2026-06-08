@@ -10,6 +10,7 @@ import {
 } from "../src/ui/animations.js";
 import { HeartbeatIndicator } from "../src/ui/heartbeat.js";
 import { computeRegions, TuiLayout } from "../src/ui/tui_layout.js";
+import { stripAnsi } from "../src/ui/theme.js";
 import { StatusRenderer } from "../src/ui/status_renderer.js";
 import {
   mapBrainEvent,
@@ -206,4 +207,22 @@ test("TuiLayout non-TTY stays plain (no ANSI)", () => {
   }
   assert.ok(out.some((x) => x.includes("agent line")), "plain line written");
   assert.ok(!out.some((x) => x.includes("\x1b[")), "no ANSI in non-TTY");
+});
+
+test("a colored header line keeps its visible width (ANSI-safe slicing invariant)", () => {
+  const colored = "\x1b[38;2;135;215;255mAETHER\x1b[0m";
+  assert.equal(stripAnsi(colored).length, 6);
+});
+
+test("TuiLayout setVerb/setStreamed exist and don't throw off-TTY", () => {
+  const prev = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+  Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
+  try {
+    const t = new TuiLayout({ mode: "api", now: () => 0 });
+    t.setVerb("Forging", "(ง'̀-'́)ง");
+    t.setStreamed(33_000);
+    assert.ok(true);
+  } finally {
+    if (prev) Object.defineProperty(process.stdout, "isTTY", prev);
+  }
 });
