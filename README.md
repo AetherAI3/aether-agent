@@ -1,6 +1,6 @@
 <div align="center">
 
-# Aether Code
+# Aether Agent
 
 **An open-source coding agent for your terminal — runs on hosted frontier models or fully offline on your own machine.**
 
