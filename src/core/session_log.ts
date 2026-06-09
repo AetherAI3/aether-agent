@@ -1,7 +1,7 @@
 // Session log — local, structured, the user's. Distinct from the context pool
 // (machine-facing vector memory): this is the human-readable history of a run.
 // Append-only JSONL + a rendered monologue + a manifest, under
-// ~/.aether-code/logs/<session-id>/ (override with AETHER_LOG_DIR). `/clear`
+// ~/.aether-agent/logs/<session-id>/ (override with AETHER_LOG_DIR). `/clear`
 // wipes the pool, never these logs. See spec neo_lite_..._killgate.md §5.
 //
 //   events.jsonl   one {ts, type, ...} per event/command (the record)
@@ -15,7 +15,7 @@ import type { BrainEvent } from "./brain_protocol.js";
 import type { ToolResult } from "./tool_executor.js";
 
 export function logsRoot(): string {
-  return process.env["AETHER_LOG_DIR"] ?? join(homedir(), ".aether-code", "logs");
+  return process.env["AETHER_LOG_DIR"] ?? join(homedir(), ".aether-agent", "logs");
 }
 
 /** The terminal status of a run. Derived by the host's verify gate (verify_gate.ts)

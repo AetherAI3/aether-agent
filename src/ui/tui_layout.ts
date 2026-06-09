@@ -1,4 +1,4 @@
-// tui_layout.ts — full-screen region layout for aether-code with a Claude-Code-
+// tui_layout.ts — full-screen region layout for aether-agent with a Claude-Code-
 // style pager (TS port of tui_layout.mjs). HEADER (logo+banner, fixed top) ·
 // TRANSCRIPT (own pager) · STATUS (heartbeat + UVT, live) · INPUT (pinned bottom).
 // Absolute-positioned repaint on alt-screen; prior terminal restored on exit.

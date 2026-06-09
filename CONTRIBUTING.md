@@ -1,13 +1,13 @@
-# Contributing to Aether Code
+# Contributing to Aether Agent
 
-Thanks for helping out. Aether Code is a small, focused TypeScript client — easy
+Thanks for helping out. Aether Agent is a small, focused TypeScript client — easy
 to read end to end in an afternoon.
 
 ## Setup
 
 ```bash
-git clone https://github.com/DBarr3/aether-code
-cd aether-code
+git clone https://github.com/DBarr3/aether-agent
+cd aether-agent
 npm install
 npm run build
 npm test
@@ -41,7 +41,7 @@ Most features touch a `core/` module + a `commands/` file.
   doing too much.
 - **Comments explain *why*.** The code says what.
 - **No secrets, ever.** No tokens, keys, or internal hostnames in code, tests,
-  comments, or fixtures. Aether Code talks to the public Aether API and nothing
+  comments, or fixtures. Aether Agent talks to the public Aether API and nothing
   else.
 
 ## What makes a great PR
@@ -53,7 +53,7 @@ Most features touch a `core/` module + a `commands/` file.
 
 ## Reporting bugs / ideas
 
-Open an [issue](https://github.com/DBarr3/aether-code/issues). For security
+Open an [issue](https://github.com/DBarr3/aether-agent/issues). For security
 reports, **do not** open a public issue — see [`SECURITY.md`](SECURITY.md).
 
 By contributing you agree your contributions are licensed under Apache-2.0.

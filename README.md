@@ -7,18 +7,18 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-06b6d4)](LICENSE) [![Node](https://img.shields.io/badge/node-%E2%89%A520-14b8a6)](https://nodejs.org) [![Built by Aether](https://img.shields.io/badge/built%20by-Aether-7c3aed)](https://aethersystems.net)
 
 ```bash
-npm i -g aether-code     # or run once: npx aether-code
+npm i -g aether-agent     # or run once: npx aether-agent
 ```
 
 </div>
 
-![Aether Code — coding session](assets/aether_code_console.png)
+![Aether Agent — coding session](assets/aether_agent_console.png)
 
 ---
 
 ## What it is
 
-Aether Code reads your code, plans, edits files, runs your tests, and fixes what broke — right in your terminal, showing its work as it goes. Like Claude Code or Aider, but with two differences that matter:
+Aether Agent reads your code, plans, edits files, runs your tests, and fixes what broke — right in your terminal, showing its work as it goes. Like Claude Code or Aider, but with two differences that matter:
 
 - **Model-agnostic.** Sign in to use Aether's hosted fleet (Claude, GPT, DeepSeek, Kimi, Gemma + the **Neo** and **Kronus** orchestrators) — or run `--local` on **Ollama** with no account and no network at all.
 - **Verification is ground truth.** When a run finishes, the host runs *your* test command itself and reads the exit code. A green result means your tests actually passed — it's never the model's word for it.
@@ -28,15 +28,15 @@ Either way it's a thin client: edits apply to **your** files on **your** disk, p
 ## Quickstart
 
 ```bash
-npm i -g aether-code                 # needs Node >= 20
+npm i -g aether-agent                # needs Node >= 20
 
 # Path A — hosted models (sign in once):
 aether auth login                    # authorize at aethersystems.net
-aether code "refactor src/auth.ts to async/await and add tests"
+aether agent "refactor src/auth.ts to async/await and add tests"
 
 # Path B — fully local, no account, no network:
 ollama pull qwen2.5-coder:7b
-aether code --local "same task, offline"
+aether agent --local "same task, offline"
 ```
 
 No account? Create one free at **[aethersystems.net](https://aethersystems.net)** — the free tier covers Haiku and fast models; paid tiers unlock Opus, the premium models, and the orchestrators. Or skip it entirely and stay `--local`.
@@ -48,7 +48,7 @@ No account? Create one free at **[aethersystems.net](https://aethersystems.net)*
 ```bash
 aether                                 # interactive REPL — chat + /slash commands
 aether "explain src/router.ts"         # one-shot answer, then exit
-aether code "fix the failing tests"    # autonomous agent: edits files + verifies
+aether agent "fix the failing tests"    # autonomous agent: edits files + verifies
 ```
 
 ## Two brains, one terminal
@@ -64,8 +64,8 @@ The agent runs on either brain through the **same** host loop, render, tools, an
 | Metering | UVT usage meter + signed receipts | none — it's your hardware |
 
 ```bash
-aether code "refactor src/auth.ts"            # API brain
-aether code --local "refactor src/auth.ts"    # local brain
+aether agent "refactor src/auth.ts"            # API brain
+aether agent --local "refactor src/auth.ts"    # local brain
 ```
 
 ## Models
@@ -102,20 +102,20 @@ aether run kronus "audit this service for race conditions and fix them"
 
 ```bash
 ollama pull qwen2.5-coder:7b
-aether code --local --model qwen3-coder:30b "add a retry with backoff to the fetch helper"
+aether agent --local --model qwen3-coder:30b "add a retry with backoff to the fetch helper"
 ```
 
 ## Common commands
 
 ```bash
-aether code [flags] "<task>"     # the autonomous agent (see flags below)
+aether agent [flags] "<task>"     # the autonomous agent (see flags below)
 aether models                    # list models + orchestrators
 aether auth login                # sign in for the API path
 aether resume                    # replay / continue the last session (offline)
 aether config set defaultModel opus
 ```
 
-| `aether code` flag | What it does |
+| `aether agent` flag | What it does |
 |---|---|
 | `--local` | Use the local Python/Ollama brain instead of the API. |
 | `--model <id>` | Force a model (e.g. `--model opus`, or an Ollama tag with `--local`). |
@@ -144,7 +144,7 @@ Found a vulnerability? See [SECURITY.md](SECURITY.md).
 The CLI is a thin terminal frontend over a small, typed client. Import it and route any surface — desktop app, web chat, your own tool — through the same path.
 
 ```ts
-import { createClient } from "aether-code";
+import { createClient } from "aether-agent";
 
 const aether = createClient({ token: process.env.AETHER_TOKEN });
 
@@ -159,7 +159,7 @@ The headless-brain ↔ host event protocol is documented and open — see [docs/
 
 ## Part of the Aether platform
 
-Aether Code is the **terminal sibling** of **[AetherCloud](https://github.com/DBarr3/aethercloud)**, the agentic desktop app — same login, same UVT balance, same model fleet. Drive your repo from the command line; drive projects, workflows, and the memory Vault from the desktop. **One account runs both,** and your balance and context follow you across terminal, desktop, and your Aether AI on the web.
+Aether Agent is the **terminal sibling** of **[AetherCloud](https://github.com/DBarr3/aethercloud)**, the agentic desktop app — same login, same UVT balance, same model fleet. Drive your repo from the command line; drive projects, workflows, and the memory Vault from the desktop. **One account runs both,** and your balance and context follow you across terminal, desktop, and your Aether AI on the web.
 
 ## License
 

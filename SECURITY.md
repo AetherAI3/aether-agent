@@ -17,7 +17,7 @@ release notes.
 
 ## Scope
 
-This repository is the **Aether Code client**. In scope:
+This repository is the **Aether Agent client**. In scope:
 
 - the CLI and the embeddable library in this repo,
 - local handling of tokens, config, and file edits,

@@ -1,4 +1,4 @@
-# Aether Code — Command Reference
+# Aether Agent — Command Reference
 
 Complete reference for every command, flag, slash command, and environment
 variable. For a quick tour, see the [README](README.md).
@@ -51,15 +51,15 @@ aether run kronus "audit this service for race conditions and fix them"
 > Orchestrators are gated to paid tiers. Neo is available on Solo+; Kronus on Pro+.
 
 ### `aether resume [id]` — replay a session
-Replays a prior local coding session's transcript from `~/.aether-code/logs/`.
+Replays a prior local coding session's transcript from `~/.aether-agent/logs/`.
 With no id, resumes the most recent session.
 ```bash
 aether resume                 # the latest session
 aether resume <session-id>    # a specific session
-aether code --resume <id> "<task>"   # resume, then continue working
+aether agent --resume <id> "<task>"   # resume, then continue working
 ```
 > Local-first: sessions are read from disk, so resume works offline. When you stop
-> a coding run with Ctrl-C, the exact `aether code --resume <id>` command is printed.
+> a coding run with Ctrl-C, the exact `aether agent --resume <id>` command is printed.
 
 ### `aether models [use <id>]` — list / pick a model
 - `aether models` — list every model **and** orchestrator visible to your tier.
@@ -172,7 +172,7 @@ See [`.env.example`](.env.example).
 ## Embedding (library API)
 
 ```ts
-import { createClient } from "aether-code";
+import { createClient } from "aether-agent";
 const aether = createClient({ baseUrl, token });
 
 aether.chatStream(prompt, { model?, agent?, manualModel? })  // AsyncIterable<StreamFrame>
