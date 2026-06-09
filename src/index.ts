@@ -11,3 +11,13 @@ export type { StreamFrame } from "./core/stream.js";
 export { buildChatRequest } from "./core/envelope.js";
 export type { ChatWireRequest } from "./core/envelope.js";
 export type { CatalogItem, CatalogResponse } from "./types.js";
+
+// ---- Embed surface: render the real agent terminal into a host (desktop/web) ----
+export { createTerminalSession } from "./ui/terminal_session.js";
+export type { TerminalSession, TerminalSessionOptions } from "./ui/terminal_session.js";
+export { StdoutSink, StringSink } from "./ui/sink.js";
+export type { RenderSink, StringSinkOptions } from "./ui/sink.js";
+export { createTheme } from "./ui/theme.js";
+export type { Theme } from "./ui/theme.js";
+export { SseEventSource, LocalAgentSource, mapBrainEvent } from "./core/agent_events.js";
+export type { AgentSource, AgentEvent } from "./core/agent_events.js";
