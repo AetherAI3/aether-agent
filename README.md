@@ -25,31 +25,10 @@ Aether Agent reads your code, plans, edits files, runs your tests, and fixes wha
 
 Either way it's a thin client: edits apply to **your** files on **your** disk, path-guarded. Your repository is never uploaded.
 
-## Quickstart
+## Memory & self-improving agents 🧠 QOPC
+The Quantum Optimized Prompt Circuit watches what you accept, revise, publish, or discard, and tunes its own prompt weights. Your AI gets measurably better the more you use it — no config, no fine-tuning.
 
-```bash
-npm i -g aether-agent                # needs Node >= 20
-
-# Path A — hosted models (sign in once):
-aether auth login                    # authorize at aethersystems.net
-aether agent "refactor src/auth.ts to async/await and add tests"
-
-# Path B — fully local, no account, no network:
-ollama pull qwen2.5-coder:7b
-aether agent --local "same task, offline"
-```
-
-No account? Create one free at **[aethersystems.net](https://aethersystems.net)** — the free tier covers Haiku and fast models; paid tiers unlock Opus, the premium models, and the orchestrators. Or skip it entirely and stay `--local`.
-
-> **Other installers:** `curl -fsSL https://aethersystems.net/install.sh | sh` (macOS/Linux/WSL) · `irm https://aethersystems.net/install.ps1 | iex` (Windows PowerShell). They just verify Node and run the npm install — no native deps, no daemon.
-
-## Three ways to run it
-
-```bash
-aether                                 # interactive REPL — chat + /slash commands
-aether "explain src/router.ts"         # one-shot answer, then exit
-aether agent "fix the failing tests"    # autonomous agent: edits files + verifies
-```
+---
 
 ## Two brains, one terminal
 
@@ -63,10 +42,7 @@ The agent runs on either brain through the **same** host loop, render, tools, an
 | Your code | stays local; only the prompt + context you send leaves | never leaves the machine |
 | Metering | UVT usage meter + signed receipts | none — it's your hardware |
 
-```bash
-aether agent "refactor src/auth.ts"            # API brain
-aether agent --local "refactor src/auth.ts"    # local brain
-```
+---
 
 ## Models
 
@@ -137,6 +113,61 @@ Inside the REPL, `/` commands control the session: `/model` · `/models` · `/ag
 - **Tokens are credentials.** Stored `chmod 600`, never committed; `aether auth logout` clears them.
 - **The server is the authority.** On the API path, usage limits, model access, and signing (chain-of-custody receipts) are enforced server-side — the client only displays what the server reports.
 
+---
+
+## Pricing & UVT
+
+AetherCloud runs on the shared Aether platform — **one account, one balance, one
+bill**, shared with [Aether Code](https://github.com/DBarr3/aether-agent) and your
+Aether AI on the web.
+
+| Tier | For |
+|---|---|
+| **Free** | Try it — no card required. Download and run in about a minute. |
+| **Subscription** | Unlock the premium models and orchestrators. |
+| **UVT credits** | Pay-as-you-go usage credits — top up anytime, spend across the whole platform. |
+
+**UVT** is the universal usage credit that meters every model call across
+AetherCloud, Aether Code, and the web, so cost is visible as it happens.
+
+➡ **Current tiers, prices, and credit amounts:** [aethersystems.net/pricing](https://aethersystems.net/pricing)
+
+---
+
+## Quickstart
+
+```bash
+npm i -g aether-agent                # needs Node >= 20
+
+# Path A — hosted models (sign in once):
+aether auth login                    # authorize at aethersystems.net
+aether agent "refactor src/auth.ts to async/await and add tests"
+
+# Path B — fully local, no account, no network:
+ollama pull qwen2.5-coder:7b
+aether agent --local "same task, offline"
+
+> **Other installers:** `curl -fsSL https://aethersystems.net/install.sh | sh` (macOS/Linux/WSL) · `irm https://aethersystems.net/install.ps1 | iex` (Windows PowerShell). They just verify Node and run the npm install — no native deps, no daemon.
+
+## Three ways to run it
+
+```bash
+aether                                 # interactive REPL — chat + /slash commands
+aether "explain src/router.ts"         # one-shot answer, then exit
+aether agent "fix the failing tests"    # autonomous agent: edits files + verifies
+``` 
+```bash
+aether agent "refactor src/auth.ts"            # API brain
+aether agent --local "refactor src/auth.ts"    # local brain
+```
+
+## Security
+
+- **Your code stays local.** Edits apply on your machine, path-guarded — the client refuses to write outside your working directory. On the API path only the prompt and context you send leave; on `--local`, nothing leaves at all.
+- **Verification is ground truth.** The host runs your test command and reads the exit code itself; "done" is never the model's word.
+- **Tokens are credentials.** Stored `chmod 600`, never committed; `aether auth logout` clears them.
+- **The server is the authority.** On the API path, usage limits, model access, and signing (chain-of-custody receipts) are enforced server-side — the client only displays what the server reports.
+
 Found a vulnerability? See [SECURITY.md](SECURITY.md).
 
 ## Embed the core
@@ -157,9 +188,21 @@ const { models } = await aether.catalog();   // same /models menu, one source
 
 The headless-brain ↔ host event protocol is documented and open — see [docs/BRIDGE_PROTOCOL.md](docs/BRIDGE_PROTOCOL.md).
 
+---
+
 ## Part of the Aether platform
 
 Aether Agent is the **terminal sibling** of **[AetherCloud](https://github.com/DBarr3/aethercloud)**, the agentic desktop app — same login, same UVT balance, same model fleet. Drive your repo from the command line; drive projects, workflows, and the memory Vault from the desktop. **One account runs both,** and your balance and context follow you across terminal, desktop, and your Aether AI on the web.
+
+
+## Get AetherCloud
+
+1. Go to **[aethersystems.net/download](https://aethersystems.net/download)**.
+2. Run the installer and accept the consent checkbox.
+3. You're in — installs in about a minute, no card needed.
+4. Sign in with your Aether account to unlock your models, Vault, and balance.
+
+---
 
 ## License
 
