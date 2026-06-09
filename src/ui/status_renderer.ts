@@ -1,16 +1,19 @@
-// status_renderer.ts — single stdout authority for the one-shot `aether agent`.
+// status_renderer.ts — single output authority for the one-shot `aether agent`.
 // Scrollback above (meaningful events) + ONE pinned, animated status line below.
 // log() clears the pinned line, writes the event, repaints the status. No
 // alt-screen (that's TuiLayout, for the persistent REPL) — just a `\r`-pinned
 // line, which is the right shape for a run-to-completion command.
 //
-// PRESENTATION ONLY + TTY-GATED. Non-TTY (pipes, triage_log.py, CI) -> plain
-// lines, never `\r`/ANSI. Honors NO_COLOR and AETHER_NO_ANIM=1. This isolation is
-// what keeps the §8 emission logs clean.
+// PRESENTATION ONLY. Writes through an injected RenderSink (StdoutSink for the
+// CLI; an xterm-backed sink for the desktop/web embed; a StringSink for tests).
+// Color + TTY come from the sink, never from process globals — that is what lets
+// an Electron renderer get full ANSI. Non-tty sink -> plain lines, never `\r`/ANSI.
+// Honors AETHER_NO_ANIM=1 (animation off). The §8 emission logs stay clean.
 
-import { theme } from "./theme.js";
+import { createTheme, type Theme } from "./theme.js";
 import { humanTokens } from "./statusbar.js";
 import { formatElapsed } from "./elapsed.js";
+import { StdoutSink, type RenderSink } from "./sink.js";
 
 const ESC = "\x1b[";
 const CLR_LINE = "\r" + ESC + "2K"; // carriage-return + clear-to-EOL
@@ -23,9 +26,18 @@ export interface StatusRendererOptions {
   mode?: "local" | "api";
   /** Injected clock (ms). Defaults to Date.now — overridden in tests. */
   now?: () => number;
+  /** Where rendered output goes. Defaults to a StdoutSink (CLI). */
+  sink?: RenderSink;
+  /** Color theme. Defaults to createTheme(sink.colorEnabled). */
+  theme?: Theme;
+  /** Install process exit/SIGINT cursor-restore handlers. CLI=true, embed=false. Default true. */
+  ownsProcess?: boolean;
 }
 
 export class StatusRenderer {
+  private readonly sink: RenderSink;
+  private readonly theme: Theme;
+  private readonly ownsProcess: boolean;
   private readonly tty: boolean;
   private readonly mode: "local" | "api";
   private readonly now: () => number;
@@ -40,8 +52,10 @@ export class StatusRenderer {
   private cleanupBound = false;
 
   constructor(opts: StatusRendererOptions = {}) {
-    this.tty =
-      Boolean(process.stdout.isTTY) && !opts.quiet && process.env["AETHER_NO_ANIM"] !== "1";
+    this.sink = opts.sink ?? new StdoutSink();
+    this.theme = opts.theme ?? createTheme(this.sink.colorEnabled);
+    this.ownsProcess = opts.ownsProcess ?? true;
+    this.tty = this.sink.isTTY && !opts.quiet && process.env["AETHER_NO_ANIM"] !== "1";
     this.mode = opts.mode ?? "local";
     this.now = opts.now ?? (() => Date.now());
     this.startedMs = this.now();
@@ -50,7 +64,7 @@ export class StatusRenderer {
   start(): void {
     this.startedMs = this.now();
     if (!this.tty) return;
-    process.stdout.write(HIDE);
+    this.sink.write(HIDE);
     this.installCleanup();
     this.ticker = setInterval(() => this.repaint(), 1000);
     if (typeof this.ticker.unref === "function") this.ticker.unref();
@@ -60,10 +74,10 @@ export class StatusRenderer {
   /** A meaningful scrollback line (tool call, checkpoint, monologue, result). */
   log(line: string): void {
     if (!this.tty) {
-      process.stdout.write(line + "\n");
+      this.sink.write(line + "\n");
       return;
     }
-    process.stdout.write(CLR_LINE + line + "\n");
+    this.sink.write(CLR_LINE + line + "\n");
     this.repaint();
   }
 
@@ -97,26 +111,26 @@ export class StatusRenderer {
       this.ticker = null;
     }
     if (!this.tty) return;
-    process.stdout.write(CLR_LINE + SHOW);
+    this.sink.write(CLR_LINE + SHOW);
   }
 
   private repaint(): void {
     if (!this.tty) return;
-    process.stdout.write(CLR_LINE + this.composeLine());
+    this.sink.write(CLR_LINE + this.composeLine());
   }
 
   /** The pinned heartbeat line. Reads the injected clock — public for tests. */
   composeLine(): string {
-    const hb = theme.cyan(this.hb);
-    const kao = this.kao ? theme.dim(this.kao) + " " : "";
-    const head = `${kao}${theme.bold(this.verb)}…`;
+    const hb = this.theme.cyan(this.hb);
+    const kao = this.kao ? this.theme.dim(this.kao) + " " : "";
+    const head = `${kao}${this.theme.bold(this.verb)}…`;
     const elapsed = formatElapsed(this.now() - this.startedMs);
     const up = this.streamed > 0 ? ` · ↑ ${humanTokens(this.streamed)} tokens` : "";
     const uvt =
       this.mode === "api" && this.cap > 0
-        ? `  ${theme.dim(`UVT ${humanTokens(this.used)}/${humanTokens(this.cap)} ${this.bar()}`)}`
+        ? `  ${this.theme.dim(`UVT ${humanTokens(this.used)}/${humanTokens(this.cap)} ${this.bar()}`)}`
         : "";
-    return `${hb}  ${head} ${theme.dim(`(${elapsed}${up})`)}${uvt}`;
+    return `${hb}  ${head} ${this.theme.dim(`(${elapsed}${up})`)}${uvt}`;
   }
 
   private bar(width = 12): string {
@@ -126,11 +140,11 @@ export class StatusRenderer {
   }
 
   private installCleanup(): void {
-    if (this.cleanupBound) return;
+    if (!this.ownsProcess || this.cleanupBound) return;
     this.cleanupBound = true;
     const restore = (): void => {
       try {
-        process.stdout.write(SHOW);
+        this.sink.write(SHOW);
       } catch {
         /* terminal already gone */
       }
@@ -138,7 +152,7 @@ export class StatusRenderer {
     process.on("exit", restore);
     process.on("SIGINT", () => {
       restore();
-      process.stdout.write("\n");
+      this.sink.write("\n");
       process.exit(130);
     });
   }
