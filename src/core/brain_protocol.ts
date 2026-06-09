@@ -53,6 +53,12 @@ export type BrainEvent =
       from?: number;
       to?: number;
       direction?: string;
+      // behavioral skill fields (subtype "behavioral")
+      skill_name?: string;
+      description?: string;
+      triggers?: string[];
+      action?: string;
+      category?: string;
     };
 
 // --- host -> brain commands ------------------------------------------------
