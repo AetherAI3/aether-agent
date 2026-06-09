@@ -2,9 +2,13 @@
 // Follows the exact pattern of aether vault and aether github
 
 import type { AppContext } from "../core/context.js";
+import { buildChatRequest } from "../core/envelope.js";
+import { CHAT_STREAM_PATH } from "../core/transport.js";
+import { decodeSse } from "../core/stream.js";
+import { createFenceParser } from "../core/workflow.js";
 import {
   WORKFLOW_TEMPLATES,
-  listWorkflows, getWorkflow, deleteWorkflow,
+  listWorkflows, getWorkflow, deleteWorkflow, saveWorkflow, exportWorkflow,
   assessWorkflow, brainstormWorkflow, planWorkflow, finalizeWorkflow,
   formatWorkflowSummary, formatWorkflowDetail,
   type Workflow, type TemplateInfo,
@@ -17,10 +21,10 @@ export async function cmdWorkflow(ctx: AppContext, argv: string[]): Promise<numb
     case "new":        return workflowNew(ctx, argv.slice(1).join(" "));
     case "list":       return workflowList(ctx);
     case "view":       return workflowView(ctx, argv[1]);
-    case "save":       return notYet("workflow save");
+    case "save":       return workflowSave(ctx, argv[1], argv[2]);
     case "delete":     return workflowDelete(ctx, argv[1]);
-    case "export":     return notYet("workflow export");
-    case "import":     return notYet("workflow import");
+    case "export":     return workflowExport(ctx, argv[1], argv[2]);
+    case "import":     return workflowImport(ctx, argv[1]);
     case "assess":     return workflowAssess(ctx, argv[1]);
     case "brainstorm": return workflowBrainstorm(ctx, argv[1]);
     case "plan":       return workflowPlan(ctx, argv[1]);
@@ -47,10 +51,10 @@ function printWorkflowHelp(): void {
     "aether workflow new <desc>      Generate a workflow from intent (AI-driven)",
     "aether workflow list             List workflows stored in vault",
     "aether workflow view <name>      View a workflow's structure in detail",
-    "aether workflow save <name>      Save workflow JSON to vault (coming soon)",
+    "aether workflow save <name>      Save workflow JSON to vault",
     "aether workflow delete <name>    Delete a workflow from vault",
-    "aether workflow export <name>    Download .aetherflow.json (coming soon)",
-    "aether workflow import <file>    Upload .aetherflow.json to vault (coming soon)",
+    "aether workflow export <name>    Download .aetherflow.json to disk",
+    "aether workflow import <file>    Upload local .aetherflow.json to vault",
     "aether workflow assess <name>    Check workflow → project convertibility",
     "aether workflow brainstorm <n>   Socratic Q&A to refine for project",
     "aether workflow plan <name>      Generate plan.md from workflow",
@@ -66,15 +70,64 @@ function printWorkflowHelp(): void {
 
 async function workflowNew(ctx: AppContext, description: string): Promise<number> {
   if (!description) { process.stderr.write("usage: aether workflow new <description>\n"); return 1; }
-  process.stdout.write(`generating workflow from: "${description}"...\n`);
-  process.stdout.write("(this sends your intent to the AI — the model will brainstorm a workflow draft)\n\n");
-  // For now: show what would happen. Full SSE streaming deferred.
-  process.stdout.write(
-    "AI-driven workflow generation requires an authenticated chat session.\n" +
-    "Run: aether agent \"[WORKFLOW_MODE] " + description + "\"\n" +
-    "The model will emit <aether-workflow-draft> fences with the generated workflow.\n\n" +
-    "Tip: this will be fully automated in the next release.\n",
-  );
+
+  const req = buildChatRequest({
+    prompt: "[WORKFLOW_MODE] " + description,
+    model: ctx.flags.model ?? ctx.cfg.defaultModel,
+    manualModel: ctx.flags.model != null,
+    meta: { workflow_json: null },
+  });
+
+  const parser = createFenceParser();
+  let draft: Workflow | null = null;
+
+  process.stdout.write("generating workflow...\n\n");
+
+  try {
+    const stream = await ctx.api.stream(CHAT_STREAM_PATH, req);
+    for await (const frame of decodeSse(stream)) {
+      if (frame.type === "delta" && frame.text) {
+        process.stdout.write(frame.text); // stream display in real-time
+        const result = parser.feed(frame.text);
+        if (result.drafts.length > 0 && !draft) {
+          draft = result.drafts[0]!;
+        }
+      }
+      if (frame.type === "done") {
+        // Flush any remaining buffered fences
+        const final = parser.feed("");
+        if (!draft && final.drafts.length > 0) {
+          draft = final.drafts[0]!;
+        }
+      }
+      if (frame.type === "error") {
+        process.stderr.write(`\n✗ ${frame.msg || "stream error"}\n`);
+        break;
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`\n✗ ${msg}\n`);
+    return 1;
+  }
+
+  if (draft) {
+    process.stdout.write(`\n\n✓ Generated: ${draft.name}  (${draft.id})\n`);
+    process.stdout.write(formatWorkflowSummary(draft) + "\n");
+    process.stdout.write("\nsave to vault: aether workflow save " + (draft.name || "my-workflow") + "\n");
+
+    // Save draft to vault automatically if the user has --auto-save
+    try {
+      const r = await saveWorkflow(ctx.api, draft);
+      process.stdout.write(`auto-saved: ${r.filename}\n`);
+    } catch {
+      // Best-effort — user can save manually
+    }
+  } else {
+    process.stdout.write("\n\n(no workflow draft generated — the model may not support workflow mode)\n");
+    process.stdout.write("tip: try with a more specific description or a different model.\n");
+  }
+
   return 0;
 }
 
@@ -122,6 +175,75 @@ async function workflowDelete(ctx: AppContext, name?: string): Promise<number> {
       process.stdout.write(`delete failed — workflow may not exist: ${name}\n`);
     }
     return deleted ? 0 : 1;
+  } catch (err) { return fail(err); }
+}
+
+async function workflowSave(ctx: AppContext, name?: string, templateArg?: string): Promise<number> {
+  // workflow save <name> [--from-template <n>]
+  let wf: Workflow | null = null;
+  if (templateArg) {
+    const n = parseInt(templateArg);
+    if (isNaN(n) || n < 1 || n > WORKFLOW_TEMPLATES.length) {
+      process.stderr.write(`invalid template: ${templateArg}\n`);
+      return 1;
+    }
+    wf = { ...WORKFLOW_TEMPLATES[n - 1]!.workflow, name: name || WORKFLOW_TEMPLATES[n - 1]!.name };
+  } else if (name) {
+    // Try loading existing workflow from vault, or create from template by name
+    wf = await getWorkflow(ctx.api, name);
+    if (!wf) {
+      // Check if name matches a template id
+      const tpl = WORKFLOW_TEMPLATES.find(t => t.id === name);
+      if (tpl) {
+        wf = { ...tpl.workflow, name };
+      }
+    }
+  }
+  if (!wf) {
+    process.stderr.write("usage: aether workflow save <name> [--from-template <n>]\n");
+    process.stderr.write("       aether workflow save <template-id>\n");
+    process.stderr.write("templates: aether workflow templates\n");
+    return 1;
+  }
+  try {
+    process.stdout.write(`saving "${wf.name}" to vault...\n`);
+    const r = await saveWorkflow(ctx.api, wf);
+    process.stdout.write(`saved: ${r.filename}  (${r.size} bytes)\n`);
+    return 0;
+  } catch (err) { return fail(err); }
+}
+
+async function workflowExport(ctx: AppContext, name?: string, output?: string): Promise<number> {
+  if (!name) { process.stderr.write("usage: aether workflow export <name> [output-path]\n"); return 1; }
+  try {
+    const outPath = output || name + ".aetherflow.json";
+    process.stdout.write(`exporting ${name} → ${outPath}...\n`);
+    const saved = await exportWorkflow(ctx.api, name, outPath);
+    process.stdout.write(`exported: ${saved}\n`);
+    return 0;
+  } catch (err) { return fail(err); }
+}
+
+async function workflowImport(ctx: AppContext, filePath?: string): Promise<number> {
+  if (!filePath) { process.stderr.write("usage: aether workflow import <file.aetherflow.json>\n"); return 1; }
+  try {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const data = fs.readFileSync(filePath, "utf8");
+    let wf: Workflow;
+    try { wf = JSON.parse(data) as Workflow; } catch {
+      process.stderr.write(`invalid JSON in: ${filePath}\n`);
+      return 1;
+    }
+    if (!wf.nodes || !Array.isArray(wf.nodes)) {
+      process.stderr.write(`not a valid workflow: missing nodes array\n`);
+      return 1;
+    }
+    process.stdout.write(`importing "${wf.name || path.basename(filePath)}"...\n`);
+    const r = await saveWorkflow(ctx.api, wf);
+    process.stdout.write(`imported: ${r.filename}  (${r.size} bytes)\n`);
+    process.stdout.write(formatWorkflowSummary(wf) + "\n");
+    return 0;
   } catch (err) { return fail(err); }
 }
 

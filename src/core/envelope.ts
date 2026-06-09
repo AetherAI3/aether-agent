@@ -24,6 +24,8 @@ export interface ChatWireRequest {
   agent_name: string | null;
   /** "manual" fires the per-model cap preflight; "auto" skips it. */
   model_pick_source: "manual" | "auto";
+  /** Optional metadata for server-side directives (e.g. workflow_json). */
+  meta?: Record<string, unknown> | null;
 }
 
 export interface BuildChatRequestArgs {
@@ -32,17 +34,21 @@ export interface BuildChatRequestArgs {
   agent?: string;
   /** Did the user explicitly pick the model? Drives model_pick_source. */
   manualModel: boolean;
+  /** Optional metadata forwarded to the server (workflow_json, etc.). */
+  meta?: Record<string, unknown> | null;
 }
 
 export function buildChatRequest(args: BuildChatRequestArgs): ChatWireRequest {
   const model = args.model?.trim() || null;
   const agent = args.agent?.trim() || null;
-  return {
+  const req: ChatWireRequest = {
     query: args.prompt,
     forced_model_key: model,
     agent_name: agent,
     model_pick_source: args.manualModel && model ? "manual" : "auto",
   };
+  if (args.meta) req.meta = args.meta;
+  return req;
 }
 
 // Local-only coding envelope (kept for the future coding route + workspace).
