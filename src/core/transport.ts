@@ -55,6 +55,11 @@ export const VAULT_NOTES_TREE_PATH = "/vault/notes/tree";
 export const AGENT_VAULT_SNAPSHOT_PATH = "/agent/vault/snapshot";
 export const AGENT_VAULT_SLASH_PATH = "/agent/vault/slash";
 export const AGENT_VAULT_STAGING_PATH = "/agent/vault/staging";
+// ── Project conversion (workflow → project) ─────
+export const PROJECT_FROM_WORKFLOW_ASSESS_PATH = "/project/from-workflow/assess";
+export const PROJECT_FROM_WORKFLOW_BRAINSTORM_PATH = "/project/from-workflow/brainstorm";
+export const PROJECT_FROM_WORKFLOW_PLAN_PATH = "/project/from-workflow/plan";
+export const PROJECT_FROM_WORKFLOW_FINALIZE_PATH = "/project/from-workflow/finalize";
 
 export class ApiClient {
   constructor(

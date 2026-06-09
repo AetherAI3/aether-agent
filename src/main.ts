@@ -18,6 +18,7 @@ import { cmdCode } from "./commands/code.js";
 import { VERSION } from "./version.js";
 import { cmdGithub } from "./commands/github.js";
 import { cmdVault } from "./commands/vault.js";
+import { cmdWorkflow } from "./commands/workflow.js";
 
 /** Coerce a parsed flag value to string | undefined. */
 const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
@@ -44,6 +45,10 @@ Usage:
   aether vault context           Show vault snapshot
   aether vault status            Vault health check
   aether vault <sub>             (see 'aether vault help' for all commands)
+  aether workflow new <desc>    Generate a workflow from intent
+  aether workflow templates     List built-in workflow templates
+  aether workflow status        Workflow dashboard
+  aether workflow <sub>         (see 'aether workflow help' for all commands)
   aether audit [limit]         Recent audit chain-of-custody trail
   aether receipt <order_id>    Export the proof package for an audit entry
   aether config [show|get <k>|set <k> <v>]
@@ -162,6 +167,8 @@ async function main(argv: string[]): Promise<number> {
       return cmdGithub(ctx, rest, { noBrowser: Boolean(values["no-browser"]) });
     case "vault":
       return cmdVault(ctx, rest);
+    case "workflow":
+      return cmdWorkflow(ctx, rest);
     case "login":
       return cmdLogin(ctx, loginOpts);
     case "logout":
