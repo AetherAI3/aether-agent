@@ -87,6 +87,10 @@ function mapFrame(f: StreamFrame): BrainEvent | null {
       return { type: "error", msg: f.msg };
     case "done":
       return null; // the pump emits its own terminal done after the loop
+    case "memory": {
+      const { type: _, ...rest } = f;
+      return { type: "memory", ...rest };
+    }
     default:
       return null; // open/ping/usage/custody/etc. — not part of the agent view
   }

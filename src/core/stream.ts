@@ -30,7 +30,25 @@ export type StreamFrame =
   | { type: "task_done"; taskId?: string }
   | { type: "task_failed"; taskId?: string; msg?: string }
   | { type: "task_blocked"; taskId?: string; msg?: string }
-  | { type: "project_done" };
+  | { type: "project_done" }
+  // memory bridge — QOPC memory frames (subtype-discriminated, forward-compat)
+  | {
+      type: "memory";
+      subtype: string;
+      text?: string;
+      kind?: string;
+      confidence?: number;
+      skill?: string;
+      narrative?: string;
+      factCount?: number;
+      beforeTokens?: number;
+      afterTokens?: number;
+      freedPct?: number;
+      dimension?: string;
+      from?: number;
+      to?: number;
+      direction?: string;
+    };
 
 /** Normalize a parsed JSON object (snake_case wire → camelCase) into a frame. */
 export function normalizeFrame(obj: Record<string, unknown>): StreamFrame | null {
@@ -101,6 +119,26 @@ export function normalizeFrame(obj: Record<string, unknown>): StreamFrame | null
       };
     case "project_done":
       return { type: "project_done" };
+    case "memory": {
+      const subtype = String(obj["subtype"] ?? "");
+      return {
+        type: "memory",
+        subtype,
+        text: strOrUndef(obj["text"]),
+        kind: strOrUndef(obj["kind"]),
+        confidence: numOrUndef(obj["confidence"]),
+        skill: strOrUndef(obj["skill"]),
+        narrative: strOrUndef(obj["narrative"]),
+        factCount: numOrUndef(obj["fact_count"] ?? obj["factCount"]),
+        beforeTokens: numOrUndef(obj["before_tokens"] ?? obj["beforeTokens"]),
+        afterTokens: numOrUndef(obj["after_tokens"] ?? obj["afterTokens"]),
+        freedPct: numOrUndef(obj["freed_pct"] ?? obj["freedPct"]),
+        dimension: strOrUndef(obj["dimension"]),
+        from: numOrUndef(obj["from"]),
+        to: numOrUndef(obj["to"]),
+        direction: strOrUndef(obj["direction"]),
+      };
+    }
     default:
       return null; // unknown type — ignore per contract
   }
