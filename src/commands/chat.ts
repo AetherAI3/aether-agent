@@ -68,6 +68,21 @@ export function applyRestart(flags: GlobalFlags, r: { model?: string; agent?: st
   }
 }
 
+/** Build a prompt with optional steering and btw context prepended.
+ *  Clears steering and btwNotes in the returned result so callers
+ *  can use single-shot semantics.  Exported for testing. */
+export function buildPromptContext(
+  base: string,
+  steering: string | null,
+  btwNotes: string[],
+): { prompt: string; steering: string | null; btwNotes: string[] } {
+  const ctxParts: string[] = [];
+  if (steering) ctxParts.push(`STEERING: ${steering}`);
+  if (btwNotes.length) ctxParts.push(`NOTE: ${btwNotes.join("; ")}`);
+  const prompt = ctxParts.length ? ctxParts.join("\n") + "\n\n" + base : base;
+  return { prompt, steering: null, btwNotes: [] };
+}
+
 export async function cmdChat(ctx: AppContext, prompt: string): Promise<number> {
   if (prompt.trim()) {
     try {
@@ -163,6 +178,9 @@ async function repl(ctx: AppContext): Promise<number> {
   // `busy` blocks edit/submit keys mid-turn so the buffer can't be corrupted by a
   // reentrant handler. Ctrl-C is always honored (handled before this guard).
   let busy = false;
+  const queue: string[] = [];
+  let steering: string | null = null;
+  const btwNotes: string[] = [];
   return await new Promise<number>((resolve) => {
     const cleanup = (): void => {
       process.stdout.write("\x1b[?2004l");
@@ -183,7 +201,22 @@ async function repl(ctx: AppContext): Promise<number> {
         resolve(0);
         return;
       }
-      if (busy) return;
+      if (busy) {
+        // Allow /steer, /btw, /queue even mid-turn
+        if (!pasting && (seq === "\r" || seq === "\n")) {
+          const peek = buf.value.trim();
+          if (
+            !peek.startsWith("/steer ") &&
+            !peek.startsWith("/btw ") &&
+            !peek.startsWith("/queue ")
+          ) {
+            return;
+          }
+          // fall through to submit handler for bypass commands
+        } else {
+          return;
+        }
+      }
       if (pasting) {
         const end = seq.indexOf("\x1b[201~");
         if (end >= 0) {
@@ -252,12 +285,64 @@ async function repl(ctx: AppContext): Promise<number> {
           }
           return;
         case "submit": {
-          const t = buf.value.trim();
+          let t = buf.value.trim();
           process.stdout.write("\n");
           buf.commit(buf.value);
           if (!t) {
             repaint();
             return;
+          }
+          // ── /steer /btw /queue — work even when busy ──
+          if (t.startsWith("/steer ")) {
+            const guidance = t.slice(7).trim();
+            if (!guidance) { process.stdout.write("usage: /steer <guidance>\n"); repaint(); return; }
+            steering = guidance;
+            process.stdout.write(`🎯 Steering set: "${guidance}"\n`);
+            repaint(); return;
+          }
+          if (t.startsWith("/btw ")) {
+            const note = t.slice(5).trim();
+            if (!note) { process.stdout.write("usage: /btw <note>\n"); repaint(); return; }
+            btwNotes.push(note);
+            process.stdout.write(`📝 Noted: "${note}"\n`);
+            repaint(); return;
+          }
+          if (t.startsWith("/queue ")) {
+            const task = t.slice(7).trim();
+            if (!task) { process.stdout.write("usage: /queue <task>\n"); repaint(); return; }
+            if (busy) {
+              queue.push(task);
+              const preview = task.length > 55 ? task.slice(0, 55) + "…" : task;
+              process.stdout.write(`⏳ Queued (${queue.length}): "${preview}"\n`);
+              repaint(); return;
+            }
+            // not busy — run immediately (fall through to normal turn below)
+            process.stdout.write(`⏳ Running: "${task}"\n`);
+            t = task; // set t so the normal turn path below runs it
+            // fall through — the rest of the submit handler will run it
+          }
+
+          // ── /writing-plans /subagent-driven-execution — blocked when busy ──
+          if (t.startsWith("/writing-plans ")) {
+            if (busy) { process.stdout.write("Agent is busy — use /queue to schedule this.\n"); repaint(); return; }
+            const topic = t.slice(15).trim();
+            if (!topic) { process.stdout.write("usage: /writing-plans <topic>\n"); repaint(); return; }
+            const slug = topic.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+            process.stdout.write(`✎ Writing plan for: "${topic}"\n`);
+            t = `Write a detailed, actionable implementation plan for: ${topic}. ` +
+              `Save to .hermes/plans/${slug}.md. Include: phases with numbered tasks, ` +
+              `file manifest (new + modified), testing strategy, out-of-scope items.`;
+            // fall through to normal turn
+          }
+          if (t.startsWith("/subagent-driven-execution ")) {
+            if (busy) { process.stdout.write("Agent is busy — use /queue to schedule this.\n"); repaint(); return; }
+            const task = t.slice(28).trim();
+            if (!task) { process.stdout.write("usage: /subagent-driven-execution <task>\n"); repaint(); return; }
+            process.stdout.write(`⚡ Subagent execution: "${task}"\n`);
+            t = `EXECUTION MODE: subagent-driven. ` +
+              `Decompose the following task into parallel sub-tasks. Use the delegate_task tool ` +
+              `to spawn subagents for each independent workstream. Synthesize all results. Task: ${task}`;
+            // fall through to normal turn
           }
           busy = true;
           if (t.startsWith("/")) {
@@ -281,10 +366,23 @@ async function repl(ctx: AppContext): Promise<number> {
             return;
           }
           try {
-            await runTurn(ctx, t);
+            // Build prompt with steering/btw context
+            let prompt = t;
+            const ctxParts: string[] = [];
+            if (steering) { ctxParts.push(`STEERING: ${steering}`); steering = null; }
+            if (btwNotes.length) { ctxParts.push(`NOTE: ${btwNotes.join("; ")}`); btwNotes.length = 0; }
+            if (ctxParts.length) prompt = ctxParts.join("\n") + "\n\n" + prompt;
+            await runTurn(ctx, prompt);
           } catch (err) {
             printError(err);
           } finally {
+            while (queue.length > 0) {
+              const next = queue.shift()!;
+              const preview = next.length > 55 ? next.slice(0, 55) + "…" : next;
+              process.stdout.write(`\n→ Queued: "${preview}"\n`);
+              try { await runTurn(ctx, next); }
+              catch (err) { printError(err); }
+            }
             busy = false;
           }
           repaint();
