@@ -17,12 +17,15 @@ import type { Writable } from "node:stream";
 import type { AppContext } from "../core/context.js";
 import type { CatalogItem, CatalogResponse } from "../types.js";
 import { MODELS_PATH } from "../core/transport.js";
+import { AGENTS_PATH } from "../core/transport.js";
 import { fetchTrail } from "../core/audit.js";
 import { isApiToken } from "./auth.js";
 import { getVaultSnapshot, searchNotes, notesByTag, getNotesTree } from "../core/vault.js";
 import { WORKFLOW_TEMPLATES, listWorkflows } from "../core/workflow.js";
 import { theme } from "../ui/theme.js";
 import { handleGoal, handleGoals, goalHelp } from "./goals.js";
+import { box, titledBox } from "../ui/box.js";
+import { pickModel } from "../ui/model_picker.js";
 
 export interface SlashResult {
   exit: boolean;
@@ -84,17 +87,24 @@ export async function handleSlash(
       printHelp(out);
       break;
     case "models":
-      await showList(ctx, out, "model");
-      break;
-    case "agents":
-      await showList(ctx, out, "orchestrator");
+      await showPicker(ctx, out, "model");
       break;
     case "model": {
+      if (!arg) {
+        const r = await showPicker(ctx, out, "model");
+        if (r) return { exit: false, restart: r };
+        break;
+      }
       const r = await select(ctx, out, arg, "model");
       if (r) return { exit: false, restart: r };
       break;
     }
     case "agent": {
+      if (!arg) {
+        const r = await showPicker(ctx, out, "orchestrator");
+        if (r) return { exit: false, restart: r };
+        break;
+      }
       const r = await select(ctx, out, arg, "orchestrator");
       if (r) return { exit: false, restart: r };
       break;
@@ -156,6 +166,10 @@ export async function handleSlash(
       await handleGoals(ctx, out, arg);
       break;
     }
+    case "agents": {
+      await agentsSlash(ctx, out);
+      break;
+    }
     case "doctor":
       await doctor(ctx, out);
       break;
@@ -170,6 +184,14 @@ export async function handleSlash(
     case "btw":
     case "writing-plans":
     case "subagent-driven-execution":
+    case "self-review":
+    case "recon":
+    case "plan":
+    case "writing-skills":
+    case "autonomous-execution":
+    case "research":
+    case "review":
+    case "code-review":
       out.write(`/${cmd} is handled directly in the interactive REPL.\n`);
       break;
     default:
@@ -179,38 +201,84 @@ export async function handleSlash(
 }
 
 function printHelp(out: Writable): void {
-  out.write(
+  const BOX = 62;
+
+  const sections = [
     [
-      "/models            list chat models",
-      "/model <n|id>      switch model",
-      "/agents            list orchestrators (Neo/Kronus)",
-      "/agent <n|id>      switch orchestrator",
-      "/tier              plan tier + default",
-      "/audit [n]         recent Aether audit trail",
-      "/vault                vault status",
-      "/vault-context        load vault context into session",
-      "/vault-search <q>     search vault notes",
-      "/vault-recent [n]     recent vault notes",
-      "/vault-project <name> list project notes",
-      "/vault-tag <tag>      list notes by tag",
-      "/vault-tree           vault folder tree",
-      "/workflow             workflow status",
-      "/workflow-templates   list workflow templates",
-      "/workflow-template <n> load template by number",
-      "/goal <desc>      create a new goal (agent plans phases)",
-      "/goals            list saved goals",
-      "/doctor            diagnose your setup",
-      "/mcp               MCP servers (coming soon)",
-      "/queue <task>          queue a task (runs after current one completes)",
-      "/steer <guidance>      set mid-task steering for the next turn",
-      "/btw <note>            add a contextual side note for the next turn",
-      "/writing-plans <topic> invoke agent to write an implementation plan",
-      "/subagent-driven-execution <task>  decompose + delegate via subagents",
-      "/clear             clear screen",
-      "/exit              leave",
       "",
-    ].join("\n"),
-  );
+      theme.iceBlue("☁") + "  " + theme.bold("Session"),
+      "",
+      theme.dim("/models") + "            list chat models",
+      theme.dim("/model") + " <n|id>      switch model  " + theme.dim("/agent") + "    list orchestrators",
+      theme.dim("/agent") + " <n|id>      switch orchestrator  " + theme.dim("/tier") + "      plan tier + default",
+      theme.dim("/audit") + " [n]         recent Aether audit trail",
+      theme.dim("/doctor") + "            diagnose your setup",
+      theme.dim("/clear") + "             clear screen  " + theme.dim("/exit") + "          leave",
+      theme.dim("/agents") + "            view active agent sessions",
+      "",
+    ],
+    [
+      "",
+      theme.iceBlue("⚡") + "  " + theme.bold("Agent Modes"),
+      "",
+      theme.dim("/autonomous-execution") + " <task>  execute without asking",
+      theme.dim("/subagent-driven-execution") + " <task>  decompose + delegate",
+      theme.dim("/self-review") + "           review your own recent work",
+      theme.dim("/recon") + " <topic>          deep reconnaissance",
+      theme.dim("/plan") + " <topic>           write implementation plan",
+      theme.dim("/research") + " <topic>        research-gather-summarize",
+      theme.dim("/review") + "               full project review + summary",
+      theme.dim("/code-review") + "           sweep: clean up + simplify",
+      theme.dim("/writing-skills") + "        author reusable skills",
+      theme.dim("/writing-plans") + " <topic>    write plan to .hermes/plans/",
+      "",
+    ],
+    [
+      "",
+      theme.iceBlue("🎯") + "  " + theme.bold("Steering"),
+      "",
+      theme.dim("/queue") + " <task>          queue a task (runs when current finishes)",
+      theme.dim("/steer") + " <guidance>      mid-task steering for next turn",
+      theme.dim("/btw") + " <note>            contextual side note (accumulates)",
+      "",
+    ],
+    [
+      "",
+      theme.iceBlue("🎯") + "  " + theme.bold("Goals & Workflows"),
+      "",
+      theme.dim("/goal") + " <desc>          create goal (agent plans phases)",
+      theme.dim("/goals") + "            list saved goals  " + theme.dim("/goals") + " <id>  view goal",
+      theme.dim("/goal view") + " [id]        show chain + detail",
+      theme.dim("/goal start|pause|resume|cancel|complete|note") + "",
+      theme.dim("/workflow") + "             workflow status",
+      theme.dim("/workflow-templates") + "   list templates",
+      theme.dim("/workflow-template") + " <n> load template",
+      "",
+    ],
+    [
+      "",
+      theme.iceBlue("📁") + "  " + theme.bold("Vault"),
+      "",
+      theme.dim("/vault") + "                vault status  " + theme.dim("/vault-context") + "    load into session",
+      theme.dim("/vault-search") + " <q>     search notes  " + theme.dim("/vault-recent") + " [n] recent",
+      theme.dim("/vault-project") + " <name> project notes  " + theme.dim("/vault-tag") + " <tag> tagged",
+      theme.dim("/vault-tree") + "           folder tree",
+      "",
+    ],
+    [
+      "",
+      theme.iceBlue("🤖") + "  " + theme.bold("Agents"),
+      "",
+      theme.dim("/agents") + "            view all active agent sessions (name, time, UVT)",
+      "",
+    ],
+  ];
+
+  for (const sec of sections) {
+    out.write(box(sec, { width: BOX }) + "\n\n");
+  }
+  out.write("  " + theme.dim("All /commands work in the interactive REPL (aether).") + "\n");
+  out.write("  " + theme.dim("/agent <n|id> triggers model picker: select, confirm, restart.") + "\n\n");
 }
 
 async function doctor(ctx: AppContext, out: Writable): Promise<void> {
@@ -230,18 +298,55 @@ async function doctor(ctx: AppContext, out: Writable): Promise<void> {
   }
 }
 
-async function showList(ctx: AppContext, out: Writable, kind: Kind): Promise<void> {
+/** Launch interactive picker, then show the standard warning + confirm. */
+async function showPicker(
+  ctx: AppContext,
+  out: Writable,
+  kind: Kind,
+): Promise<{ model?: string; agent?: string } | null> {
   const cat = await getCatalog(ctx);
   const items = byKind(cat, kind);
-  const current =
-    kind === "model" ? ctx.flags.model ?? ctx.cfg.defaultModel ?? cat.default : ctx.flags.agent;
-  out.write(`tier: ${cat.tier}\n`);
-  items.forEach((m, i) => {
-    const mark = m.id === current ? "›" : m.available ? " " : "🔒";
-    const cap = m.monthly_uvt_cap != null ? `  cap ${m.monthly_uvt_cap}` : "";
-    out.write(`${mark} ${String(i + 1).padStart(2)}. ${m.id}\t${m.label}${cap}\n`);
-  });
-  out.write(kind === "model" ? "switch: /model <n|id>\n" : "switch: /agent <n|id>\n");
+
+  const picked = await pickModel(items, out);
+  if (!picked) {
+    // pickModel returned null — either cancelled (Esc) or non-TTY fallback.
+    // If non-TTY, render a flat numbered list so the user can still /model <n>.
+    if (!process.stdin.isTTY) {
+      const current =
+        kind === "model"
+          ? ctx.flags.model ?? ctx.cfg.defaultModel ?? cat.default
+          : ctx.flags.agent;
+      out.write(`tier: ${cat.tier}\n`);
+      items.forEach((m, i) => {
+        const mark = m.id === current ? "\u203A" : m.available ? " " : "\uD83D\uDD12";
+        const cap = m.monthly_uvt_cap != null ? `  cap ${m.monthly_uvt_cap}` : "";
+        out.write(`${mark} ${String(i + 1).padStart(2)}. ${m.id}\t${m.label}${cap}\n`);
+      });
+      out.write(kind === "model" ? "switch: /model <n|id>\n" : "switch: /agent <n|id>\n");
+    } else {
+      out.write("kept current session.\n");
+    }
+    return null;
+  }
+
+  if (!picked.available) {
+    out.write(`${picked.id} is locked on tier ${cat.tier}\n`);
+    return null;
+  }
+
+  // Show warning + confirm (same as existing select() logic)
+  out.write(
+    theme.dim(
+      `\u26A0 Switching ${kind === "model" ? "model" : "orchestrator"} to ${picked.label} will ` +
+        `restart the session and clear context.\n`,
+    ),
+  );
+  const ok = ctx.flags.yes || (await ctx.confirm("Continue? [y/N] "));
+  if (!ok) {
+    out.write("kept current session.\n");
+    return null;
+  }
+  return kind === "model" ? { model: picked.id } : { agent: picked.id };
 }
 
 async function select(
@@ -415,5 +520,53 @@ async function vaultTreeSlash(ctx: AppContext, out: Writable): Promise<void> {
     }
   } catch (err) {
     out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+// ── Agents slash handler ────────────────────────
+
+async function agentsSlash(ctx: AppContext, out: Writable): Promise<void> {
+  try {
+    const resp = await ctx.api.getJson<{ agents?: Array<{
+      name?: string; status?: string; working_time?: string;
+      uvt_streamed?: number; task?: string;
+    }> }>(AGENTS_PATH);
+    const agents = resp.agents ?? [];
+    if (agents.length === 0) {
+      out.write("(no active agents)\n");
+      return;
+    }
+    // Columns: name, status, working time, UVT streamed, task
+    const nameW = Math.max(20, ...agents.map(a => (a.name ?? "?").length));
+    const statusW = 12;
+    const timeW = 14;
+    const uvtW = 12;
+
+    // Header
+    const header = "  " +
+      "name".padEnd(nameW) + "  " +
+      "status".padEnd(statusW) + "  " +
+      "time".padEnd(timeW) + "  " +
+      "UVT".padEnd(uvtW) + "  " +
+      "task";
+    out.write(theme.bold(header) + "\n");
+    out.write(theme.dim("  " + "─".repeat(nameW + statusW + timeW + uvtW + 30)) + "\n");
+
+    for (const a of agents) {
+      const name = (a.name ?? "?").padEnd(nameW);
+      const status = (a.status ?? "?").padEnd(statusW);
+      const time = (a.working_time ?? "—").padEnd(timeW);
+      const uvt = a.uvt_streamed != null
+        ? String(a.uvt_streamed).padEnd(uvtW)
+        : "—".padEnd(uvtW);
+      const task = (a.task ?? "").slice(0, 50);
+
+      const statusColor = a.status === "running" ? theme.cyan :
+        a.status === "complete" ? theme.dim : theme.muted;
+
+      out.write(`  ${theme.bold(name)}${statusColor(status)}${theme.dim(time)}${theme.dim(uvt)}${task}\n`);
+    }
+  } catch {
+    out.write("agents: unreachable (are you logged in? aether auth login)\n");
   }
 }
