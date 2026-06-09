@@ -19,6 +19,7 @@ import type { CatalogItem, CatalogResponse } from "../types.js";
 import { MODELS_PATH } from "../core/transport.js";
 import { fetchTrail } from "../core/audit.js";
 import { isApiToken } from "./auth.js";
+import { getVaultSnapshot, searchNotes, notesByTag, getNotesTree } from "../core/vault.js";
 import { theme } from "../ui/theme.js";
 
 export interface SlashResult {
@@ -102,6 +103,34 @@ export async function handleSlash(
     case "audit":
       await showAudit(ctx, out, arg);
       break;
+    case "vault": {
+      await vaultStatusSlash(ctx, out);
+      break;
+    }
+    case "vault-context": {
+      await vaultContextSlash(ctx, out);
+      break;
+    }
+    case "vault-search": {
+      await vaultSearchSlash(ctx, out, arg);
+      break;
+    }
+    case "vault-recent": {
+      await vaultRecentSlash(ctx, out, arg);
+      break;
+    }
+    case "vault-project": {
+      await vaultProjectSlash(ctx, out, arg);
+      break;
+    }
+    case "vault-tag": {
+      await vaultTagSlash(ctx, out, arg);
+      break;
+    }
+    case "vault-tree": {
+      await vaultTreeSlash(ctx, out);
+      break;
+    }
     case "doctor":
       await doctor(ctx, out);
       break;
@@ -126,6 +155,13 @@ function printHelp(out: Writable): void {
       "/agent <n|id>      switch orchestrator",
       "/tier              plan tier + default",
       "/audit [n]         recent Aether audit trail",
+      "/vault                vault status",
+      "/vault-context        load vault context into session",
+      "/vault-search <q>     search vault notes",
+      "/vault-recent [n]     recent vault notes",
+      "/vault-project <name> list project notes",
+      "/vault-tag <tag>      list notes by tag",
+      "/vault-tree           vault folder tree",
       "/doctor            diagnose your setup",
       "/mcp               MCP servers (coming soon)",
       "/clear             clear screen",
@@ -219,5 +255,89 @@ async function showAudit(ctx: AppContext, out: Writable, arg: string): Promise<v
   }
   for (const e of entries) {
     out.write(`${e.timestamp}\t${e.eventType}\t${e.commitmentHash ?? "-"}\t${e.orderId}\n`);
+  }
+}
+
+// ── Vault slash handlers ────────────────────────
+
+async function vaultStatusSlash(ctx: AppContext, out: Writable): Promise<void> {
+  try {
+    const r = await getVaultSnapshot(ctx.api, 800);
+    out.write(`vault: ${r.note_count} notes\n`);
+  } catch {
+    out.write("vault: unreachable\n");
+  }
+}
+
+async function vaultContextSlash(ctx: AppContext, out: Writable): Promise<void> {
+  try {
+    await getVaultSnapshot(ctx.api, 2000);
+    out.write("vault context loaded for next agent turn.\n");
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+async function vaultSearchSlash(ctx: AppContext, out: Writable, query: string): Promise<void> {
+  if (!query) { out.write("usage: /vault-search <query>\n"); return; }
+  try {
+    const r = await searchNotes(ctx.api, query, { limit: 10 });
+    if (r.results.length === 0) { out.write("no results.\n"); return; }
+    for (const n of r.results) {
+      out.write(`  ${n.title || n.path}  (${n.path})\n`);
+    }
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+async function vaultRecentSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  try {
+    const n = Math.min(parseInt(arg) || 10, 50);
+    const r = await searchNotes(ctx.api, "", { limit: n });
+    if (r.results.length === 0) { out.write("(empty vault)\n"); return; }
+    for (const row of r.results) {
+      out.write(`  ${row.title || row.path}\n`);
+    }
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+async function vaultProjectSlash(ctx: AppContext, out: Writable, name: string): Promise<void> {
+  if (!name) { out.write("usage: /vault-project <name>\n"); return; }
+  try {
+    const r = await searchNotes(ctx.api, "", { project: name, limit: 20 });
+    if (r.results.length === 0) { out.write(`no notes for project: ${name}\n`); return; }
+    for (const n of r.results) {
+      out.write(`  ${n.title || n.path}  [${n.tags.join(", ")}]\n`);
+    }
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+async function vaultTagSlash(ctx: AppContext, out: Writable, tag: string): Promise<void> {
+  if (!tag) { out.write("usage: /vault-tag <tag>\n"); return; }
+  try {
+    const r = await notesByTag(ctx.api, tag, 20);
+    if (r.results.length === 0) { out.write(`no notes with tag: ${tag}\n`); return; }
+    for (const n of r.results) {
+      out.write(`  ${n.title || n.path}  (${n.path})\n`);
+    }
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+async function vaultTreeSlash(ctx: AppContext, out: Writable): Promise<void> {
+  try {
+    const r = await getNotesTree(ctx.api);
+    if (r.tree.length === 0) { out.write("(empty vault)\n"); return; }
+    for (const e of r.tree) {
+      out.write(`  ${e.folder || "/"}  (${e.count} notes)\n`);
+    }
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
   }
 }
