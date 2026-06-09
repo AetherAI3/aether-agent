@@ -37,6 +37,24 @@ export const EXPORT_PROOF_PATH = "/audit/export-proof"; // {entry_ids} -> proof 
 // Note — no REST model registry route exists yet on the the Aether API.
 export const MODELS_PATH = "/models";
 export const AGENTS_PATH = "/agents";
+// ── Vault (cloud file storage) ─────────────────
+export const VAULT_LIST_PATH = "/vault/list";
+export const VAULT_BROWSE_PATH = "/vault/browse";
+export const VAULT_SPACES_LIST_PATH = "/vault/spaces/list";
+export const VAULT_SPACES_USAGE_PATH = "/vault/spaces/usage";
+export const VAULT_SPACES_UPLOAD_PATH = "/vault/spaces/upload";
+export const VAULT_SPACES_DOWNLOAD_PATH = "/vault/spaces/download";
+export const VAULT_SPACES_CONTENT_PATH = "/vault/spaces/content";
+export const VAULT_SPACES_DELETE_PATH = "/vault/spaces/delete";
+export const VAULT_NOTES_SEARCH_PATH = "/vault/notes/search";
+export const VAULT_NOTES_BY_TAG_PATH = "/vault/notes/by-tag";
+export const VAULT_NOTES_BY_TYPE_PATH = "/vault/notes/by-type";
+export const VAULT_NOTES_BACKLINKS_PATH = "/vault/notes/backlinks";
+export const VAULT_NOTES_OUTLINKS_PATH = "/vault/notes/outlinks";
+export const VAULT_NOTES_TREE_PATH = "/vault/notes/tree";
+export const AGENT_VAULT_SNAPSHOT_PATH = "/agent/vault/snapshot";
+export const AGENT_VAULT_SLASH_PATH = "/agent/vault/slash";
+export const AGENT_VAULT_STAGING_PATH = "/agent/vault/staging";
 
 export class ApiClient {
   constructor(
