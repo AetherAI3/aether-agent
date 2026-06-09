@@ -89,9 +89,6 @@ export async function handleSlash(
     case "models":
       await showPicker(ctx, out, "model");
       break;
-    case "agents":
-      await showPicker(ctx, out, "orchestrator");
-      break;
     case "model": {
       if (!arg) {
         const r = await showPicker(ctx, out, "model");
@@ -212,11 +209,12 @@ function printHelp(out: Writable): void {
       theme.iceBlue("☁") + "  " + theme.bold("Session"),
       "",
       theme.dim("/models") + "            list chat models",
-      theme.dim("/model") + " <n|id>      switch model  " + theme.dim("/agents") + "   list orchestrators",
+      theme.dim("/model") + " <n|id>      switch model  " + theme.dim("/agent") + "    list orchestrators",
       theme.dim("/agent") + " <n|id>      switch orchestrator  " + theme.dim("/tier") + "      plan tier + default",
       theme.dim("/audit") + " [n]         recent Aether audit trail",
       theme.dim("/doctor") + "            diagnose your setup",
       theme.dim("/clear") + "             clear screen  " + theme.dim("/exit") + "          leave",
+      theme.dim("/agents") + "            view active agent sessions",
       "",
     ],
     [
@@ -311,7 +309,23 @@ async function showPicker(
 
   const picked = await pickModel(items, out);
   if (!picked) {
-    out.write("kept current session.\n");
+    // pickModel returned null — either cancelled (Esc) or non-TTY fallback.
+    // If non-TTY, render a flat numbered list so the user can still /model <n>.
+    if (!process.stdin.isTTY) {
+      const current =
+        kind === "model"
+          ? ctx.flags.model ?? ctx.cfg.defaultModel ?? cat.default
+          : ctx.flags.agent;
+      out.write(`tier: ${cat.tier}\n`);
+      items.forEach((m, i) => {
+        const mark = m.id === current ? "\u203A" : m.available ? " " : "\uD83D\uDD12";
+        const cap = m.monthly_uvt_cap != null ? `  cap ${m.monthly_uvt_cap}` : "";
+        out.write(`${mark} ${String(i + 1).padStart(2)}. ${m.id}\t${m.label}${cap}\n`);
+      });
+      out.write(kind === "model" ? "switch: /model <n|id>\n" : "switch: /agent <n|id>\n");
+    } else {
+      out.write("kept current session.\n");
+    }
     return null;
   }
 
