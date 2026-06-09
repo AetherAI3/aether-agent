@@ -17,6 +17,9 @@ const PHASES: Record<string, [string, string]> = {
   reasoning: REASONING,
   grounding: ["grounding", "( Ò﹏Ó)✎"],
   paging: ["paging", "(⌨_⌨)"],
+  "memory-extract": ["extracting memory", "(◕‿◕)✎"],
+  "memory-skill":   ["learning skill",   "🧠✨"],
+  "compacting":     ["compacting context", "(；・∀・)📦"],
 };
 
 export function humanTokens(n: number): string {

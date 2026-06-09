@@ -22,6 +22,11 @@ const STAGE: Record<string, Verb> = {
   grounding: { verb: "Grounding", kao: "( Ò﹏Ó)✎" },
   paging: { verb: "Paging", kao: "(⌨_⌨)" },
   error: { verb: "Recovering", kao: "(；・∀・)" },
+  "memory-extract": { verb: "Extracting memory", kao: "(◕‿◕)✎" },
+  "memory-skill":   { verb: "Learning skill",   kao: "🧠✨" },
+  "compacting":     { verb: "Compacting context", kao: "(；・∀・)📦" },
+  "consolidating":  { verb: "Consolidating",    kao: "(￣～￣;)💭" },
+  "memory-style":   { verb: "Adapting style",   kao: "(｡•̀ᴗ-)✧" },
 };
 
 const WHIMSY: Verb[] = [
