@@ -106,13 +106,6 @@ Inside the REPL, `/` commands control the session: `/model` · `/models` · `/ag
 
 **Full reference:** every command, flag, slash command, and env var lives in [COMMANDS.md](COMMANDS.md).
 
-## Security
-
-- **Your code stays local.** Edits apply on your machine, path-guarded — the client refuses to write outside your working directory. On the API path only the prompt and context you send leave; on `--local`, nothing leaves at all.
-- **Verification is ground truth.** The host runs your test command and reads the exit code itself; "done" is never the model's word.
-- **Tokens are credentials.** Stored `chmod 600`, never committed; `aether auth logout` clears them.
-- **The server is the authority.** On the API path, usage limits, model access, and signing (chain-of-custody receipts) are enforced server-side — the client only displays what the server reports.
-
 ---
 
 ## Pricing & UVT
