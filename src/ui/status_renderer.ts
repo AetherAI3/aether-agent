@@ -33,6 +33,12 @@ export interface MemoryFrameShape {
   from?: number;
   to?: number;
   direction?: string;
+  // behavioral skill fields
+  skill_name?: string;
+  description?: string;
+  triggers?: string[];
+  action?: string;
+  category?: string;
 }
 
 const ESC = "\x1b[";
@@ -138,6 +144,13 @@ export class StatusRenderer {
         const pct = frame.confidence ? `  ${this.theme.dim(`(${Math.round(frame.confidence * 100)}%)`)}` : "";
         this.log(`${this.theme.cyan("🎯")}  ${this.theme.bold("skill learned:")} ${frame.skill} — "${frame.text}"${pct}`);
         this.setVerb("Learning skill", "🧠✨");
+        break;
+      }
+      case "behavioral": {
+        const name = frame.skill_name ?? "unknown";
+        const pct = frame.confidence ? `  ${this.theme.dim(`(${Math.round(frame.confidence * 100)}%)`)}` : "";
+        this.log(`${this.theme.iceBlue("🧠")}  ${this.theme.bold("new skill created:")} ${name}${pct}`);
+        this.setVerb("Learning workflow", "🧠✨");
         break;
       }
       case "compacting": {

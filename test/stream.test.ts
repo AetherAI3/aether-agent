@@ -153,3 +153,26 @@ test("memory compacting frame parses with beforeTokens, afterTokens, freedPct", 
     assert.equal(frame.freedPct, 20);
   }
 });
+
+test("behavioral memory frame parses with skill fields", () => {
+  const frame = normalizeFrame({
+    type: "memory",
+    subtype: "behavioral",
+    skill_name: "writing-plans",
+    description: "Write detailed implementation plans",
+    triggers: ["invoke writing-plans", "write a plan", "plan mode"],
+    action: "Load the plan skill and write a detailed plan.",
+    category: "software-development",
+    confidence: 0.88,
+  });
+  assert.equal(frame?.type, "memory");
+  if (frame?.type === "memory") {
+    assert.equal(frame.subtype, "behavioral");
+    assert.equal(frame.skill_name, "writing-plans");
+    assert.equal(frame.description, "Write detailed implementation plans");
+    assert.deepEqual(frame.triggers, ["invoke writing-plans", "write a plan", "plan mode"]);
+    assert.equal(frame.action, "Load the plan skill and write a detailed plan.");
+    assert.equal(frame.category, "software-development");
+    assert.equal(frame.confidence, 0.88);
+  }
+});

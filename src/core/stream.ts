@@ -48,6 +48,12 @@ export type StreamFrame =
       from?: number;
       to?: number;
       direction?: string;
+      // behavioral skill fields (subtype "behavioral")
+      skill_name?: string;
+      description?: string;
+      triggers?: string[];
+      action?: string;
+      category?: string;
     };
 
 /** Normalize a parsed JSON object (snake_case wire → camelCase) into a frame. */
@@ -137,6 +143,11 @@ export function normalizeFrame(obj: Record<string, unknown>): StreamFrame | null
         from: numOrUndef(obj["from"]),
         to: numOrUndef(obj["to"]),
         direction: strOrUndef(obj["direction"]),
+        skill_name: strOrUndef(obj["skill_name"]),
+        description: strOrUndef(obj["description"]),
+        triggers: parseStrArray(obj["triggers"]),
+        action: strOrUndef(obj["action"]),
+        category: strOrUndef(obj["category"]),
       };
     }
     default:
@@ -190,4 +201,8 @@ function numOrUndef(v: unknown): number | undefined {
 }
 function strOrUndef(v: unknown): string | undefined {
   return v == null ? undefined : String(v);
+}
+function parseStrArray(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  return v.map((x) => String(x));
 }

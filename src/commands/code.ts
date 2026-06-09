@@ -234,6 +234,9 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     onEvent = async (ev: BrainEvent): Promise<void> => {
       renderer.event(ev);
       log?.event(ev, nowIso());
+      if (ev.type === "memory") {
+        log?.event(ev, nowIso());
+      }
       const dp = editPreview(cwd, ev);
       if (dp) process.stdout.write(dp + "\n");
       captureDone(ev);
