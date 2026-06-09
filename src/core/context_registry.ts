@@ -12,6 +12,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import type { ApiClient } from "./transport.js";
+import { AGENT_CONTEXT_PATH } from "./transport.js";
+
 // ── Types ──
 
 export interface PinnedEntry {
@@ -170,4 +173,43 @@ export function listSnapshots(): Array<{ id: string; data: SnapshotData }> {
   }
   results.sort((a, b) => b.data.createdAt.localeCompare(a.data.createdAt));
   return results;
+}
+
+// ── Backend sync ──
+
+/**
+ * Push the current registry state to the AETHER-CLOUD backend.
+ * Fail-soft: logs a warning on network error, never throws.
+ * Returns true if the sync succeeded.
+ */
+export async function syncToBackend(api: ApiClient): Promise<boolean> {
+  try {
+    const reg = getRegistry();
+    await api.postJson(AGENT_CONTEXT_PATH, reg.toSnapshot());
+    return true;
+  } catch (err) {
+    // Best-effort — backend may be offline or vault not configured
+    return false;
+  }
+}
+
+/**
+ * Pull the last-saved context state from the backend into the registry.
+ * Returns true if state was loaded, false if no state or error.
+ */
+export async function loadFromBackend(api: ApiClient): Promise<boolean> {
+  try {
+    const resp = await api.getJson<{ found: boolean; state: SnapshotData | null }>(AGENT_CONTEXT_PATH);
+    if (!resp.found || !resp.state) return false;
+    const reg = getRegistry();
+    reg.sessionLabel = resp.state.sessionLabel;
+    reg.pins = resp.state.pins;
+    reg.drops = resp.state.drops;
+    reg.uvtCap = resp.state.uvtCap;
+    reg.uvtSpent = resp.state.uvtSpent;
+    reg.planPath = resp.state.planPath;
+    return true;
+  } catch {
+    return false;
+  }
 }
