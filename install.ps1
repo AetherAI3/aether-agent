@@ -3,130 +3,150 @@
 #   irm https://aethersystems.net/install.ps1 | iex
 #
 # Installs the `aether` CLI globally via npm, then shows next steps.
-# Respects NO_COLOR via Write-Host -ForegroundColor.
+# Requires Node.js >= 20 and npm on the PATH.
 
-param()
+param(
+  [switch]$SkipNodeCheck = $false
+)
 
 $ErrorActionPreference = "Stop"
 
-# ── Color support check ──
-$noColor = [Environment]::GetEnvironmentVariable("NO_COLOR")
-$useColor = (-not $noColor)
+# ── Color helpers ──
+$cyan  = 11  # BrightCyan  (ANSI 44 ≈ #1aa6b7)
+$ice   = 12  # BrightBlue  (ANSI 117 ≈ #87d7ff)
+$green = 10  # BrightGreen
+$red   = 12  # Red (error — redefined below)
+$dim   = 8   # DarkGray
 
-# ── Print helpers ──
-function Write-Header($text) {
-  if ($useColor) { Write-Host $text -ForegroundColor Cyan }
-  else { Write-Host $text }
-}
-function Write-Success($text) {
-  if ($useColor) { Write-Host "  ✓ $text" -ForegroundColor Green }
-  else { Write-Host "  ✓ $text" }
-}
-function Write-ErrorMsg($text) {
-  if ($useColor) { Write-Host "  ✗ $text" -ForegroundColor Red }
-  else { Write-Host "  ✗ $text" }
-}
-function Write-Info($text) {
-  if ($useColor) { Write-Host "  $text" -ForegroundColor DarkGray }
-  else { Write-Host "  $text" }
-}
-function Write-Step($text) {
-  if ($useColor) { Write-Host -NoNewline "$text... " -ForegroundColor DarkGray }
-  else { Write-Host -NoNewline "$text... " }
+$red_error  = 12
+$green_ok   = 10
+
+function Write-Header($msg) { Write-Host $msg -ForegroundColor $cyan }
+function Write-Success($msg) { Write-Host "  ✓ " -NoNewline -ForegroundColor $green_ok; Write-Host $msg -ForegroundColor $dim }
+function Write-ErrorMsg($msg) { Write-Host "  ✗ " -NoNewline -ForegroundColor $red_error; Write-Host $msg }
+function Write-Info($msg) { Write-Host "  $msg" -ForegroundColor $dim }
+function Write-Step($msg) { Write-Host "$msg... " -NoNewline -ForegroundColor $dim }
+
+# ── Cloud glyph ──
+function Write-Cloud {
+  Write-Host "                            ▄▄███▄▄   " -ForegroundColor $ice
+  Write-Host "                           ▄█████████▄ " -ForegroundColor $ice
+  Write-Host "                           ███▄███▄███ " -ForegroundColor $ice
+  Write-Host "                           ▀████▄████▀ " -ForegroundColor $ice
+  Write-Host "                             ▀ ▀ ▀ ▀   " -ForegroundColor $ice
 }
 
-# ── Cloud glyph (ANSI ice blue, works in Windows Terminal / modern PowerShell) ──
-$iceBlue = if ($useColor) { "`e[38;5;117m" } else { "" }
-$reset   = if ($useColor) { "`e[0m" } else { "" }
-$cyan = if ($useColor) { "`e[38;5;44m" } else { "" }
-$bold = if ($useColor) { "`e[1m" } else { "" }
-$dim  = if ($useColor) { "`e[90m" } else { "" }
-$green2 = if ($useColor) { "`e[32m" } else { "" }
-$check = "✓"
-$cross = "✗"
+# ── Box drawing helper (PowerShell terminal supports Unicode box-drawing) ──
+function Write-BoxTop($width = 62) {
+  $h  = "─" * ($width - 2)
+  Write-Host "┌${h}┐" -ForegroundColor $cyan
+}
+function Write-BoxBottom($width = 62) {
+  $h = "─" * ($width - 2)
+  Write-Host "└${h}┘" -ForegroundColor $cyan
+}
+function Write-BoxLine($text, $width = 62) {
+  $inner = $width - 6
+  $pad = [Math]::Max(0, $inner - $text.Length)
+  Write-Host "│" -NoNewline -ForegroundColor $cyan
+  Write-Host "  ${text}" -NoNewline
+  Write-Host (" " * $pad + "  ") -NoNewline
+  Write-Host "│" -ForegroundColor $cyan
+}
+function Write-BoxEmpty($width = 62) {
+  Write-BoxLine "" $width
+}
 
+# ── Banner ──
 Write-Host ""
-Write-Host "${iceBlue}                            ▄▄███▄▄   ${reset}"
-Write-Host "${iceBlue}                           ▄█████████▄ ${reset}"
-Write-Host "${iceBlue}                           ███▄███▄███ ${reset}"
-Write-Host "${iceBlue}                           ▀████▄████▀ ${reset}"
-Write-Host "${iceBlue}                             ▀ ▀ ▀ ▀   ${reset}"
+Write-Cloud
 Write-Host ""
-
-# Box header
-Write-Host "${cyan}┌──────────────────────────────────────────────────────────────┐${reset}"
-Write-Host "${cyan}│${reset}                                                              ${cyan}│${reset}"
-Write-Host "${cyan}│${reset}  ${iceBlue}☁${reset}  ${bold}Aether Agent${reset} — Terminal Coding Agent Installer              ${cyan}│${reset}"
-Write-Host "${cyan}│${reset}     ${dim}v0.1.0  ·  aethersystems.net${reset}                              ${cyan}│${reset}"
-Write-Host "${cyan}│${reset}                                                              ${cyan}│${reset}"
-Write-Host "${cyan}└──────────────────────────────────────────────────────────────┘${reset}"
+Write-BoxTop
+Write-BoxEmpty
+Write-Host "│" -NoNewline -ForegroundColor $cyan
+Write-Host "  ☁  Aether Agent — Terminal Coding Agent Installer              " -NoNewline
+Write-Host "│" -ForegroundColor $cyan
+Write-Host "│" -NoNewline -ForegroundColor $cyan
+Write-Host "     v0.1.0  ·  aethersystems.net                              " -NoNewline -ForegroundColor $dim
+Write-Host "│" -ForegroundColor $cyan
+Write-BoxEmpty
+Write-BoxBottom
 Write-Host ""
 
 # ── Check Node.js ──
-Write-Step "Checking Node.js"
-$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
-if (-not $nodeCmd) {
-  Write-Host ""
-  Write-ErrorMsg "Node.js not found. Aether Agent needs Node.js >= 20."
-  Write-Host ""
-  Write-Info "Install it from https://nodejs.org"
-  Write-Info "Or with winget: winget install OpenJS.NodeJS.LTS"
-  exit 1
-}
-$nodeVer = (node -v 2>$null) -replace '^v', ''
-$nodeMajor = [int]($nodeVer -split '\.')[0]
-Write-Success "Node.js v$nodeVer"
+if (-not $SkipNodeCheck) {
+  Write-Step "Checking Node.js"
+  $nodePath = Get-Command node -ErrorAction SilentlyContinue
+  if (-not $nodePath) {
+    Write-Host ""
+    Write-ErrorMsg "Node.js not found. Aether Agent needs Node.js >= 20."
+    Write-Host ""
+    Write-Info "Install it from https://nodejs.org"
+    Write-Info "  winget install OpenJS.NodeJS.LTS"
+    Write-Info "  or download from https://nodejs.org/en/download"
+    exit 1
+  }
+  $nodeVersion = (node -v) -replace '^v', ''
+  $nodeMajor = [int]($nodeVersion.Split('.')[0])
+  Write-Success "Node.js v${nodeVersion}"
 
-if ($nodeMajor -lt 20) {
-  Write-ErrorMsg "Node.js >= 20 required (found v$nodeVer). Please upgrade."
-  Write-Info "https://nodejs.org/en/download"
-  exit 1
+  if ($nodeMajor -lt 20) {
+    Write-ErrorMsg "Node.js >= 20 required (found v${nodeVersion}). Please upgrade."
+    Write-Info "https://nodejs.org/en/download"
+    exit 1
+  }
 }
 
 # ── Check npm ──
 Write-Step "Checking npm"
-$npmCmd = Get-Command npm -ErrorAction SilentlyContinue
-if (-not $npmCmd) {
+$npmPath = Get-Command npm -ErrorAction SilentlyContinue
+if (-not $npmPath) {
   Write-Host ""
   Write-ErrorMsg "npm not found (it ships with Node.js). Reinstall Node from https://nodejs.org."
   exit 1
 }
-$npmVer = npm -v 2>$null
-Write-Success "npm v$npmVer"
+$npmVersion = npm -v 2>$null
+Write-Success "npm v${npmVersion}"
 
 # ── Check if already installed ──
-$already = $false
-$aetherCmd = Get-Command aether -ErrorAction SilentlyContinue
-if ($aetherCmd) {
-  $already = $true
-  try { $aethVer = aether --version 2>$null } catch { $aethVer = "unknown" }
-  Write-Info "aether-agent $aethVer already installed — will update to latest."
+$alreadyInstalled = $false
+$aetherPath = Get-Command aether -ErrorAction SilentlyContinue
+if ($aetherPath) {
+  $alreadyInstalled = $true
+  Write-Info "aether-agent already installed — will update to latest."
 }
 
 # ── Install ──
 Write-Host ""
-if ($already) { Write-Step "Updating aether-agent" }
-else { Write-Step "Installing aether-agent" }
+if ($alreadyInstalled) {
+  Write-Step "Updating aether-agent"
+} else {
+  Write-Step "Installing aether-agent"
+}
 
 npm install -g aether-agent 2>&1 | ForEach-Object {
-  Write-Host -NoNewline "."  # spinner dots
+  Write-Host "." -NoNewline
 }
 Write-Host ""
 
-if ($LASTEXITCODE -ne 0) {
+if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne $null) {
   Write-ErrorMsg "Install failed. Check your network and npm permissions."
   Write-Host ""
-  Write-Info "If you see permission errors, try running PowerShell as Administrator,"
-  Write-Info "or install a Node version manager like nvm-windows or fnm."
+  Write-Info "If you see EACCES or permission errors:"
+  Write-Info "  1. Run PowerShell as Administrator"
+  Write-Info "  2. Or configure npm prefix: npm config set prefix $env:APPDATA\`npm"
   exit 1
 }
 
-try { $aethFinalVer = aether --version 2>$null } catch { $aethFinalVer = "0.1.0" }
-Write-Success "Aether Agent $aethFinalVer installed!"
+$aetherPath = Get-Command aether -ErrorAction SilentlyContinue
+$aetherVersion = "0.1.0"
+if ($aetherPath) {
+  try { $aetherVersion = (aether --version 2>$null) } catch {}
+}
+Write-Success "Aether Agent ${aetherVersion} installed!"
 
 # ── Verify ──
-$aetherCmd2 = Get-Command aether -ErrorAction SilentlyContinue
-if (-not $aetherCmd2) {
+if (-not (Get-Command aether -ErrorAction SilentlyContinue)) {
   Write-ErrorMsg "aether command not found on PATH after install."
   Write-Info "npm global prefix: $(npm config get prefix)"
   Write-Info "Add $(npm config get prefix) to your PATH, or reinstall Node."
@@ -135,19 +155,44 @@ if (-not $aetherCmd2) {
 
 # ── Next steps box ──
 Write-Host ""
-Write-Host "${cyan}┌──────────────────────────────────────────────────────────────┐${reset}"
-Write-Host "${cyan}│${reset}                                                              ${cyan}│${reset}"
-Write-Host "${cyan}│${reset}  ${green2}✓${reset} ${bold}Ready!${reset}  Next: sign in to unlock the full model fleet.       ${cyan}│${reset}"
-Write-Host "${cyan}│${reset}                                                              ${cyan}│${reset}"
-Write-Host "${cyan}│${reset}    ${bold}${cyan}aether auth login${reset}                                         ${cyan}│${reset}"
-Write-Host "${cyan}│${reset}                                                              ${cyan}│${reset}"
-Write-Host "${cyan}│${reset}  ${dim}Opens aethersystems.net/platform in your browser.${reset}           ${cyan}│${reset}"
-Write-Host "${cyan}│${reset}  ${dim}→ click Approve → you're in.${reset}                                ${cyan}│${reset}"
-Write-Host "${cyan}│${reset}                                                              ${cyan}│${reset}"
-Write-Host "${cyan}│${reset}  ${dim}Then start coding:${reset}                                           ${cyan}│${reset}"
-Write-Host "${cyan}│${reset}    ${dim}aether `"explain src/router.ts`"${reset}                             ${cyan}│${reset}"
-Write-Host "${cyan}│${reset}    ${dim}aether agent `"fix the failing tests`"${reset}                        ${cyan}│${reset}"
-Write-Host "${cyan}│${reset}    ${dim}aether agent --local `"same, fully offline`"${reset}                   ${cyan}│${reset}"
-Write-Host "${cyan}│${reset}                                                              ${cyan}│${reset}"
-Write-Host "${cyan}└──────────────────────────────────────────────────────────────┘${reset}"
+Write-BoxTop
+Write-BoxEmpty
+Write-Host "│" -NoNewline -ForegroundColor $cyan
+Write-Host "  ✓ " -NoNewline -ForegroundColor $green_ok
+Write-Host "Ready!  Next: sign in to unlock the full model fleet.       " -NoNewline
+Write-Host "│" -ForegroundColor $cyan
+Write-BoxEmpty
+Write-Host "│" -NoNewline -ForegroundColor $cyan
+Write-Host "    " -NoNewline
+Write-Host "aether auth login" -NoNewline -ForegroundColor $cyan
+Write-Host (" " * 42) -NoNewline
+Write-Host "│" -ForegroundColor $cyan
+Write-BoxEmpty
+Write-Host "│" -NoNewline -ForegroundColor $cyan
+Write-Host "  Opens aethersystems.net/platform in your browser.           " -NoNewline -ForegroundColor $dim
+Write-Host "│" -ForegroundColor $cyan
+Write-Host "│" -NoNewline -ForegroundColor $cyan
+Write-Host "  → click Approve → you're in.                                " -NoNewline -ForegroundColor $dim
+Write-Host "│" -ForegroundColor $cyan
+Write-BoxEmpty
+Write-Host "│" -NoNewline -ForegroundColor $cyan
+Write-Host "  Then start coding:                                           " -NoNewline -ForegroundColor $dim
+Write-Host "│" -ForegroundColor $cyan
+Write-Host "│" -NoNewline -ForegroundColor $cyan
+Write-Host "    " -NoNewline
+Write-Host "aether `"explain src/router.ts`"" -NoNewline -ForegroundColor $dim
+Write-Host (" " * 28) -NoNewline
+Write-Host "│" -ForegroundColor $cyan
+Write-Host "│" -NoNewline -ForegroundColor $cyan
+Write-Host "    " -NoNewline
+Write-Host "aether agent `"fix the failing tests`"" -NoNewline -ForegroundColor $dim
+Write-Host (" " * 23) -NoNewline
+Write-Host "│" -ForegroundColor $cyan
+Write-Host "│" -NoNewline -ForegroundColor $cyan
+Write-Host "    " -NoNewline
+Write-Host "aether agent --local `"same, fully offline`"" -NoNewline -ForegroundColor $dim
+Write-Host (" " * 19) -NoNewline
+Write-Host "│" -ForegroundColor $cyan
+Write-BoxEmpty
+Write-BoxBottom
 Write-Host ""
