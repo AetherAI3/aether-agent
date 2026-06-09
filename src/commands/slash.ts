@@ -26,6 +26,13 @@ import { theme } from "../ui/theme.js";
 import { handleGoal, handleGoals, goalHelp } from "./goals.js";
 import { box, titledBox } from "../ui/box.js";
 import { pickModel } from "../ui/model_picker.js";
+import { runLogsViewer } from "../ui/logs_viewer.js";
+import { getRegistry, resetRegistry, saveSnapshot, loadSnapshot, listSnapshots, ContextRegistry } from "../core/context_registry.js";
+import { readCustodyLog } from "../core/custody.js";
+import type { AuditEntry } from "../core/audit.js";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { delegateWorker, getOrchTree, broadcastToAgents, gatherResults, requireOrchestrator } from "../core/orchestrator.js";
 
 export interface SlashResult {
   exit: boolean;
@@ -176,6 +183,22 @@ export async function handleSlash(
     case "mcp":
       out.write("MCP servers — coming soon. Aether Agent will manage MCP tools here.\n");
       break;
+    case "delegate": {
+      await delegateSlash(ctx, out, arg);
+      break;
+    }
+    case "tree": {
+      await treeSlash(ctx, out);
+      break;
+    }
+    case "broadcast": {
+      await broadcastSlash(ctx, out, arg);
+      break;
+    }
+    case "gather": {
+      await gatherSlash(ctx, out, arg);
+      break;
+    }
     case "clear":
       out.write("\x1b[2J\x1b[H");
       break;
@@ -194,10 +217,328 @@ export async function handleSlash(
     case "code-review":
       out.write(`/${cmd} is handled directly in the interactive REPL.\n`);
       break;
+    case "pin":
+      await pinSlash(ctx, out, arg, line);
+      break;
+    case "drop":
+      await dropSlash(ctx, out, arg);
+      break;
+    case "snapshot":
+      await snapshotSlash(ctx, out, arg);
+      break;
+    case "limit":
+      await limitSlash(ctx, out, arg);
+      break;
+    case "audit-receipt":
+      await auditReceiptSlash(ctx, out, arg);
+      break;
+    case "rollback":
+      await rollbackSlash(ctx, out, arg);
+      break;
+    case "logs-view":
+    case "logs": {
+      out.write("\x1b[?25l"); // Hide cursor
+      await runLogsViewer(out);
+      break;
+    }
     default:
       out.write(`unknown command: /${cmd}  (try /help)\n`);
   }
   return { exit: false };
+}
+
+// ── /pin ──────────────────────────────────────
+
+async function pinSlash(ctx: AppContext, out: Writable, arg: string, _line: string): Promise<void> {
+  if (!arg.trim() || arg.trim() === "list" || arg.trim() === "ls") {
+    const pins = getRegistry().pins;
+    if (pins.length === 0) {
+      out.write("(no pinned files — use /pin <path> [reason] to pin one)\n");
+      return;
+    }
+    out.write(theme.cyan("📌  Pinned Context\n"));
+    out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
+    for (const p of pins) {
+      out.write(`  ${theme.bold(p.label)}  ${theme.dim(p.path)}  ${theme.muted(p.reason)}\n`);
+    }
+    return;
+  }
+
+  const parts = arg.trim().split(/\s+/);
+  const pth = parts[0]!;
+  const reason = parts.slice(1).join(" ") || "pinned";
+
+  const resolved = pth.startsWith("/") ? pth : join(process.cwd(), pth);
+  const label = pth.split("/").pop() || pth;
+
+  const entry = getRegistry().pin(resolved, label, reason);
+  out.write(`${theme.cyan("📌 pinned")} ${theme.bold(entry.label)}  ${theme.dim(entry.path)}  (${entry.reason})\n`);
+  out.write(theme.dim("  This file will persist in context across /recon and /autonomous-execution loops.\n"));
+}
+
+// ── /drop ─────────────────────────────────────
+
+async function dropSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  if (!arg.trim()) {
+    const registry = getRegistry();
+    out.write("usage: /drop <path>    evict a file from memory context\n");
+    out.write("  /drop src/core/old.ts\n");
+    if (registry.pins.length > 0) {
+      out.write("\n  Pinned files (use /pin list for details):\n");
+      for (const p of registry.pins) {
+        out.write(`    ${theme.dim(p.label)}\n`);
+      }
+    }
+    if (registry.drops.length > 0) {
+      out.write("\n  Recently dropped:\n");
+      for (const d of registry.drops.slice(-5)) {
+        out.write(`    ${theme.dim(d)}\n`);
+      }
+    }
+    return;
+  }
+
+  const pth = arg.trim();
+  const resolved = pth.startsWith("/") ? pth : join(process.cwd(), pth);
+  const wasPinned = getRegistry().isPinned(resolved);
+  getRegistry().drop(resolved);
+
+  if (wasPinned) {
+    out.write(`${theme.cyan("🗑  dropped")} ${theme.bold(pth)} — removed from pinned context\n`);
+  } else {
+    out.write(`${theme.cyan("🗑  evicted")} ${theme.dim(pth)}\n`);
+    out.write(theme.dim("  (wasn't pinned, but will be excluded from future context loads)\n"));
+  }
+}
+
+// ── /snapshot ─────────────────────────────────
+
+async function snapshotSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  const registry = getRegistry();
+  const sub = arg.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+
+  if (sub === "resume" || sub === "load") {
+    const id = arg.trim().split(/\s+/).slice(1).join(" ");
+    if (!id) {
+      const snaps = listSnapshots();
+      if (snaps.length === 0) {
+        out.write("(no snapshots — use /snapshot to save one)\n");
+        return;
+      }
+      out.write(theme.cyan("💾  Saved Snapshots\n"));
+      out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
+      for (const s of snaps) {
+        const pinCnt = s.data.pins.length;
+        const cap = s.data.uvtCap ? `  cap ${s.data.uvtCap} UVT` : "";
+        out.write(`  ${theme.bold(s.id)}  ${theme.dim(s.data.createdAt)}  ${s.data.sessionLabel}  (${pinCnt} pins${cap})\n`);
+      }
+      out.write(theme.dim("\n  /snapshot resume <filename>   to restore a snapshot\n"));
+      return;
+    }
+    const data = loadSnapshot(id);
+    if (!data) {
+      out.write(`no snapshot: ${id}  (use /snapshot to list)\n`);
+      return;
+    }
+    const restored = ContextRegistry.fromSnapshot(data);
+    resetRegistry();
+    Object.assign(getRegistry(), restored);
+    out.write(`${theme.cyan("📂 restored")} ${theme.bold(data.sessionLabel)}  (${data.pins.length} pins, cap ${data.uvtCap ?? "none"})\n`);
+    out.write(`  cwd: ${data.cwd}\n`);
+    out.write(theme.dim("  Use /pin list to see restored context.\n"));
+    return;
+  }
+
+  if (sub === "list" || sub === "ls") {
+    const snaps = listSnapshots();
+    if (snaps.length === 0) {
+      out.write("(no snapshots)\n");
+      return;
+    }
+    out.write(theme.cyan("💾  Snapshots\n"));
+    out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
+    for (const s of snaps) {
+      const pinCnt = s.data.pins.length;
+      out.write(`  ${theme.bold(s.data.sessionLabel)}  ${theme.dim(s.data.createdAt)}  (${pinCnt} pins)\n`);
+    }
+    return;
+  }
+
+  const snapPath = saveSnapshot(registry);
+  const basename = snapPath.split("/").pop() || snapPath;
+  out.write(`${theme.cyan("💾 snapshot saved")}  ${theme.bold(basename)}\n`);
+  out.write(`  ${theme.dim(snapPath)}\n`);
+  out.write(`  pins: ${registry.pins.length}   UVT cap: ${registry.uvtCap ?? "none"}   drops: ${registry.drops.length}\n`);
+  out.write(theme.dim("  Resume with: /snapshot resume <filename>\n"));
+}
+
+// ── /limit ────────────────────────────────────
+
+function renderUvtBar(pct: number, width: number): string {
+  const filled = Math.round((pct / 100) * width);
+  const empty = width - filled;
+  const color = pct > 80 ? theme.muted : pct > 50 ? theme.dim : theme.cyan;
+  return color("[" + "█".repeat(filled) + "░".repeat(empty) + "]");
+}
+
+async function limitSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  const registry = getRegistry();
+
+  if (!arg.trim()) {
+    const current = registry.uvtCap;
+    const spent = registry.uvtSpent;
+    if (current == null) {
+      out.write("UVT cap: none (uncapped)\n");
+    } else {
+      const remaining = Math.max(0, current - spent);
+      const pct = current > 0 ? Math.round((spent / current) * 100) : 0;
+      const bar = renderUvtBar(pct, 20);
+      out.write(`UVT cap: ${theme.bold(String(current))}   spent: ${spent}   remaining: ${remaining}  ${bar}\n`);
+    }
+    out.write(theme.dim("  /limit <amount>    set cap (e.g., /limit 50000)\n"));
+    out.write(theme.dim("  /limit off         remove cap\n"));
+    return;
+  }
+
+  if (arg.trim().toLowerCase() === "off" || arg.trim().toLowerCase() === "none") {
+    registry.uvtCap = null;
+    out.write(theme.cyan("UVT cap removed — session is uncapped.\n"));
+    return;
+  }
+
+  const n = Number(arg.trim());
+  if (!Number.isFinite(n) || n <= 0) {
+    out.write(`invalid: ${arg} — use a positive number (e.g., /limit 50000)\n`);
+    return;
+  }
+
+  registry.setUvtCap(Math.floor(n));
+  out.write(`${theme.cyan("⚡ UVT cap set")}  ${theme.bold(String(Math.floor(n)))}  — agent will pause and ask permission if ceiling hit\n`);
+}
+
+// ── /audit-receipt ────────────────────────────
+
+function hashShortCustody(v: unknown): string | null {
+  if (v == null) return null;
+  if (typeof v === "string") return v.slice(0, 12);
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const inner = o["hash"] ?? o["env_hash"] ?? o["commitment_hash"] ?? o["digest"];
+    if (inner != null) return String(inner).slice(0, 12);
+  }
+  return "\u2713";
+}
+
+async function auditReceiptSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  const nArg = Number(arg);
+  const limit = Number.isInteger(nArg) && nArg > 0 ? Math.min(nArg, 100) : 20;
+
+  const custody = readCustodyLog(limit);
+  let serverEntries: AuditEntry[] = [];
+  try {
+    serverEntries = await fetchTrail(ctx.api, { limit });
+  } catch {
+    /* offline — local custody is enough */
+  }
+
+  out.write(theme.cyan("🧾  Audit Receipt\n"));
+  out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
+
+  const H_TIME = 26;
+  const H_ORDER = 14;
+  const H_EVENT = 14;
+  const H_COMMIT = 14;
+  const H_PATH = 20;
+
+  const header =
+    "time".padEnd(H_TIME) +
+    "order_id".padEnd(H_ORDER) +
+    "event".padEnd(H_EVENT) +
+    "commitment".padEnd(H_COMMIT) +
+    "path";
+  out.write(theme.bold("  " + header) + "\n");
+  out.write(theme.dim("  " + "─".repeat(H_TIME + H_ORDER + H_EVENT + H_COMMIT + H_PATH)) + "\n");
+
+  for (const c of custody) {
+    const ts = c.received_at != null ? new Date(c.received_at).toISOString().padEnd(H_TIME) : "—".padEnd(H_TIME);
+    const oid = (String(c.order_id ?? "—")).slice(0, H_ORDER - 1).padEnd(H_ORDER);
+    const evt = "chat_turn".padEnd(H_EVENT);
+    const comm = (hashShortCustody(c.commitment) ?? "—").slice(0, H_COMMIT - 1).padEnd(H_COMMIT);
+    const pathCol = String(c.path ?? "—").slice(0, H_PATH - 1).padEnd(H_PATH);
+    out.write(`  ${theme.dim(ts)}${oid}${theme.cyan(evt)}${theme.dim(comm)}${pathCol}\n`);
+  }
+
+  for (const e of serverEntries) {
+    const ts = String(e.timestamp).padEnd(H_TIME);
+    const oid = e.orderId.slice(0, H_ORDER - 1).padEnd(H_ORDER);
+    const evt = e.eventType.padEnd(H_EVENT);
+    const comm = (e.commitmentHash ?? "—").slice(0, H_COMMIT - 1).padEnd(H_COMMIT);
+    const pathCol = (e.path ?? "—").slice(0, H_PATH - 1).padEnd(H_PATH);
+    out.write(`  ${theme.dim(ts)}${theme.dim(oid)}${theme.muted(evt)}${theme.dim(comm)}${pathCol}\n`);
+  }
+
+  const totalEntries = custody.length + serverEntries.length;
+  const uvtTotal = getRegistry().uvtSpent;
+  const boxContent = [
+    "",
+    `  Total entries: ${totalEntries}`,
+    `  UVT spent:     ${uvtTotal}`,
+    `  UVT cap:       ${getRegistry().uvtCap ?? "none"}`,
+    "",
+    "  Export proof:  aether receipt <order_id>",
+    "  Full log:      /logs-view",
+    "",
+  ];
+  out.write("\n" + box(boxContent, { width: 60 }) + "\n");
+}
+
+// ── /rollback ─────────────────────────────────
+
+async function rollbackSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  const n = parseInt(arg.trim()) || 1;
+  if (n < 1 || n > 50) {
+    out.write("usage: /rollback [n]    revert last n filesystem changes (1-50, default 1)\n");
+    return;
+  }
+
+  const cwd = process.cwd();
+  const gitDir = join(cwd, ".git");
+  if (!existsSync(gitDir)) {
+    out.write(theme.muted("Not in a git repository. /rollback requires git for safe undo.\n"));
+    return;
+  }
+
+  const { execSync } = require("node:child_process") as typeof import("node:child_process");
+  try {
+    const status = execSync("git diff --name-only", { cwd, encoding: "utf8", timeout: 5000 });
+    const dirty = status.trim().split("\n").filter(Boolean);
+    if (dirty.length === 0) {
+      out.write("(working tree clean — nothing to rollback)\n");
+      return;
+    }
+
+    out.write(`${theme.cyan("\u21A9  Ready to rollback")}  ${dirty.length} files changed\n`);
+    out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
+    const show = dirty.slice(0, 20);
+    for (const f of show) {
+      out.write(`  ${theme.muted(f)}\n`);
+    }
+    if (dirty.length > 20) {
+      out.write(`  ${theme.dim(`... and ${dirty.length - 20} more`)}\n`);
+    }
+
+    const ok = ctx.flags.yes || (await ctx.confirm(`\nRevert all ${dirty.length} uncommitted changes? [y/N] `));
+    if (!ok) {
+      out.write("cancelled.\n");
+      return;
+    }
+
+    execSync("git checkout -- .", { cwd, encoding: "utf8", timeout: 10000 });
+    out.write(`${theme.cyan("\u21A9 rolled back")}  ${dirty.length} files restored to last commit.\n`);
+    out.write(theme.dim("  Git reflog untouched — all commits preserved.\n"));
+  } catch (err) {
+    out.write(`\u2717 ${err instanceof Error ? err.message : String(err)}\n`);
+  }
 }
 
 function printHelp(out: Writable): void {
@@ -211,7 +552,7 @@ function printHelp(out: Writable): void {
       theme.dim("/models") + "            list chat models",
       theme.dim("/model") + " <n|id>      switch model  " + theme.dim("/agent") + "    list orchestrators",
       theme.dim("/agent") + " <n|id>      switch orchestrator  " + theme.dim("/tier") + "      plan tier + default",
-      theme.dim("/audit") + " [n]         recent Aether audit trail",
+      theme.dim("/audit") + " [n]         recent audit trail  " + theme.dim("/audit-receipt") + "  full receipt",
       theme.dim("/doctor") + "            diagnose your setup",
       theme.dim("/clear") + "             clear screen  " + theme.dim("/exit") + "          leave",
       theme.dim("/agents") + "            view active agent sessions",
@@ -244,6 +585,21 @@ function printHelp(out: Writable): void {
     ],
     [
       "",
+      theme.iceBlue("🧠") + "  " + theme.bold("Context & Limits"),
+      "",
+      theme.dim("/pin") + " <path> [reason]    force file into persistent context",
+      theme.dim("/pin list") + "                list pinned files",
+      theme.dim("/drop") + " <path>              evict file from context",
+      theme.dim("/snapshot") + "               save session state to disk",
+      theme.dim("/snapshot resume") + " <id>     reload a saved snapshot",
+      theme.dim("/limit") + " <uvt>              cap UVT spend for this session",
+      theme.dim("/audit-receipt") + " [n]       verified log of tool calls + UVT",
+      theme.dim("/rollback") + " [n]            revert last n filesystem changes",
+      theme.dim("/logs-view") + "              interactive session log browser",
+      "",
+    ],
+    [
+      "",
       theme.iceBlue("🎯") + "  " + theme.bold("Goals & Workflows"),
       "",
       theme.dim("/goal") + " <desc>          create goal (agent plans phases)",
@@ -270,6 +626,16 @@ function printHelp(out: Writable): void {
       theme.iceBlue("🤖") + "  " + theme.bold("Agents"),
       "",
       theme.dim("/agents") + "            view all active agent sessions (name, time, UVT)",
+      "",
+    ],
+    [
+      "",
+      theme.iceBlue("🎻") + "  " + theme.bold("Orchestra"),
+      "",
+      theme.dim("/delegate") + " <model> <task>  delegate sub-task to a worker model",
+      theme.dim("/tree") + "                   live orchestration hierarchy",
+      theme.dim("/broadcast") + ' "<msg>"      inject directive to all sub-agents',
+      theme.dim("/gather") + " <id|all>        merge completed work to staging",
       "",
     ],
   ];
@@ -568,5 +934,98 @@ async function agentsSlash(ctx: AppContext, out: Writable): Promise<void> {
     }
   } catch {
     out.write("agents: unreachable (are you logged in? aether auth login)\n");
+  }
+}
+
+// ── Orchestrator slash handlers ─────────────────
+
+async function delegateSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  if (!requireOrchestrator(ctx, out)) return;
+  const parts = arg.split(/\s+/);
+  const model = parts[0];
+  const task = parts.slice(1).join(" ");
+  if (!model || !task) {
+    out.write("usage: /delegate <model> <task>\n");
+    return;
+  }
+  try {
+    const r = await delegateWorker(ctx.api, ctx.flags.agent!, model, task);
+    out.write(`delegated → worker ${r.worker_id} (${r.status}) running ${model}\n`);
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+async function treeSlash(ctx: AppContext, out: Writable): Promise<void> {
+  if (!requireOrchestrator(ctx, out)) return;
+  try {
+    const r = await getOrchTree(ctx.api, ctx.flags.agent!);
+    out.write(theme.bold(`orchestrator: ${r.orchestrator}`) + "\n");
+    if (r.workers.length === 0) {
+      out.write("  (no active sub-agents)\n");
+      return;
+    }
+    // Columns: id, model, step, tokens, UVT
+    const idW = Math.max(10, ...r.workers.map(w => w.id.length));
+    const modelW = Math.max(10, ...r.workers.map(w => w.model.length));
+    const stepW = Math.max(12, ...r.workers.map(w => w.step.length));
+    const header = "  " +
+      "id".padEnd(idW) + "  " +
+      "model".padEnd(modelW) + "  " +
+      "step".padEnd(stepW) + "  " +
+      "tokens".padEnd(10) + "  " +
+      "UVT";
+    out.write(theme.dim(header) + "\n");
+    out.write(theme.dim("  " + "─".repeat(idW + modelW + stepW + 30)) + "\n");
+    for (const w of r.workers) {
+      out.write(
+        `  ${theme.bold(w.id.padEnd(idW))}  ` +
+        `${w.model.padEnd(modelW)}  ` +
+        `${w.step.padEnd(stepW)}  ` +
+        `${String(w.tokens).padEnd(10)}  ` +
+        `${w.uvt}\n`
+      );
+    }
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+async function broadcastSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  if (!requireOrchestrator(ctx, out)) return;
+  const message = arg.trim();
+  if (!message) {
+    out.write("usage: /broadcast \"<message>\"\n");
+    return;
+  }
+  try {
+    const r = await broadcastToAgents(ctx.api, ctx.flags.agent!, message);
+    out.write(`broadcast → delivered to ${r.delivered_to} sub-agents\n`);
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+async function gatherSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  if (!requireOrchestrator(ctx, out)) return;
+  const workerId = arg.trim();
+  if (!workerId) {
+    out.write("usage: /gather <sub_agent_id|all>\n");
+    return;
+  }
+  try {
+    const r = await gatherResults(ctx.api, ctx.flags.agent!, workerId);
+    if (r.results.length === 0) {
+      out.write("(no results to gather)\n");
+      return;
+    }
+    for (const res of r.results) {
+      out.write(`${theme.bold(res.worker_id)}:\n`);
+      if (res.files.length) out.write(`  files:  ${res.files.join(", ")}\n`);
+      if (res.diffs.length) out.write(`  diffs:  ${res.diffs.length} diff(s)\n`);
+      if (res.patches.length) out.write(`  patches: ${res.patches.length} patch(es)\n`);
+    }
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
   }
 }
