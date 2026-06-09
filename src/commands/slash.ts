@@ -27,7 +27,7 @@ import { handleGoal, handleGoals, goalHelp } from "./goals.js";
 import { box, titledBox } from "../ui/box.js";
 import { pickModel } from "../ui/model_picker.js";
 import { runLogsViewer } from "../ui/logs_viewer.js";
-import { getRegistry, resetRegistry, saveSnapshot, loadSnapshot, listSnapshots, ContextRegistry } from "../core/context_registry.js";
+import { getRegistry, resetRegistry, saveSnapshot, loadSnapshot, listSnapshots, ContextRegistry, syncToBackend, loadFromBackend } from "../core/context_registry.js";
 import { readCustodyLog } from "../core/custody.js";
 import type { AuditEntry } from "../core/audit.js";
 import { existsSync } from "node:fs";
@@ -274,6 +274,7 @@ async function pinSlash(ctx: AppContext, out: Writable, arg: string, _line: stri
   const entry = getRegistry().pin(resolved, label, reason);
   out.write(`${theme.cyan("📌 pinned")} ${theme.bold(entry.label)}  ${theme.dim(entry.path)}  (${entry.reason})\n`);
   out.write(theme.dim("  This file will persist in context across /recon and /autonomous-execution loops.\n"));
+  syncAfter(ctx);
 }
 
 // ── /drop ─────────────────────────────────────
@@ -309,6 +310,7 @@ async function dropSlash(ctx: AppContext, out: Writable, arg: string): Promise<v
     out.write(`${theme.cyan("🗑  evicted")} ${theme.dim(pth)}\n`);
     out.write(theme.dim("  (wasn't pinned, but will be excluded from future context loads)\n"));
   }
+  syncAfter(ctx);
 }
 
 // ── /snapshot ─────────────────────────────────
@@ -320,6 +322,14 @@ async function snapshotSlash(ctx: AppContext, out: Writable, arg: string): Promi
   if (sub === "resume" || sub === "load") {
     const id = arg.trim().split(/\s+/).slice(1).join(" ");
     if (!id) {
+      // Try cloud backend first
+      const cloudLoaded = await loadFromBackend(ctx.api);
+      if (cloudLoaded) {
+        const reg = getRegistry();
+        out.write(`${theme.cyan("☁ loaded from cloud")} ${theme.bold(reg.sessionLabel)}  (${reg.pins.length} pins, cap ${reg.uvtCap ?? "none"})\n`);
+        out.write(theme.dim("  Use /pin list to see restored context.\n"));
+        return;
+      }
       const snaps = listSnapshots();
       if (snaps.length === 0) {
         out.write("(no snapshots — use /snapshot to save one)\n");
@@ -370,9 +380,15 @@ async function snapshotSlash(ctx: AppContext, out: Writable, arg: string): Promi
   out.write(`  ${theme.dim(snapPath)}\n`);
   out.write(`  pins: ${registry.pins.length}   UVT cap: ${registry.uvtCap ?? "none"}   drops: ${registry.drops.length}\n`);
   out.write(theme.dim("  Resume with: /snapshot resume <filename>\n"));
+  syncAfter(ctx);
 }
 
 // ── /limit ────────────────────────────────────
+
+/** Fire-and-forget backend sync. Never blocks the REPL. */
+function syncAfter(ctx: AppContext): void {
+  void syncToBackend(ctx.api).catch(() => {});
+}
 
 function renderUvtBar(pct: number, width: number): string {
   const filled = Math.round((pct / 100) * width);
@@ -414,6 +430,7 @@ async function limitSlash(ctx: AppContext, out: Writable, arg: string): Promise<
 
   registry.setUvtCap(Math.floor(n));
   out.write(`${theme.cyan("⚡ UVT cap set")}  ${theme.bold(String(Math.floor(n)))}  — agent will pause and ask permission if ceiling hit\n`);
+  syncAfter(ctx);
 }
 
 // ── /audit-receipt ────────────────────────────

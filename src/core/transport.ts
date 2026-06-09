@@ -37,6 +37,10 @@ export const EXPORT_PROOF_PATH = "/audit/export-proof"; // {entry_ids} -> proof 
 // Note — no REST model registry route exists yet on the the Aether API.
 export const MODELS_PATH = "/models";
 export const AGENTS_PATH = "/agents";
+export const AGENT_DELEGATE_PATH = "/agents/delegate";
+export const AGENT_TREE_PATH = "/agents/tree";
+export const AGENT_BROADCAST_PATH = "/agents/broadcast";
+export const AGENT_GATHER_PATH = "/agents/gather";
 // ── Vault (cloud file storage) ─────────────────
 export const VAULT_LIST_PATH = "/vault/list";
 export const VAULT_BROWSE_PATH = "/vault/browse";
@@ -55,6 +59,7 @@ export const VAULT_NOTES_TREE_PATH = "/vault/notes/tree";
 export const AGENT_VAULT_SNAPSHOT_PATH = "/agent/vault/snapshot";
 export const AGENT_VAULT_SLASH_PATH = "/agent/vault/slash";
 export const AGENT_VAULT_STAGING_PATH = "/agent/vault/staging";
+export const AGENT_CONTEXT_PATH = "/agent/context";
 // ── Project conversion (workflow → project) ─────
 export const PROJECT_FROM_WORKFLOW_ASSESS_PATH = "/project/from-workflow/assess";
 export const PROJECT_FROM_WORKFLOW_BRAINSTORM_PATH = "/project/from-workflow/brainstorm";
