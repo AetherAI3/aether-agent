@@ -142,6 +142,38 @@ export async function downloadSpacesFile(api: ApiClient, filename: string): Prom
   return res.arrayBuffer();
 }
 
+/** Upload a local file to the vault. Uses multipart form upload. */
+export async function uploadFile(
+  api: ApiClient, filePath: string,
+): Promise<{ key: string; filename: string; size: number; content_type: string }> {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const data = fs.readFileSync(filePath);
+  const filename = path.basename(filePath);
+  const formData = new FormData();
+  formData.append("file", new Blob([data]), filename);
+  const headers = await _authHeaders(api);
+  const res = await fetch(_baseUrl(api) + VAULT_SPACES_UPLOAD_PATH, {
+    method: "POST", headers, body: formData,
+  });
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => "");
+    throw new Error(`upload failed: HTTP ${res.status}${errBody ? " — " + errBody.slice(0, 200) : ""}`);
+  }
+  return res.json();
+}
+
+/** Download a vault file and save it to a local path. Returns the output path. */
+export async function downloadFile(api: ApiClient, filename: string, outputPath: string): Promise<string> {
+  const buffer = await downloadSpacesFile(api, filename);
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const dir = path.dirname(outputPath);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(outputPath, Buffer.from(buffer));
+  return outputPath;
+}
+
 export async function getSpacesContent(
   api: ApiClient, filename: string,
 ): Promise<{ success: boolean; binary: boolean; content: string | null; filename: string }> {

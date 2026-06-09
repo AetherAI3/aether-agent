@@ -6,6 +6,7 @@ import type { AppContext } from "../core/context.js";
 import {
   getVaultList, browseVault,
   getSpacesUsage, getSpacesContent, deleteSpacesFile,
+  uploadFile, downloadFile,
   searchNotes, notesByTag, notesByType,
   getBacklinks, getOutlinks, getNotesTree,
   getVaultSnapshot,
@@ -18,8 +19,8 @@ export async function cmdVault(ctx: AppContext, argv: string[]): Promise<number>
   switch (sub) {
     case "list":       return vaultList(ctx);
     case "browse":     return vaultBrowse(ctx, argv[1]);
-    case "upload":     return notYet("vault upload");
-    case "download":   return notYet("vault download");
+    case "upload":     return vaultUpload(ctx, argv[1]);
+    case "download":   return vaultDownload(ctx, argv[1], argv[2]);
     case "view":       return vaultView(ctx, argv[1]);
     case "delete":     return vaultDelete(ctx, argv[1]);
     case "search":     return vaultSearch(ctx, argv.slice(1).join(" "));
@@ -50,8 +51,8 @@ function printVaultHelp(): void {
   process.stdout.write([
     "aether vault list              List vault files/folders",
     "aether vault browse [path]     Browse a directory",
-    "aether vault upload <file>     Upload file to cloud vault (coming soon)",
-    "aether vault download <name>   Download file from cloud vault (coming soon)",
+    "aether vault upload <file>     Upload file to cloud vault",
+    "aether vault download <name>   Download file from cloud vault",
     "aether vault view <name>       View text content of vault file",
     "aether vault delete <name>     Delete a vault file",
     "aether vault search <query>    Full-text search vault notes",
@@ -104,6 +105,28 @@ async function vaultDelete(ctx: AppContext, name?: string): Promise<number> {
     if (!ok) { process.stdout.write("cancelled.\n"); return 0; }
     const r = await deleteSpacesFile(ctx.api, name);
     process.stdout.write(`deleted: ${r.deleted}\n`);
+    return 0;
+  } catch (err) { return fail(err); }
+}
+
+async function vaultUpload(ctx: AppContext, filePath?: string): Promise<number> {
+  if (!filePath) { process.stderr.write("usage: aether vault upload <file>\n"); return 1; }
+  try {
+    process.stdout.write(`uploading ${filePath}...\n`);
+    const r = await uploadFile(ctx.api, filePath);
+    process.stdout.write(`uploaded: ${r.filename}  (${r.size} bytes)  ${r.content_type}\n`);
+    process.stdout.write(`key: ${r.key}\n`);
+    return 0;
+  } catch (err) { return fail(err); }
+}
+
+async function vaultDownload(ctx: AppContext, name?: string, output?: string): Promise<number> {
+  if (!name) { process.stderr.write("usage: aether vault download <filename> [output-path]\n"); return 1; }
+  try {
+    const outPath = output || name;
+    process.stdout.write(`downloading ${name} → ${outPath}...\n`);
+    const saved = await downloadFile(ctx.api, name, outPath);
+    process.stdout.write(`saved: ${saved}\n`);
     return 0;
   } catch (err) { return fail(err); }
 }

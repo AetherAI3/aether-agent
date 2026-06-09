@@ -6,7 +6,7 @@ import {
   PROJECT_FROM_WORKFLOW_ASSESS_PATH, PROJECT_FROM_WORKFLOW_BRAINSTORM_PATH,
   PROJECT_FROM_WORKFLOW_PLAN_PATH, PROJECT_FROM_WORKFLOW_FINALIZE_PATH,
 } from "./transport.js";
-import { listSpaces, getSpacesContent, deleteSpacesFile, type VaultSpacesFile } from "./vault.js";
+import { listSpaces, getSpacesContent, deleteSpacesFile, uploadFile, downloadFile, type VaultSpacesFile } from "./vault.js";
 
 // ── Types ───────────────────────────────────────
 
@@ -341,6 +341,29 @@ export async function deleteWorkflow(api: ApiClient, name: string): Promise<bool
     await deleteSpacesFile(api, filename);
     return true;
   } catch { return false; }
+}
+
+/** Save a workflow object to vault by writing JSON to temp file, uploading it. */
+export async function saveWorkflow(api: ApiClient, workflow: Workflow): Promise<{ key: string; filename: string; size: number }> {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const os = await import("node:os");
+  const json = JSON.stringify(workflow, null, 2);
+  const filename = (workflow.name || workflow.id || "workflow") + WF_EXT;
+  const tmpPath = path.join(os.tmpdir(), filename);
+  fs.writeFileSync(tmpPath, json);
+  try {
+    return await uploadFile(api, tmpPath);
+  } finally {
+    try { fs.unlinkSync(tmpPath); } catch { /* best-effort cleanup */ }
+  }
+}
+
+/** Export a workflow from vault to a local file. Returns output path. */
+export async function exportWorkflow(api: ApiClient, name: string, outputPath?: string): Promise<string> {
+  const filename = name.endsWith(WF_EXT) ? name : name + WF_EXT;
+  const outPath = outputPath || filename;
+  return downloadFile(api, filename, outPath);
 }
 
 // ── Rendering helpers ────────────────────────────
