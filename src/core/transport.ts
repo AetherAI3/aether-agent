@@ -41,6 +41,8 @@ export const AGENT_DELEGATE_PATH = "/agents/delegate";
 export const AGENT_TREE_PATH = "/agents/tree";
 export const AGENT_BROADCAST_PATH = "/agents/broadcast";
 export const AGENT_GATHER_PATH = "/agents/gather";
+export const AGENT_TEST_DRIVE_PATH = "/agents/test-drive";
+export const AGENT_BENCH_PATH = "/agents/bench";
 // ── Vault (cloud file storage) ─────────────────
 export const VAULT_LIST_PATH = "/vault/list";
 export const VAULT_BROWSE_PATH = "/vault/browse";
@@ -60,6 +62,9 @@ export const AGENT_VAULT_SNAPSHOT_PATH = "/agent/vault/snapshot";
 export const AGENT_VAULT_SLASH_PATH = "/agent/vault/slash";
 export const AGENT_VAULT_STAGING_PATH = "/agent/vault/staging";
 export const AGENT_CONTEXT_PATH = "/agent/context";
+// ── UVT Commands ────────────────────────────
+export const UVT_SCAFFOLD_PATH = "/uvt/scaffold";
+export const UVT_PORT_PATH = "/uvt/port";
 // ── Project conversion (workflow → project) ─────
 export const PROJECT_FROM_WORKFLOW_ASSESS_PATH = "/project/from-workflow/assess";
 export const PROJECT_FROM_WORKFLOW_BRAINSTORM_PATH = "/project/from-workflow/brainstorm";

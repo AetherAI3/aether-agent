@@ -33,6 +33,11 @@ import type { AuditEntry } from "../core/audit.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { delegateWorker, getOrchTree, broadcastToAgents, gatherResults, requireOrchestrator } from "../core/orchestrator.js";
+import { generateScaffold, isValidScaffoldType, SCAFFOLD_USAGE, type ScaffoldType } from "../core/scaffold.js";
+import { portCode, readSource, writePortedFiles } from "../core/port.js";
+import { generateDiff } from "../core/stage_diff.js";
+import { startTestDrive } from "../core/test_drive.js";
+import { runBenchmark } from "../core/bench.js";
 
 export interface SlashResult {
   exit: boolean;
@@ -199,6 +204,14 @@ export async function handleSlash(
       await gatherSlash(ctx, out, arg);
       break;
     }
+    case "test-drive": {
+      await testDriveSlash(ctx, out, arg);
+      break;
+    }
+    case "bench": {
+      await benchSlash(ctx, out, arg);
+      break;
+    }
     case "clear":
       out.write("\x1b[2J\x1b[H");
       break;
@@ -229,6 +242,9 @@ export async function handleSlash(
     case "limit":
       await limitSlash(ctx, out, arg);
       break;
+    case "token-budget":
+      await limitSlash(ctx, out, arg);
+      break;
     case "audit-receipt":
       await auditReceiptSlash(ctx, out, arg);
       break;
@@ -239,6 +255,26 @@ export async function handleSlash(
     case "logs": {
       out.write("\x1b[?25l"); // Hide cursor
       await runLogsViewer(out);
+      break;
+    }
+    case "scaffold": {
+      await scaffoldSlash(ctx, out, arg);
+      break;
+    }
+    case "port": {
+      await portSlash(ctx, out, arg);
+      break;
+    }
+    case "purge": {
+      await purgeSlash(ctx, out);
+      break;
+    }
+    case "stage-diff": {
+      await stageDiffSlash(ctx, out);
+      break;
+    }
+    case "revert": {
+      await revertSlash(ctx, out, arg);
       break;
     }
     default:
@@ -558,6 +594,208 @@ async function rollbackSlash(ctx: AppContext, out: Writable, arg: string): Promi
   }
 }
 
+// ── /scaffold ─────────────────────────────────
+
+async function scaffoldSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  const parts = arg.trim().split(/\s+/);
+  const type = parts[0]?.toLowerCase() ?? "";
+  const name = parts.slice(1).join(" ");
+
+  if (!type || !name) {
+    out.write(SCAFFOLD_USAGE + "\n");
+    return;
+  }
+
+  if (!isValidScaffoldType(type)) {
+    out.write(`invalid type: ${type} — use component, route, or module\n`);
+    return;
+  }
+
+  try {
+    out.write(`scaffolding ${type} "${name}"...\n`);
+    const r = await generateScaffold(ctx.api, type as ScaffoldType, name);
+    for (const f of r.files) {
+      out.write(`  created: ${theme.bold(f.path)}  (${f.content.split("\n").length} lines)\n`);
+    }
+    out.write(`template: ${theme.dim(r.template_used)}\n`);
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+// ── /purge ─────────────────────────────────────
+
+async function purgeSlash(ctx: AppContext, out: Writable): Promise<void> {
+  const registry = getRegistry();
+  const { clearedPins, removedFiles } = registry.purge();
+
+  // Reset the registry completely
+  resetRegistry();
+
+  // Clear screen
+  out.write("\x1b[2J\x1b[H");
+
+  const lines: string[] = [];
+  if (clearedPins > 0) lines.push(`${clearedPins} pinned files`);
+  if (removedFiles > 0) lines.push(`${removedFiles} temp files`);
+  lines.push("UVT cap reset");
+  lines.push("context flushed");
+
+  out.write(`${theme.cyan("🧹 purged")}  ${lines.join(" · ")}\n`);
+  out.write(theme.dim("  Session goal preserved. Agent memory reset to lean baseline.\n"));
+}
+
+// ── /port ─────────────────────────────────────
+
+async function portSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  const parts = arg.trim().split(/\s+/);
+  const targetPath = parts[0];
+  const targetLang = parts[1]?.toLowerCase();
+
+  if (!targetPath || !targetLang) {
+    out.write("usage: /port <file|dir> <target_language>\n");
+    out.write("  /port src/utils.ts rust\n");
+    out.write("  /port src/services/ python\n");
+    return;
+  }
+
+  try {
+    const files = readSource(targetPath);
+    out.write(`reading ${files.length} file(s) from ${targetPath}...\n`);
+
+    const r = await portCode(ctx.api, files, targetLang);
+    out.write(`translated → ${r.files.length} file(s)\n`);
+
+    const outDir = `ported_${targetLang}`;
+    const written = writePortedFiles(r.files, outDir);
+    for (const w of written) {
+      out.write(`  ${theme.bold(w)}\n`);
+    }
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+// ── /stage-diff ────────────────────────────────
+
+async function stageDiffSlash(ctx: AppContext, out: Writable): Promise<void> {
+  try {
+    const r = generateDiff();
+
+    if (r.files.length === 0) {
+      out.write("(working tree clean — nothing to stage)\n");
+      return;
+    }
+
+    out.write(theme.cyan("📋  Stage Diff\n"));
+    out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
+
+    out.write(`  ${r.stats.filesChanged} files  +${r.stats.additions} -${r.stats.deletions}\n\n`);
+
+    for (const f of r.files.slice(0, 15)) {
+      out.write(`  ${theme.muted(f)}\n`);
+    }
+    if (r.files.length > 15) {
+      out.write(`  ${theme.dim(`... and ${r.files.length - 15} more`)}\n`);
+    }
+
+    out.write(`\n${theme.bold("Suggested commit:")}\n`);
+    out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
+    out.write(r.commitMessage + "\n");
+    out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
+
+    const diffLines = r.diff.split("\n").slice(0, 30);
+    out.write(`\n${theme.dim("Diff preview (first 30 lines):")}\n`);
+    for (const line of diffLines) {
+      if (line.startsWith("+")) out.write(theme.dim(line) + "\n");
+      else if (line.startsWith("-")) out.write(theme.muted(line) + "\n");
+      else out.write(theme.dim(line) + "\n");
+    }
+
+    if (r.diff.split("\n").length > 30) {
+      out.write(theme.dim("  ... (truncated)\n"));
+    }
+
+    out.write(`\n${theme.dim("  Copy the commit message above and commit when ready.")}\n`);
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+// ── /revert ─────────────────────────────────────
+
+async function revertSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  const target = arg.trim();
+  if (!target) {
+    out.write("usage: /revert <file|step_id>    surgical rollback\n");
+    out.write("  /revert src/core/old.ts        revert single file\n");
+    out.write("  /revert step-3                 revert to checkpoint (coming soon)\n");
+    return;
+  }
+
+  const cwd = process.cwd();
+  const gitDir = join(cwd, ".git");
+  if (!existsSync(gitDir)) {
+    out.write(theme.muted("Not in a git repository.\n"));
+    return;
+  }
+
+  const { execSync } = require("node:child_process") as typeof import("node:child_process");
+
+  if (target.startsWith("step-") || target.match(/^\d+$/)) {
+    out.write(theme.muted("Step-based revert not yet available. Use /rollback to revert all, or /revert <file> for a single file.\n"));
+    out.write(theme.dim("  Tracked step checkpoints planned for future release.\n"));
+    return;
+  }
+
+  try {
+    const isTracked = (() => {
+      try {
+        execSync(`git ls-files --error-unmatch "${target}"`, { cwd, encoding: "utf8", timeout: 3000 });
+        return true;
+      } catch { return false; }
+    })();
+
+    if (!isTracked) {
+      out.write(`${theme.muted(target)} is not tracked by git.\n`);
+      return;
+    }
+
+    const diffOut = execSync(`git diff --name-only -- "${target}"`, { cwd, encoding: "utf8", timeout: 3000 });
+    if (!diffOut.trim()) {
+      out.write(`(no uncommitted changes in ${target})\n`);
+      return;
+    }
+
+    const fileDiff = execSync(`git diff -- "${target}"`, { cwd, encoding: "utf8", timeout: 5000 });
+    const changes = fileDiff.trim().split("\n").length;
+
+    out.write(`${theme.cyan("↩  Reverting")} ${theme.bold(target)}  (${changes} line changes)\n`);
+    out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
+
+    for (const line of fileDiff.split("\n").slice(0, 10)) {
+      if (line.startsWith("+")) out.write(theme.dim(line) + "\n");
+      else if (line.startsWith("-")) out.write(theme.muted(line) + "\n");
+      else out.write(theme.dim(line) + "\n");
+    }
+
+    const ok = ctx.flags.yes || (await ctx.confirm(`\nRevert ${target} to last commit? [y/N] `));
+    if (!ok) {
+      out.write("cancelled.\n");
+      return;
+    }
+
+    execSync(`git checkout -- "${target}"`, { cwd, encoding: "utf8", timeout: 10000 });
+    out.write(`${theme.cyan("↩ reverted")}  ${target} restored to last commit.\n`);
+  } catch (err: any) {
+    if (err?.stderr?.includes("did not match any file")) {
+      out.write(`not found: ${target}\n`);
+    } else {
+      out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+  }
+}
+
 function printHelp(out: Writable): void {
   const BOX = 62;
 
@@ -610,6 +848,7 @@ function printHelp(out: Writable): void {
       theme.dim("/snapshot") + "               save session state to disk",
       theme.dim("/snapshot resume") + " <id>     reload a saved snapshot",
       theme.dim("/limit") + " <uvt>              cap UVT spend for this session",
+      theme.dim("/token-budget") + " <uvt>       alias for /limit",
       theme.dim("/audit-receipt") + " [n]       verified log of tool calls + UVT",
       theme.dim("/rollback") + " [n]            revert last n filesystem changes",
       theme.dim("/logs-view") + "              interactive session log browser",
@@ -653,6 +892,20 @@ function printHelp(out: Writable): void {
       theme.dim("/tree") + "                   live orchestration hierarchy",
       theme.dim("/broadcast") + ' "<msg>"      inject directive to all sub-agents',
       theme.dim("/gather") + " <id|all>        merge completed work to staging",
+      "",
+    ],
+    [
+      "",
+      theme.iceBlue("⚡") + "  " + theme.bold("UVT Tools"),
+      "",
+      theme.dim("/scaffold") + " <type> <name>  generate boilerplate (component|route|module)",
+      theme.dim("/port") + " <file> <lang>      translate code to another language",
+      theme.dim("/test-drive") + ' "<target>"  auto-test: generate, run, fix, repeat',
+      theme.dim("/bench") + " <target>          profile & optimize code",
+      theme.dim("/purge") + "                    flush transient context & temp files",
+      theme.dim("/token-budget") + " <uvt>       hard UVT cap (alias: /limit)",
+      theme.dim("/stage-diff") + "               unified diff + commit message",
+      theme.dim("/revert") + " <file|step>       surgical rollback",
       "",
     ],
   ];
@@ -1041,6 +1294,93 @@ async function gatherSlash(ctx: AppContext, out: Writable, arg: string): Promise
       if (res.files.length) out.write(`  files:  ${res.files.join(", ")}\n`);
       if (res.diffs.length) out.write(`  diffs:  ${res.diffs.length} diff(s)\n`);
       if (res.patches.length) out.write(`  patches: ${res.patches.length} patch(es)\n`);
+    }
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+// ── /test-drive ─────────────────────────────────
+
+async function testDriveSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  if (!requireOrchestrator(ctx, out)) return;
+
+  const target = arg.trim().replace(/^["']|["']$/g, "");
+  if (!target) {
+    out.write('usage: /test-drive "<route|function>"\n');
+    out.write('  /test-drive "POST /api/users"\n');
+    out.write('  /test-drive "src/utils/validate.ts:validateEmail"\n');
+    return;
+  }
+
+  try {
+    out.write(`${theme.cyan("🧪 test-drive")}  targeting: ${theme.bold(target)}\n`);
+    out.write(theme.dim("  Generating test matrix, running, iterating until green...\n\n"));
+
+    const r = await startTestDrive(ctx.api, ctx.flags.agent!, target, process.cwd());
+
+    if (r.status === "passed") {
+      out.write(`${theme.cyan("✓ all tests pass")}  after ${r.iterations} iteration(s)\n`);
+      if (r.final_result) {
+        out.write(`  ${r.final_result.passed} passed · ${r.final_result.failed} failed\n`);
+      }
+      if (r.patches.length > 0) {
+        out.write(`  ${r.patches.length} source file(s) modified\n`);
+        for (const p of r.patches) {
+          out.write(`    ${theme.bold(p.file)}\n`);
+        }
+      }
+    } else {
+      out.write(`${theme.muted("✗ tests did not converge")} after ${r.iterations} iteration(s)\n`);
+      if (r.final_result?.errors.length) {
+        for (const e of r.final_result.errors.slice(0, 3)) {
+          out.write(`  ${theme.muted(e.slice(0, 200))}\n`);
+        }
+      }
+    }
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+// ── /bench ─────────────────────────────────────
+
+async function benchSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  if (!requireOrchestrator(ctx, out)) return;
+
+  const target = arg.trim();
+  if (!target) {
+    out.write("usage: /bench <function|endpoint>\n");
+    out.write("  /bench src/services/search.ts:fullTextSearch\n");
+    out.write("  /bench GET /api/search\n");
+    return;
+  }
+
+  try {
+    out.write(`${theme.cyan("⚡ benchmarking")}  ${theme.bold(target)}...\n`);
+
+    const r = await runBenchmark(ctx.api, ctx.flags.agent!, target);
+
+    if (r.complexity) {
+      out.write(`\n  complexity: ${theme.bold(r.complexity)}\n`);
+    }
+    if (r.bottlenecks.length > 0) {
+      out.write(`\n  ${theme.muted("bottlenecks:")}\n`);
+      for (const b of r.bottlenecks) {
+        out.write(`    ${theme.muted("•")} ${b}\n`);
+      }
+    }
+    if (r.optimizations.length > 0) {
+      out.write(`\n  ${theme.cyan("optimizations:")}\n`);
+      for (const o of r.optimizations) {
+        out.write(`    ${theme.cyan("→")} ${o.description}  ${theme.dim(`(${o.improvement})`)}\n`);
+      }
+    }
+    if (r.patches.length > 0) {
+      out.write(`\n  ${r.patches.length} optimization(s) applied\n`);
+      for (const p of r.patches) {
+        out.write(`    ${theme.bold(p.file)}\n`);
+      }
     }
   } catch (err) {
     out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);

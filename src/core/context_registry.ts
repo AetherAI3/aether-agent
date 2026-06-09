@@ -87,6 +87,34 @@ export class ContextRegistry {
     this.uvtCap = amount;
   }
 
+  /** Track a temporary file so /purge can clean it up. */
+  tempFiles: string[] = [];
+
+  trackTempFile(path: string): void {
+    if (!this.tempFiles.includes(path)) {
+      this.tempFiles.push(path);
+    }
+  }
+
+  /** Purge all transient state: pins, drops, UVT cap, temp files.
+   *  Session label is preserved so the goal isn't lost. */
+  purge(): { clearedPins: number; removedFiles: number } {
+    const clearedPins = this.pins.length;
+    this.pins = [];
+    this.drops = [];
+    this.uvtCap = null;
+    this.uvtSpent = 0;
+
+    const { unlinkSync, existsSync } = require("node:fs") as typeof import("node:fs");
+    let removedFiles = 0;
+    for (const f of this.tempFiles) {
+      try { if (existsSync(f)) { unlinkSync(f); removedFiles++; } } catch { /* best effort */ }
+    }
+    this.tempFiles = [];
+
+    return { clearedPins, removedFiles };
+  }
+
   /** Check if UVT cap is exceeded. Returns remaining or -1 if exceeded. */
   checkUvtCap(): { capped: boolean; remaining: number; cap: number | null } {
     if (this.uvtCap == null) return { capped: false, remaining: Infinity, cap: null };
