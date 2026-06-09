@@ -22,6 +22,7 @@ import { isApiToken } from "./auth.js";
 import { getVaultSnapshot, searchNotes, notesByTag, getNotesTree } from "../core/vault.js";
 import { WORKFLOW_TEMPLATES, listWorkflows } from "../core/workflow.js";
 import { theme } from "../ui/theme.js";
+import { handleGoal, handleGoals, goalHelp } from "./goals.js";
 
 export interface SlashResult {
   exit: boolean;
@@ -144,6 +145,17 @@ export async function handleSlash(
       await workflowTemplateSlash(ctx, out, arg);
       break;
     }
+    case "goal": {
+      const parts = arg.split(/\s+/);
+      const subcmd = parts[0] ?? "";
+      const rest = parts.slice(1).join(" ");
+      await handleGoal(ctx, out, subcmd.toLowerCase(), rest);
+      break;
+    }
+    case "goals": {
+      await handleGoals(ctx, out, arg);
+      break;
+    }
     case "doctor":
       await doctor(ctx, out);
       break;
@@ -185,6 +197,8 @@ function printHelp(out: Writable): void {
       "/workflow             workflow status",
       "/workflow-templates   list workflow templates",
       "/workflow-template <n> load template by number",
+      "/goal <desc>      create a new goal (agent plans phases)",
+      "/goals            list saved goals",
       "/doctor            diagnose your setup",
       "/mcp               MCP servers (coming soon)",
       "/queue <task>          queue a task (runs after current one completes)",
