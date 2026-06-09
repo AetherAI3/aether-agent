@@ -71,3 +71,33 @@ test("primeCatalog swallows fetch errors (never blocks the prompt)", async () =>
   await primeCatalog(ctx); // must not throw
   assert.ok(true);
 });
+
+test("/delegate rejects when no orchestrator active", async () => {
+  const out: string[] = [];
+  const res = await handleSlash(fakeCtx(true), "/delegate haiku build schema", {
+    write: (s: string) => out.push(s),
+  } as never);
+  assert.equal(res.exit, false);
+  assert.match(out.join(""), /requires an active orchestrator/i);
+});
+
+test("/tree rejects when no orchestrator active", async () => {
+  const out: string[] = [];
+  const res = await handleSlash(fakeCtx(true), "/tree", { write: (s: string) => out.push(s) } as never);
+  assert.equal(res.exit, false);
+  assert.match(out.join(""), /requires an active orchestrator/i);
+});
+
+test("/broadcast rejects when no orchestrator active", async () => {
+  const out: string[] = [];
+  const res = await handleSlash(fakeCtx(true), "/broadcast change bg color", { write: (s: string) => out.push(s) } as never);
+  assert.equal(res.exit, false);
+  assert.match(out.join(""), /requires an active orchestrator/i);
+});
+
+test("/gather rejects when no orchestrator active", async () => {
+  const out: string[] = [];
+  const res = await handleSlash(fakeCtx(true), "/gather all", { write: (s: string) => out.push(s) } as never);
+  assert.equal(res.exit, false);
+  assert.match(out.join(""), /requires an active orchestrator/i);
+});
