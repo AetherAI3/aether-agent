@@ -35,10 +35,19 @@ export function splitKeys(chunk: string): string[] {
     const ch = chunk[i]!;
     if (ch === "\x1b") {
       const rest = chunk.slice(i);
-      const m = rest.match(/^\x1b\[[0-9;]*[A-Za-z~]/) ?? rest.match(/^\x1bO[A-Z]/);
+      // CSI with full param/intermediate classes (mouse reports use < and ;),
+      // then SS3 (application cursor mode).
+      const m = rest.match(/^\x1b\[[0-9;:<=>?]*[ -/]*[@-~]/) ?? rest.match(/^\x1bO./);
       if (m) {
         out.push(m[0]);
         i += m[0].length;
+        continue;
+      }
+      // Alt/Meta chord: ESC immediately followed by any other byte in the same
+      // chunk is one token (so Alt+Enter can never decode as a bare submit).
+      if (rest.length >= 2) {
+        out.push(rest.slice(0, 2));
+        i += 2;
         continue;
       }
       out.push("\x1b");
@@ -81,6 +90,9 @@ export function decodeKey(seq: string): Key {
       return { kind: "kill-start" }; // ctrl-u
     case "\x17":
       return { kind: "word-delete" }; // ctrl-w
+    case "\x1b\x7f":
+    case "\x1b\b":
+      return { kind: "word-delete" }; // alt-backspace
     case "\x1b[D":
       return { kind: "left" };
     case "\x1b[C":
@@ -92,9 +104,19 @@ export function decodeKey(seq: string): Key {
     case "\x1b[4~":
       return { kind: "end" };
     case "\x1b[A":
+    case "\x1bOA":
       return { kind: "up" };
     case "\x1b[B":
+    case "\x1bOB":
       return { kind: "down" };
+    case "\x1bOC":
+      return { kind: "right" };
+    case "\x1bOD":
+      return { kind: "left" };
+    case "\x1bOH":
+      return { kind: "home" };
+    case "\x1bOF":
+      return { kind: "end" };
     case "\x1b[3~":
       return { kind: "delete" };
     case "\x1b":

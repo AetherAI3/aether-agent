@@ -47,3 +47,29 @@ test("decodeKey: single chars and legacy sequences unchanged", () => {
   assert.deepEqual(decodeKey("\x1b[A"), { kind: "up" });
   assert.deepEqual(decodeKey("x"), { kind: "char", value: "x" });
 });
+
+test("Alt/Meta chords are one token and ignored (Alt+Enter must NOT submit)", () => {
+  assert.deepEqual(splitKeys("\x1b\r"), ["\x1b\r"]);
+  assert.deepEqual(decodeKey("\x1b\r"), { kind: "ignore" });
+  assert.deepEqual(splitKeys("\x1ba"), ["\x1ba"]);
+  assert.deepEqual(decodeKey("\x1ba"), { kind: "ignore" }, "Alt+a is not a typed letter");
+});
+
+test("Alt+Backspace is word-delete", () => {
+  assert.deepEqual(decodeKey("\x1b\x7f"), { kind: "word-delete" });
+});
+
+test("SS3 (application cursor mode) arrows and Home/End decode", () => {
+  assert.deepEqual(decodeKey("\x1bOA"), { kind: "up" });
+  assert.deepEqual(decodeKey("\x1bOB"), { kind: "down" });
+  assert.deepEqual(decodeKey("\x1bOC"), { kind: "right" });
+  assert.deepEqual(decodeKey("\x1bOD"), { kind: "left" });
+  assert.deepEqual(decodeKey("\x1bOH"), { kind: "home" });
+  assert.deepEqual(decodeKey("\x1bOF"), { kind: "end" });
+});
+
+test("SGR mouse reports tokenize as one CSI sequence and are ignored, not typed", () => {
+  const report = "\x1b[<0;12;34M";
+  assert.deepEqual(splitKeys(report), [report]);
+  assert.deepEqual(decodeKey(report), { kind: "ignore" });
+});

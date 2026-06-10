@@ -3,6 +3,7 @@
 // stream, decode frames, render. The agent brain runs on Aether's servers.
 
 import { createInterface } from "node:readline";
+import { StringDecoder } from "node:string_decoder";
 import type { AppContext, GlobalFlags } from "../core/context.js";
 import { theme } from "../ui/theme.js";
 import { buildChatRequest } from "../core/envelope.js";
@@ -97,10 +98,12 @@ export function repaintString(prompt: string, value: string, cursor: number, col
   return "\r\x1b[2K" + v.text + `\x1b[${v.cursorCol}G`;
 }
 
-// A trailing partial escape sequence (ESC or CSI prefix with no final byte) —
+// A trailing partial escape sequence (CSI/SS3/OSC intro with no final byte) —
 // held back until the next stdin chunk so markers/arrows split across chunk
 // boundaries reassemble instead of degrading into garbage or a stuck paste.
-const PARTIAL_ESC_RE = /\x1b(?:\[[0-9;]*)?$/;
+// A BARE trailing ESC is NOT held: that's the Esc key (or an Alt chord whose
+// tail lands in the same chunk), and holding it would delay it forever.
+const PARTIAL_ESC_RE = /\x1b(?:\[[0-9;:<=>?]*[ -/]*|O|\])$/;
 
 export async function cmdChat(ctx: AppContext, prompt: string): Promise<number> {
   if (prompt.trim()) {
@@ -275,7 +278,11 @@ async function repl(ctx: AppContext): Promise<number> {
       repaint();
     };
 
-    const processSeq = async (seq: string): Promise<void> => {
+    // SYNC on purpose: every key is fully processed before the next token, so
+    // out-of-order edits are impossible. Submits are fired un-awaited — the
+    // busy flag is set synchronously inside onSubmit before its first await,
+    // so later tokens correctly land in the type-ahead path.
+    const processSeq = (seq: string): void => {
       // Ctrl-C ALWAYS exits — even mid-paste and mid-turn, so a stuck paste or
       // hung stream can never hard-lock the terminal in raw mode.
       if (seq === "\x03") {
@@ -355,7 +362,7 @@ async function repl(ctx: AppContext): Promise<number> {
           if (!buf.value) finish(0);
           return;
         case "submit":
-          await onSubmit();
+          void onSubmit().catch((err) => printError(err));
           return;
         case "escape":
           return; // ignore — picker handles its own escape
@@ -364,8 +371,11 @@ async function repl(ctx: AppContext): Promise<number> {
       }
     };
 
-    const onData = async (chunk: Buffer): Promise<void> => {
-      let data = carry + chunk.toString("utf8");
+    // StringDecoder: a multibyte UTF-8 char split across chunks must not be
+    // decoded as two replacement chars.
+    const decoder = new StringDecoder("utf8");
+    const onData = (chunk: Buffer): void => {
+      let data = carry + decoder.write(chunk);
       carry = "";
       const partial = PARTIAL_ESC_RE.exec(data);
       if (partial && partial[0].length > 0 && partial.index + partial[0].length === data.length) {
@@ -373,7 +383,7 @@ async function repl(ctx: AppContext): Promise<number> {
         data = data.slice(0, partial.index);
       }
       for (const seq of splitKeys(data)) {
-        await processSeq(seq);
+        processSeq(seq);
       }
     };
     process.stdin.on("data", onData);

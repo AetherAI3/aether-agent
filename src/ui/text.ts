@@ -4,7 +4,7 @@
 
 // CSI … final byte | OSC … BEL/ST | DCS/SOS/PM/APC … ST | 2-char escapes
 const ANSI_RE =
-  /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[PX^_][^\x1b]*\x1b\\|\x1b[@-Z\\-_]/g;
+  /\x1b\[[0-9;:<=>?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[PX^_][^\x1b]*\x1b\\|\x1b[@-Z\\-_]/g;
 
 // SGR only — the subset that is safe to carry across wrapped rows.
 const SGR_RE = /^\x1b\[[0-9;]*m/;

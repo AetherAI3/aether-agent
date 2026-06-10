@@ -9,7 +9,7 @@ import {
   orange, green, darkBlue, brightWhite, lightBlue,
   box, stripAnsi,
 } from "./box.js";
-import { decodeKey } from "./keys.js";
+import { decodeKey, splitKeys, type Key } from "./keys.js";
 
 // ── Provider grouping ──────────────────────────
 
@@ -195,35 +195,41 @@ export async function pickModel(
   out.write(renderPicker(groups, flat, selectedIdx) + "\n");
 
   return new Promise((resolve) => {
+    // Returns true when the picker is finished (resolved) and onKey must stop.
+    const handleOne = (k: Key): boolean => {
+      switch (k.kind) {
+        case "up":
+          selectedIdx = (selectedIdx - 1 + total) % total;
+          rerender();
+          return false;
+        case "down":
+          selectedIdx = (selectedIdx + 1) % total;
+          rerender();
+          return false;
+        case "submit": {
+          const picked = flat[selectedIdx]!;
+          cleanup();
+          out.write("\x1b[2J\x1b[H");
+          resolve(picked.item);
+          return true;
+        }
+        case "interrupt":
+        case "eof":
+        case "escape":
+          cleanup();
+          out.write("\x1b[2J\x1b[H");
+          resolve(null);
+          return true;
+        default:
+          return false; // ignore other keys
+      }
+    };
+
     const onKey = (chunk: Buffer): void => {
       try {
-        const k = decodeKey(chunk.toString("utf8"));
-
-        switch (k.kind) {
-          case "up":
-            selectedIdx = (selectedIdx - 1 + total) % total;
-            rerender();
-            break;
-          case "down":
-            selectedIdx = (selectedIdx + 1) % total;
-            rerender();
-            break;
-          case "submit": {
-            const picked = flat[selectedIdx]!;
-            cleanup();
-            out.write("\x1b[2J\x1b[H");
-            resolve(picked.item);
-            return;
-          }
-          case "interrupt":
-          case "eof":
-          case "escape":
-            cleanup();
-            out.write("\x1b[2J\x1b[H");
-            resolve(null);
-            return;
-          default:
-            break; // ignore other keys
+        // Tokenize: held-arrow key-repeat arrives as one batched chunk.
+        for (const seq of splitKeys(chunk.toString("utf8"))) {
+          if (handleOne(decodeKey(seq))) return;
         }
       } catch {
         // If anything throws in the key handler (render, decode), bail out

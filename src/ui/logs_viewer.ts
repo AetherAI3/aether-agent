@@ -138,6 +138,13 @@ export async function runLogsViewer(out: NodeJS.WritableStream): Promise<void> {
   stdin.setRawMode(true);
   stdin.resume();
 
+  // Suspend any existing stdin listeners (the REPL's onData) while the viewer
+  // owns the keyboard — otherwise every viewer key ALSO lands in the REPL's
+  // type-ahead buffer (arrows recall history; Enter would queue a stale prompt
+  // that auto-submits after the turn). Mirrors model_picker.
+  const suspended = stdin.rawListeners("data");
+  stdin.removeAllListeners("data");
+
   let state: ViewerState = { mode: "list", query: "", sessionIdx: 0, scrollOffset: 0 };
 
   const filteredEntries = (): LogEntry[] => {
@@ -177,6 +184,7 @@ export async function runLogsViewer(out: NodeJS.WritableStream): Promise<void> {
 
     const cleanup = (): void => {
       stdin.removeListener("data", onData);
+      for (const l of suspended) stdin.on("data", l as (...args: unknown[]) => void);
       process.stdout.removeListener("resize", onResize);
       if (!wasRaw) {
         stdin.setRawMode(false);

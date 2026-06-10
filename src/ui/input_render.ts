@@ -3,7 +3,7 @@
 // pinned input row both render through this, so the chat bar behaves identically
 // in plain and alt-screen modes.
 
-import { charWidth, visibleWidth } from "./text.js";
+import { charWidth, visibleWidth, sliceVisible } from "./text.js";
 
 export interface InputView {
   /** The row to draw: prompt + the visible slice of the value. */
@@ -19,18 +19,26 @@ export interface InputView {
  * the right edge while typing at the end).
  */
 export function renderInputView(prompt: string, value: string, cursor: number, cols: number): InputView {
-  const pw = visibleWidth(prompt);
+  // A prompt wider than the row would push the caret off-screen and hard-wrap
+  // every repaint; clamp it so at least a few columns remain for typing.
+  let p = prompt;
+  let pw = visibleWidth(p);
+  if (pw > Math.max(0, cols - 8)) {
+    p = sliceVisible(p, Math.max(0, cols - 8));
+    pw = visibleWidth(p);
+  }
   const avail = Math.max(1, cols - pw - 1); // one spare column for the caret
   const cps = [...value];
   const cur = Math.max(0, Math.min(cursor, cps.length));
   const w = (i: number): number => charWidth(cps[i]!.codePointAt(0)!);
-  const widthBetween = (a: number, b: number): number => {
-    let t = 0;
-    for (let i = a; i < b; i++) t += w(i);
-    return t;
-  };
+  // O(n): one pass for the cursor's prefix width, then slide the window start.
+  let winW = 0;
+  for (let i = 0; i < cur; i++) winW += w(i);
   let start = 0;
-  while (widthBetween(start, cur) > avail - 1) start++;
+  while (winW > avail - 1) {
+    winW -= w(start);
+    start++;
+  }
   let end = start;
   let used = 0;
   while (end < cps.length && used + w(end) <= avail) {
@@ -38,7 +46,7 @@ export function renderInputView(prompt: string, value: string, cursor: number, c
     end++;
   }
   return {
-    text: prompt + cps.slice(start, end).join(""),
-    cursorCol: pw + widthBetween(start, cur) + 1,
+    text: p + cps.slice(start, end).join(""),
+    cursorCol: Math.min(Math.max(1, cols), pw + winW + 1),
   };
 }

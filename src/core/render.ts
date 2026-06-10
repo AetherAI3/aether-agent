@@ -76,7 +76,7 @@ export class Renderer {
         this.ensureHeader();
         this.tasksStarted += 1;
         const label = sanitizeTerm(f.label ?? `task ${f.taskId ?? ""}`);
-        this.out.write("\n" + actionLine(label, "active", f.taskId ?? "", this.projFrac()) + "\n");
+        this.out.write("\n" + actionLine(label, "active", sanitizeTerm(f.taskId ?? ""), this.projFrac()) + "\n");
         break;
       }
       case "task_progress":
@@ -84,13 +84,13 @@ export class Renderer {
         break;
       case "task_done":
         this.tasksDone += 1;
-        this.out.write("\n" + actionLine(`${f.taskId ?? "task"} done`, "logging", "", this.projFrac()) + "\n");
+        this.out.write("\n" + actionLine(`${sanitizeTerm(f.taskId ?? "task")} done`, "logging", "", this.projFrac()) + "\n");
         break;
       case "task_failed":
-        this.err.write("\n" + actionLine(`${f.taskId ?? "task"} failed`, "error", sanitizeTerm(f.msg ?? ""), this.projFrac()) + "\n");
+        this.err.write("\n" + actionLine(`${sanitizeTerm(f.taskId ?? "task")} failed`, "error", sanitizeTerm(f.msg ?? ""), this.projFrac()) + "\n");
         break;
       case "task_blocked":
-        this.err.write("\n" + actionLine(`${f.taskId ?? "task"} blocked`, "idle", sanitizeTerm(f.msg ?? ""), this.projFrac()) + "\n");
+        this.err.write("\n" + actionLine(`${sanitizeTerm(f.taskId ?? "task")} blocked`, "idle", sanitizeTerm(f.msg ?? ""), this.projFrac()) + "\n");
         break;
       case "project_done":
         this.out.write("\n" + actionLine("project complete", "active", "", 1) + "\n");

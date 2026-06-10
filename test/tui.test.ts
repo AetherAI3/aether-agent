@@ -279,15 +279,19 @@ test("a colored header line keeps its visible width (ANSI-safe slicing invariant
   assert.equal(stripAnsi(colored).length, 6);
 });
 
-test("TuiLayout setVerb/setStreamed exist and don't throw off-TTY", () => {
+test("TuiLayout setVerb/setStreamed are silent off-TTY (no stray writes)", () => {
   const prev = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
   Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
+  const out: string[] = [];
+  const real = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((c: string) => (out.push(String(c)), true)) as typeof process.stdout.write;
   try {
     const t = new TuiLayout({ mode: "api", now: () => 0 });
     t.setVerb("Forging", "(ง'̀-'́)ง");
     t.setStreamed(33_000);
-    assert.ok(true);
+    assert.equal(out.length, 0, "status setters write nothing when not a TTY");
   } finally {
+    process.stdout.write = real;
     if (prev) Object.defineProperty(process.stdout, "isTTY", prev);
   }
 });
