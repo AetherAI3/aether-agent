@@ -30,6 +30,10 @@ import { loadSession, replayLines } from "../core/session_resume.js";
 import { resumeHint } from "./resume.js";
 import { createWorktree, mergeHint, type Worktree } from "../core/worktree.js";
 import { parseRepoSpec, ensureLocalClone, prCreateHint, type RepoSpec } from "../core/repo.js";
+import { decideGate } from "../core/autonomy.js";
+
+/** Approve (or refuse) one brain-emitted tool call before the host executes it. */
+export type ToolGate = (call: { name: string; args: Record<string, unknown> }) => Promise<boolean>;
 
 export interface CodeOpts {
   /** Use the local Python/Ollama brain instead of the cloud API. */
@@ -175,6 +179,29 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   const interactive = Boolean(opts.interactive) && Boolean(process.stdin.isTTY);
   const onToolResult = (id: string, result: ToolResult): void => log?.toolResult(id, result, nowIso());
 
+  // Permission gate: every brain-emitted mutating/shell tool call is approved
+  // here before the host runs it. Honors the configured permission mode + auto-
+  // apply; in `ask` (the default) on a TTY the user gets a y/N prompt, and on a
+  // non-TTY (CI/pipe) an un-pre-approved call FAILS CLOSED rather than running
+  // unattended. `--yes` or `permissionMode: skip` opt out.
+  const gate: ToolGate = async ({ name, args }) => {
+    const outcome = decideGate(name, ctx.cfg.permissionMode, ctx.cfg.autoApply, {
+      yes: ctx.flags.yes,
+      isTty: Boolean(process.stdin.isTTY),
+    });
+    if (outcome === "allow") return true;
+    if (outcome === "deny") {
+      process.stderr.write(
+        `✗ blocked ${name} — permission mode "${ctx.cfg.permissionMode}" needs confirmation but there is no TTY.\n` +
+          `  re-run with --yes, or set a less strict mode: aether config set permissionMode skip\n`,
+      );
+      return false;
+    }
+    const detail = String(args["command"] ?? args["path"] ?? args["message"] ?? "");
+    const shown = detail.length > 200 ? detail.slice(0, 197) + "…" : detail;
+    return ctx.confirm(`\n⚠ ${name}${shown ? ` ${shown}` : ""} — run it? [y/N] `);
+  };
+
   // Presentation fork — TTY (and not --json/--quiet) gets the live animated
   // status line; everything else (pipes, --json, --quiet, CI) gets the plain
   // HostRenderer. The animation layer is strictly downstream of the event data,
@@ -236,7 +263,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     };
   }
 
-  const code = await hostLoop(brain, exec, onEvent, taskCmd, onToolResult);
+  const code = await hostLoop(brain, exec, onEvent, taskCmd, onToolResult, gate);
   teardown();
 
   // ── Final verification gate: ground truth, never the brain's self-report ──
@@ -283,6 +310,7 @@ export async function hostLoop(
   onEvent: (ev: BrainEvent) => void | Promise<void>,
   task: TaskCommand,
   onToolResult?: (id: string, result: ToolResult) => void,
+  gate?: ToolGate,
 ): Promise<number> {
   let code = 0;
   try {
@@ -290,8 +318,13 @@ export async function hostLoop(
       await onEvent(ev);
       switch (ev.type) {
         case "tool_call": {
-          // The host owns execution + the path-guard; reply with the result.
-          const result = exec.execute(ev.name, ev.args);
+          // The host owns execution + the path-guard. A tool call is gated FIRST
+          // (permission mode); a denied call is never executed — the brain gets a
+          // synthetic refusal result so the loop continues without running it.
+          const approved = gate ? await gate({ name: ev.name, args: ev.args }) : true;
+          const result: ToolResult = approved
+            ? exec.execute(ev.name, ev.args)
+            : { output: `[denied: ${ev.name} not approved by user]`, exitCode: 1 };
           onToolResult?.(ev.id, result);
           brain.sendToolResult(ev.id, result);
           break;

@@ -48,6 +48,7 @@ export function loadConfig(): AetherConfig {
 
 export function saveConfig(cfg: AetherConfig): void {
   const dir = configDir();
-  mkdirSync(dir, { recursive: true });
+  // 0700: this directory also holds the .token credential — keep it owner-only.
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
   writeFileSync(configPath(), JSON.stringify(cfg, null, 2) + "\n", "utf8");
 }

@@ -32,3 +32,56 @@ export function evaluate(
       return { allowed: true, needsPrompt: true, reason: `ask:${action}` };
   }
 }
+
+/**
+ * Map a tool name to the gate action it requires, or null when the tool is
+ * read-only and never needs approval. `run_tests` runs the HOST's own grounding
+ * command (operator-supplied, not brain-chosen) so it is intentionally ungated;
+ * only the brain-driven mutating/arbitrary-exec tools are gated.
+ */
+export function gateActionFor(tool: string): GateAction | null {
+  switch (tool) {
+    case "write_file":
+      return "write";
+    case "run_shell":
+    case "git_commit":
+      return "shell";
+    default:
+      return null; // read_file, repo_search, run_tests — read-only / host-owned
+  }
+}
+
+export type GateOutcome = "allow" | "deny" | "prompt";
+
+/** Runtime context the gate decision needs beyond the static mode/autoApply. */
+export interface GateEnv {
+  /** `--yes` / auto-confirm was passed. */
+  yes: boolean;
+  /** stdin is a TTY, so an interactive y/N prompt is possible. */
+  isTty: boolean;
+}
+
+/**
+ * Decide what to do with one brain-emitted tool call. Pure — the caller performs
+ * the actual prompt I/O when this returns "prompt".
+ *
+ *  - read-only tool                       → allow
+ *  - mode/autoApply says no prompt needed → allow (skip, or auto+autoApply)
+ *  - --yes                                → allow (operator pre-approved)
+ *  - prompt needed but no TTY to ask on   → deny  (FAIL CLOSED — an unattended
+ *      session must not be driven into shell/edit execution it never approved)
+ *  - otherwise                            → prompt
+ */
+export function decideGate(
+  tool: string,
+  mode: PermissionMode,
+  autoApply: boolean,
+  env: GateEnv,
+): GateOutcome {
+  const action = gateActionFor(tool);
+  if (!action) return "allow";
+  if (!evaluate(action, mode, autoApply).needsPrompt) return "allow";
+  if (env.yes) return "allow";
+  if (!env.isTty) return "deny";
+  return "prompt";
+}

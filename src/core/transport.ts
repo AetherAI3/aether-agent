@@ -3,8 +3,27 @@
 //
 // Paths are constants so they change in one place.
 
-import { HttpError, StreamUnavailableError } from "./errors.js";
+import { HttpError, InsecureTransportError, StreamUnavailableError } from "./errors.js";
 import type { TokenStore } from "./auth.js";
+
+/**
+ * Is `base` a transport we will attach the session token to? https is allowed to
+ * any host; plain http is allowed ONLY to loopback (a local-dev backend), so the
+ * long-lived `aek_` token never traverses cleartext to a remote host and an
+ * attacker-set base URL cannot silently exfiltrate it. Unparseable → unsafe.
+ */
+export function isCredentialSafeUrl(base: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(base);
+  } catch {
+    return false;
+  }
+  if (u.protocol === "https:") return true;
+  if (u.protocol !== "http:") return false;
+  const host = u.hostname.replace(/^\[|\]$/g, ""); // strip IPv6 brackets
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
 
 // Aether API routes.
 export const CHAT_STREAM_PATH = "/agent/chat/stream"; // standard chat SSE
@@ -50,7 +69,11 @@ export class ApiClient {
 
   private async authHeaders(): Promise<Record<string, string>> {
     const t = await this.tokens.get();
-    return t ? { Authorization: `Bearer ${t}` } : {};
+    if (!t) return {};
+    // Fail closed: never put the bearer on an insecure transport. Unauthenticated
+    // calls (no token) are unaffected — only credentialed requests are refused.
+    if (!isCredentialSafeUrl(this.baseUrl)) throw new InsecureTransportError(this.baseUrl);
+    return { Authorization: `Bearer ${t}` };
   }
 
   /** POST a coding envelope, return the raw SSE byte stream for decodeSse(). */
