@@ -14,6 +14,8 @@ import { join } from "node:path";
 
 import type { ApiClient } from "./transport.js";
 import { AGENT_CONTEXT_PATH } from "./transport.js";
+import type { HudElementId, HudTimer } from "./hud.js";
+import { createTimer, timerSwitch } from "./hud.js";
 
 // ── Types ──
 
@@ -45,6 +47,10 @@ export interface SnapshotData {
   planPath: string | null;
   /** Working directory. */
   cwd: string;
+  /** Active HUD elements. */
+  hudElements: HudElementId[];
+  /** HUD timer state. */
+  hudTimer: HudTimer;
 }
 
 // ── In-memory state (one per REPL session) ──
@@ -56,6 +62,10 @@ export class ContextRegistry {
   uvtSpent = 0;
   planPath: string | null = null;
   sessionLabel = "untitled";
+
+  // HUD state
+  hudElements: HudElementId[] = [];
+  hudTimer: HudTimer = createTimer();
 
   pin(path: string, label: string, reason: string): PinnedEntry {
     // Deduplicate — remove from drops if it was dropped, update pin
@@ -122,6 +132,37 @@ export class ContextRegistry {
     return { capped: remaining <= 0, remaining: Math.max(0, remaining), cap: this.uvtCap };
   }
 
+  // ── HUD methods ──
+
+  addHudElement(id: HudElementId): boolean {
+    if (this.hudElements.includes(id)) return false;
+    this.hudElements.push(id);
+    return true;
+  }
+
+  removeHudElement(id: HudElementId): boolean {
+    const idx = this.hudElements.indexOf(id);
+    if (idx === -1) return false;
+    this.hudElements.splice(idx, 1);
+    return true;
+  }
+
+  hasHudElement(id: HudElementId): boolean {
+    return this.hudElements.includes(id);
+  }
+
+  clearHud(): void {
+    this.hudElements = [];
+  }
+
+  startAgentTimer(): void {
+    timerSwitch(this.hudTimer, "agent");
+  }
+
+  startUserTimer(): void {
+    timerSwitch(this.hudTimer, "user");
+  }
+
   /** Export snapshot data for serialization. */
   toSnapshot(): SnapshotData {
     return {
@@ -133,6 +174,8 @@ export class ContextRegistry {
       uvtSpent: this.uvtSpent,
       planPath: this.planPath,
       cwd: process.cwd(),
+      hudElements: [...this.hudElements],
+      hudTimer: { ...this.hudTimer },
     };
   }
 
@@ -145,6 +188,8 @@ export class ContextRegistry {
     reg.uvtCap = data.uvtCap;
     reg.uvtSpent = data.uvtSpent;
     reg.planPath = data.planPath;
+    reg.hudElements = data.hudElements ?? [];
+    reg.hudTimer = data.hudTimer ?? createTimer();
     return reg;
   }
 }
@@ -236,6 +281,8 @@ export async function loadFromBackend(api: ApiClient): Promise<boolean> {
     reg.uvtCap = resp.state.uvtCap;
     reg.uvtSpent = resp.state.uvtSpent;
     reg.planPath = resp.state.planPath;
+    reg.hudElements = resp.state.hudElements ?? [];
+    reg.hudTimer = resp.state.hudTimer ?? createTimer();
     return true;
   } catch {
     return false;
