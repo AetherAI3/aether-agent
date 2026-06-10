@@ -51,11 +51,12 @@ Usage:
   aether workflow templates     List built-in workflow templates
   aether workflow status        Workflow dashboard
   aether workflow <sub>         (see 'aether workflow help' for all commands)
-  aether image \"<prompt>\" [--model] [--aspect] [--count] [--4k] [--vector] [--i]
-  aether video \"<prompt>\" [--model] [--duration] [--1080p] [--audio] [--i]
+  aether image "<prompt>" [--model] [--aspect] [--count] [--4k] [--vector] [--i]
+  aether video "<prompt>" [--model] [--duration] [--1080p] [--audio] [--i]
   aether image models              aether video models
   aether output                    Show recent 10 generations
   aether output open <n>           Open generation in viewer
+  aether mcp                   Manage MCP servers (connect, add, repair)
   aether audit [limit]         Recent audit chain-of-custody trail
   aether receipt <order_id>    Export the proof package for an audit entry
   aether config [show|get <k>|set <k> <v>]
@@ -192,6 +193,10 @@ async function main(argv: string[]): Promise<number> {
     case "audit": {
       const { cmdAudit } = await import("./commands/audit.js");
       return cmdAudit(ctx, rest);
+    }
+    case "mcp": {
+      const { cmdMcp } = await import("./commands/mcp.js");
+      return cmdMcp(ctx);
     }
     case "models":
       return cmdModels(ctx, rest);

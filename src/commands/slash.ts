@@ -202,9 +202,15 @@ export async function handleSlash(
     case "doctor":
       await doctor(ctx, out);
       break;
-    case "mcp":
-      out.write("MCP servers — coming soon. Aether Agent will manage MCP tools here.\n");
+    case "mcp": {
+      if (!process.stdin.isTTY) {
+        out.write("MCP manager needs an interactive terminal — run `aether mcp`.\n");
+        break;
+      }
+      const { mcpFromRepl } = await import("./mcp.js");
+      await mcpFromRepl(ctx);
       break;
+    }
     case "delegate": {
       await delegateSlash(ctx, out, arg);
       break;
@@ -856,6 +862,7 @@ function printHelp(out: Writable): void {
       theme.dim("/agent") + " <n|id>      switch orchestrator  " + theme.dim("/tier") + "      plan tier + default",
       theme.dim("/audit") + " [n]         recent audit trail  " + theme.dim("/audit-receipt") + "  full receipt",
       theme.dim("/doctor") + "            diagnose your setup",
+      theme.dim("/mcp") + "               manage MCP servers (connect, add, repair)",
       theme.dim("/clear") + "             clear screen  " + theme.dim("/exit") + "          leave",
       theme.dim("/agents") + "            view active agent sessions",
       "",
