@@ -235,9 +235,10 @@ export async function pickModel(
     };
 
     const rerender = (): void => {
-      // Move cursor to home and redraw the full menu
+      // Home + redraw + erase-below: stale rows can't survive a shrinking menu.
       out.write("\x1b[H");
       out.write(renderPicker(groups, flat, selectedIdx));
+      out.write("\n\x1b[0J");
     };
 
     const cleanup = (): void => {
