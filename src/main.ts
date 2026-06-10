@@ -19,6 +19,8 @@ import { VERSION } from "./version.js";
 import { cmdGithub } from "./commands/github.js";
 import { cmdVault } from "./commands/vault.js";
 import { cmdWorkflow } from "./commands/workflow.js";
+import { cmdImage, cmdVideo } from "./commands/media.js";
+import { cmdOutput } from "./commands/output.js";
 
 /** Coerce a parsed flag value to string | undefined. */
 const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
@@ -49,6 +51,11 @@ Usage:
   aether workflow templates     List built-in workflow templates
   aether workflow status        Workflow dashboard
   aether workflow <sub>         (see 'aether workflow help' for all commands)
+  aether image \"<prompt>\" [--model] [--aspect] [--count] [--4k] [--vector] [--i]
+  aether video \"<prompt>\" [--model] [--duration] [--1080p] [--audio] [--i]
+  aether image models              aether video models
+  aether output                    Show recent 10 generations
+  aether output open <n>           Open generation in viewer
   aether audit [limit]         Recent audit chain-of-custody trail
   aether receipt <order_id>    Export the proof package for an audit entry
   aether config [show|get <k>|set <k> <v>]
@@ -169,6 +176,15 @@ async function main(argv: string[]): Promise<number> {
       return cmdVault(ctx, rest);
     case "workflow":
       return cmdWorkflow(ctx, rest);
+    case "image":
+    case "img":
+      return cmdImage(ctx, rest);
+    case "video":
+    case "vid":
+      return cmdVideo(ctx, rest);
+    case "output":
+    case "out":
+      return cmdOutput(ctx, rest);
     case "login":
       return cmdLogin(ctx, loginOpts);
     case "logout":
