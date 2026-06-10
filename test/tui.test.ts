@@ -177,7 +177,7 @@ test("StatusRenderer non-TTY = plain lines, zero ANSI (keeps §8 logs clean)", (
   try {
     const sr = new StatusRenderer({ mode: "local" });
     sr.start();
-    sr.setStage("execute", "▸▹");
+    sr.setAnim("▸▹");
     sr.log("  : run_tests");
     sr.setProgress(100, 500);
     sr.end();
