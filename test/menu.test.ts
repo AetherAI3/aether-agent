@@ -36,6 +36,16 @@ test("renderMenu draws box, cursor, glyphs, footer", () => {
   assert.match(out, /╰─.*─╯/);
 });
 
+test("renderMenu truncates overlong rows so the box never breaks", () => {
+  const long = "x".repeat(80);
+  const m = new SelectMenu([{ id: "l", label: long, hint: "https://very-long-url.example.com/mcp/sse/endpoint" }]);
+  const out = stripAnsi(renderMenu("T", m, "f"));
+  const lines = out.split("\n").filter(Boolean);
+  const widths = new Set(lines.map((l) => l.length));
+  assert.equal(widths.size, 1); // every line exactly the same width
+  assert.match(out, /…/);
+});
+
 test("stripAnsi removes SGR sequences", () => {
   assert.equal(stripAnsi("\x1b[36mhi\x1b[0m"), "hi");
 });

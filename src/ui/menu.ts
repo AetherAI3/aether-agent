@@ -61,7 +61,14 @@ export class SelectMenu {
 const WIDTH = 56;
 
 function row(inner: string): string {
-  const pad = Math.max(0, WIDTH - 2 - stripAnsi(inner).length);
+  const plain = stripAnsi(inner);
+  if (plain.length > WIDTH - 2) {
+    // Overflow: rebuild from the stripped text so slicing can't cut an ANSI
+    // sequence in half. Losing color on truncated rows is acceptable.
+    inner = plain.slice(0, WIDTH - 3) + "…";
+    return `│ ${inner} │`;
+  }
+  const pad = WIDTH - 2 - plain.length;
   return `│ ${inner}${" ".repeat(pad)} │`;
 }
 
