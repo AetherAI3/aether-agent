@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { BrainEvent } from "./brain_protocol.js";
 import type { ToolResult } from "./tool_executor.js";
+import { registerRestore } from "../ui/restore.js";
 
 export function logsRoot(): string {
   return process.env["AETHER_LOG_DIR"] ?? join(homedir(), ".aether-agent", "logs");
@@ -64,30 +65,79 @@ export class SessionLog {
     this.monologuePath = join(this.dir, "monologue.txt");
     this.manifestPath = join(this.dir, "manifest.json");
     this.writeManifest(null);
+    // Batched writes must still land if the process exits abruptly (SIGINT
+    // handlers call process.exit) — the exit hook drains the buffer.
+    this.unregisterFlush = registerRestore(() => this.flush());
   }
+
+  private readonly unregisterFlush: () => void;
 
   /** Record one brain event (and mirror human-readable lines to monologue.txt). */
   event(ev: BrainEvent, ts: string): void {
     this.events += 1;
     if (ev.type === "tool_call") this.toolCalls += 1;
-    appendFileSync(this.eventsPath, JSON.stringify({ ts, ...ev }) + "\n", "utf8");
+    this.buffer(this.eventsPath, JSON.stringify({ ts, ...ev }) + "\n");
     const line = monologueLine(ev);
-    if (line) appendFileSync(this.monologuePath, line + "\n", "utf8");
+    if (line) this.buffer(this.monologuePath, line + "\n");
   }
 
   /** Record the host's tool execution result (the other half of a tool_call). */
   toolResult(id: string, result: ToolResult, ts: string): void {
-    appendFileSync(
+    this.buffer(
       this.eventsPath,
       JSON.stringify({ ts, type: "tool_result", id, exit_code: result.exitCode }) + "\n",
-      "utf8",
     );
+  }
+
+  // ── buffered appends ──────────────────────────────────────────────────────
+  // A synchronous appendFileSync per stream event serializes disk I/O into the
+  // presentation hot path (one fsync-able write per token burst). Events are
+  // coalesced and flushed every FLUSH_EVERY events or FLUSH_MS ms, whichever
+  // comes first — and always on close(), so the record stays loss-bounded.
+  private static readonly FLUSH_EVERY = 50;
+  private static readonly FLUSH_MS = 100;
+  private pending = new Map<string, string[]>();
+  private pendingCount = 0;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private buffer(path: string, chunk: string): void {
+    let arr = this.pending.get(path);
+    if (!arr) {
+      arr = [];
+      this.pending.set(path, arr);
+    }
+    arr.push(chunk);
+    this.pendingCount += 1;
+    if (this.pendingCount >= SessionLog.FLUSH_EVERY) {
+      this.flush();
+      return;
+    }
+    if (!this.flushTimer) {
+      this.flushTimer = setTimeout(() => this.flush(), SessionLog.FLUSH_MS);
+      if (typeof this.flushTimer.unref === "function") this.flushTimer.unref();
+    }
+  }
+
+  /** Write all buffered lines to disk. Idempotent; safe to call any time. */
+  flush(): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    if (this.pendingCount === 0) return;
+    for (const [path, chunks] of this.pending) {
+      if (chunks.length) appendFileSync(path, chunks.join(""), "utf8");
+    }
+    this.pending.clear();
+    this.pendingCount = 0;
   }
 
   /** Finalize the manifest. `finalStatus` is derived from the HOST's own final
    * test run (ground truth), never from the brain's self-report. `remaining` =
    * failing tests when not ok (only written when > 0). */
   close(finalStatus: FinalStatus, ended: string, remaining = 0): void {
+    this.flush();
+    this.unregisterFlush();
     this.writeManifest({ ended, finalStatus, remaining });
   }
 

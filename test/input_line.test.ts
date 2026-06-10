@@ -67,3 +67,57 @@ test("killToStart removes before the cursor and zeroes it", () => {
   assert.equal(b.value, "d");
   assert.equal(b.pos, 0);
 });
+
+test("wordLeft/wordRight jump across space-delimited words", () => {
+  const b = new InputBuffer();
+  b.insert("one two  three");
+  b.wordLeft();
+  assert.equal(b.value.slice(b.pos), "three");
+  b.wordLeft();
+  assert.equal(b.value.slice(b.pos), "two  three");
+  b.wordRight();
+  assert.equal(b.pos, 7); // lands just past "two"
+  b.home();
+  b.wordRight();
+  assert.equal(b.pos, 3);
+});
+
+test("history: consecutive duplicate commits collapse to one entry", () => {
+  const b = new InputBuffer();
+  b.insert("same");
+  b.commit("same");
+  b.insert("same");
+  b.commit("same");
+  b.historyUp();
+  assert.equal(b.value, "same");
+  b.historyUp();
+  assert.equal(b.value, "same"); // single entry — stays put
+});
+
+test("history recall stashes the draft and restores it on the way down", () => {
+  const b = new InputBuffer();
+  b.insert("old");
+  b.commit("old");
+  b.insert("draft in progress");
+  b.historyUp();
+  assert.equal(b.value, "old");
+  b.historyDown();
+  assert.equal(b.value, "draft in progress");
+});
+
+test("loadHistory seeds persisted entries for up-arrow", () => {
+  const b = new InputBuffer();
+  b.loadHistory(["a", "b"]);
+  b.historyUp();
+  assert.equal(b.value, "b");
+  b.historyUp();
+  assert.equal(b.value, "a");
+});
+
+test("insert is bulk — a large paste lands intact with the cursor at the end", () => {
+  const b = new InputBuffer();
+  const big = "x".repeat(50_000) + "🙂";
+  b.paste(big);
+  assert.equal(b.value, big);
+  assert.equal(b.pos, 50_001); // 50k ascii + one astral code point
+});

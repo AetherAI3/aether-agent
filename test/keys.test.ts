@@ -73,3 +73,18 @@ test("SGR mouse reports tokenize as one CSI sequence and are ignored, not typed"
   assert.deepEqual(splitKeys(report), [report]);
   assert.deepEqual(decodeKey(report), { kind: "ignore" });
 });
+
+test("word-jump chords decode (ctrl/alt arrows, alt-b/f)", () => {
+  assert.deepEqual(decodeKey("\x1b[1;5D"), { kind: "word-left" });
+  assert.deepEqual(decodeKey("\x1b[1;5C"), { kind: "word-right" });
+  assert.deepEqual(decodeKey("\x1b[1;3D"), { kind: "word-left" });
+  assert.deepEqual(decodeKey("\x1b[1;3C"), { kind: "word-right" });
+  assert.deepEqual(decodeKey("\x1bb"), { kind: "word-left" });
+  assert.deepEqual(decodeKey("\x1bf"), { kind: "word-right" });
+});
+
+test("tab and ctrl-l decode; tab tokenizes as its own control token", () => {
+  assert.deepEqual(decodeKey("\t"), { kind: "tab" });
+  assert.deepEqual(decodeKey("\x0c"), { kind: "clear-screen" });
+  assert.deepEqual(splitKeys("a\tb"), ["a", "\t", "b"]);
+});

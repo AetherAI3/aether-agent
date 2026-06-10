@@ -23,3 +23,15 @@ test("gradientBlock leaves spaces uncolored (parity with gradientLine)", () => {
   assert.equal(stripAnsi(rows[0]!), "A B");
   assert.ok(rows[1]!.startsWith("  "), "leading spaces stay plain");
 });
+
+test("emoji color as whole code points — no split surrogates between SGRs", () => {
+  const out = gradientLine("A🙂B", ICE, CYAN, true);
+  assert.ok(out.includes("🙂"), "surrogate pair must stay contiguous");
+  assert.equal(stripAnsi(out), "A🙂B");
+});
+
+test("one trailing reset per line, not one per char", () => {
+  const out = gradientLine("ABC", ICE, CYAN, true);
+  assert.equal(out.match(/\x1b\[0m/g)!.length, 1);
+  assert.ok(out.endsWith("\x1b[0m"));
+});

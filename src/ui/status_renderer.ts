@@ -78,6 +78,8 @@ export class StatusRenderer {
   private startedMs: number;
   private ticker: ReturnType<typeof setInterval> | null = null;
   private cleanupBound = false;
+  private onExit: (() => void) | null = null;
+  private onSigint: (() => void) | null = null;
 
   constructor(opts: StatusRendererOptions = {}) {
     this.sink = opts.sink ?? new StdoutSink();
@@ -92,7 +94,7 @@ export class StatusRenderer {
   start(): void {
     this.startedMs = this.now();
     if (!this.tty) return;
-    this.sink.write(HIDE);
+    try { this.sink.write(HIDE); } catch { /* terminal already gone */ }
     this.installCleanup();
     this.ticker = setInterval(() => this.repaint(), 1000);
     if (typeof this.ticker.unref === "function") this.ticker.unref();
@@ -189,13 +191,14 @@ export class StatusRenderer {
       clearInterval(this.ticker);
       this.ticker = null;
     }
+    this.disposeProcessHandlers();   // H2: always clean listeners
     if (!this.tty) return;
-    this.sink.write(CLR_LINE + SHOW);
+    try { this.sink.write(CLR_LINE + SHOW); } catch { /* terminal already gone */ }
   }
 
   private repaint(): void {
     if (!this.tty) return;
-    this.sink.write(CLR_LINE + this.composeLine());
+    try { this.sink.write(CLR_LINE + this.composeLine()); } catch { /* terminal already gone */ }
   }
 
   /** The pinned heartbeat line. Reads the injected clock — public for tests.
@@ -222,21 +225,32 @@ export class StatusRenderer {
     return "▓".repeat(f) + "░".repeat(Math.max(0, width - f));
   }
 
+  /** The guarded cursor-restore used by both exit and SIGINT. Public-ish for tests. */
+  _restoreOnSignalForTest(): void {
+    try { this.sink.write(SHOW); } catch { /* terminal already gone */ }
+    try { this.sink.write("\n"); } catch { /* terminal already gone */ }
+  }
+
   private installCleanup(): void {
     if (!this.ownsProcess || this.cleanupBound) return;
     this.cleanupBound = true;
     const restore = (): void => {
-      try {
-        this.sink.write(SHOW);
-      } catch {
-        /* terminal already gone */
-      }
+      try { this.sink.write(SHOW); } catch { /* terminal already gone */ }
     };
-    process.on("exit", restore);
-    process.on("SIGINT", () => {
-      restore();
-      this.sink.write("\n");
+    const onSigint = (): void => {
+      this._restoreOnSignalForTest();   // H1: both writes guarded
       process.exit(130);
-    });
+    };
+    this.onExit = restore;
+    this.onSigint = onSigint;
+    process.on("exit", restore);
+    process.on("SIGINT", onSigint);
+  }
+
+  /** H2: remove the process listeners installed by installCleanup(). */
+  private disposeProcessHandlers(): void {
+    if (this.onExit) { process.off("exit", this.onExit); this.onExit = null; }
+    if (this.onSigint) { process.off("SIGINT", this.onSigint); this.onSigint = null; }
+    this.cleanupBound = false;
   }
 }

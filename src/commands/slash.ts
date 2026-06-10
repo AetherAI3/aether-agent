@@ -23,8 +23,10 @@ import { isApiToken } from "./auth.js";
 import { getVaultSnapshot, searchNotes, notesByTag, getNotesTree } from "../core/vault.js";
 import { WORKFLOW_TEMPLATES, listWorkflows } from "../core/workflow.js";
 import { theme } from "../ui/theme.js";
+import { SLASH_COMMANDS, SLASH_SECTIONS, findCommand, suggestCommand } from "./slash_registry.js";
 import { handleGoal, handleGoals, goalHelp } from "./goals.js";
 import { box, titledBox } from "../ui/box.js";
+import { sliceVisible } from "../ui/text.js";
 import { pickModel } from "../ui/model_picker.js";
 import { runLogsViewer } from "../ui/logs_viewer.js";
 import { getRegistry, resetRegistry, saveSnapshot, loadSnapshot, listSnapshots, ContextRegistry, syncToBackend, loadFromBackend } from "../core/context_registry.js";
@@ -113,7 +115,7 @@ export async function handleSlash(
       return { exit: true };
     case "help":
     case "":
-      printHelp(out);
+      printHelp(out, arg);
       break;
     case "models":
       await showPicker(ctx, out, "model");
@@ -330,8 +332,11 @@ export async function handleSlash(
       await revertSlash(ctx, out, arg);
       break;
     }
-    default:
-      out.write(`unknown command: /${cmd}  (try /help)\n`);
+    default: {
+      const near = suggestCommand(cmd);
+      const hint = near ? `did you mean ${theme.cyan("/" + near)}?  ` : "";
+      out.write(`unknown command: /${cmd}  ${hint}${theme.dim("(/help, or Tab to complete)")}\n`);
+    }
   }
   return { exit: false };
 }
@@ -849,126 +854,62 @@ async function revertSlash(ctx: AppContext, out: Writable, arg: string): Promise
   }
 }
 
-function printHelp(out: Writable): void {
-  const BOX = 62;
+// /help is generated from SLASH_COMMANDS (slash_registry.ts) — a command added
+// to the registry is automatically listed here, Tab-completable, and
+// did-you-mean'd. test/slash_registry.test.ts pins registry ↔ switch sync.
+const SECTION_ICONS: Record<string, string> = {
+  "Session": "☁",
+  "Agent Modes": "⚡",
+  "Steering": "🎯",
+  "Context & Limits": "🧠",
+  "Goals & Workflows": "🗺",
+  "Vault": "📁",
+  "Orchestra": "🎻",
+  "UVT Tools": "🛠",
+  "Media": "🎬",
+};
+const USAGE_COL = 30;
 
-  const sections = [
-    [
-      "",
-      theme.iceBlue("☁") + "  " + theme.bold("Session"),
-      "",
-      theme.dim("/models") + "            list chat models",
-      theme.dim("/model") + " <n|id>      switch model  " + theme.dim("/agent") + "    list orchestrators",
-      theme.dim("/agent") + " <n|id>      switch orchestrator  " + theme.dim("/tier") + "      plan tier + default",
-      theme.dim("/audit") + " [n]         recent audit trail  " + theme.dim("/audit-receipt") + "  full receipt",
-      theme.dim("/doctor") + "            diagnose your setup",
-      theme.dim("/mcp") + "               manage MCP servers (connect, add, repair)",
-      theme.dim("/clear") + "             clear screen  " + theme.dim("/exit") + "          leave",
-      theme.dim("/agents") + "            view active agent sessions",
-      "",
-    ],
-    [
-      "",
-      theme.iceBlue("⚡") + "  " + theme.bold("Agent Modes"),
-      "",
-      theme.dim("/autonomous-execution") + " <task>  execute without asking",
-      theme.dim("/subagent-driven-execution") + " <task>  decompose + delegate",
-      theme.dim("/self-review") + "           review your own recent work",
-      theme.dim("/recon") + " <topic>          deep reconnaissance",
-      theme.dim("/plan") + " <topic>           write implementation plan",
-      theme.dim("/research") + " <topic>        research-gather-summarize",
-      theme.dim("/review") + "               full project review + summary",
-      theme.dim("/code-review") + "           sweep: clean up + simplify",
-      theme.dim("/writing-skills") + "        author reusable skills",
-      theme.dim("/writing-plans") + " <topic>    write plan to .hermes/plans/",
-      "",
-    ],
-    [
-      "",
-      theme.iceBlue("🎯") + "  " + theme.bold("Steering"),
-      "",
-      theme.dim("/queue") + " <task>          queue a task (runs when current finishes)",
-      theme.dim("/steer") + " <guidance>      mid-task steering for next turn",
-      theme.dim("/btw") + " <note>            contextual side note (accumulates)",
-      "",
-    ],
-    [
-      "",
-      theme.iceBlue("🧠") + "  " + theme.bold("Context & Limits"),
-      "",
-      theme.dim("/pin") + " <path> [reason]    force file into persistent context",
-      theme.dim("/pin list") + "                list pinned files",
-      theme.dim("/drop") + " <path>              evict file from context",
-      theme.dim("/snapshot") + "               save session state to disk",
-      theme.dim("/snapshot resume") + " <id>     reload a saved snapshot",
-      theme.dim("/limit") + " <uvt>              cap UVT spend for this session",
-      theme.dim("/token-budget") + " <uvt>       alias for /limit",
-      theme.dim("/audit-receipt") + " [n]       verified log of tool calls + UVT",
-      theme.dim("/rollback") + " [n]            revert last n filesystem changes",
-      theme.dim("/logs-view") + "              interactive session log browser",
-      "",
-    ],
-    [
-      "",
-      theme.iceBlue("🎯") + "  " + theme.bold("Goals & Workflows"),
-      "",
-      theme.dim("/goal") + " <desc>          create goal (agent plans phases)",
-      theme.dim("/goals") + "            list saved goals  " + theme.dim("/goals") + " <id>  view goal",
-      theme.dim("/goal view") + " [id]        show chain + detail",
-      theme.dim("/goal start|pause|resume|cancel|complete|note") + "",
-      theme.dim("/workflow") + "             workflow status",
-      theme.dim("/workflow-templates") + "   list templates",
-      theme.dim("/workflow-template") + " <n> load template",
-      "",
-    ],
-    [
-      "",
-      theme.iceBlue("📁") + "  " + theme.bold("Vault"),
-      "",
-      theme.dim("/vault") + "                vault status  " + theme.dim("/vault-context") + "    load into session",
-      theme.dim("/vault-search") + " <q>     search notes  " + theme.dim("/vault-recent") + " [n] recent",
-      theme.dim("/vault-project") + " <name> project notes  " + theme.dim("/vault-tag") + " <tag> tagged",
-      theme.dim("/vault-tree") + "           folder tree",
-      "",
-    ],
-    [
-      "",
-      theme.iceBlue("🤖") + "  " + theme.bold("Agents"),
-      "",
-      theme.dim("/agents") + "            view all active agent sessions (name, time, UVT)",
-      "",
-    ],
-    [
-      "",
-      theme.iceBlue("🎻") + "  " + theme.bold("Orchestra"),
-      "",
-      theme.dim("/delegate") + " <model> <task>  delegate sub-task to a worker model",
-      theme.dim("/tree") + "                   live orchestration hierarchy",
-      theme.dim("/broadcast") + ' "<msg>"      inject directive to all sub-agents',
-      theme.dim("/gather") + " <id|all>        merge completed work to staging",
-      "",
-    ],
-    [
-      "",
-      theme.iceBlue("⚡") + "  " + theme.bold("UVT Tools"),
-      "",
-      theme.dim("/scaffold") + " <type> <name>  generate boilerplate (component|route|module)",
-      theme.dim("/port") + " <file> <lang>      translate code to another language",
-      theme.dim("/test-drive") + ' "<target>"  auto-test: generate, run, fix, repeat',
-      theme.dim("/bench") + " <target>          profile & optimize code",
-      theme.dim("/purge") + "                    flush transient context & temp files",
-      theme.dim("/token-budget") + " <uvt>       hard UVT cap (alias: /limit)",
-      theme.dim("/stage-diff") + "               unified diff + commit message",
-      theme.dim("/revert") + " <file|step>       surgical rollback",
-      "",
-    ],
-  ];
-
-  for (const sec of sections) {
-    out.write(box(sec, { width: BOX }) + "\n\n");
+function printHelp(out: Writable, arg = ""): void {
+  const name = arg.trim().replace(/^\//, "").toLowerCase();
+  if (name) {
+    printCommandHelp(out, name);
+    return;
   }
-  out.write("  " + theme.dim("All /commands work in the interactive REPL (aether).") + "\n");
-  out.write("  " + theme.dim("/agent <n|id> triggers model picker: select, confirm, restart.") + "\n\n");
+  const BOX = 74;
+  const inner = BOX - 8; // box() padding + a one-column safety margin
+  for (const section of SLASH_SECTIONS) {
+    const cmds = SLASH_COMMANDS.filter((c) => c.section === section && !c.hidden);
+    if (cmds.length === 0) continue;
+    const lines: string[] = ["", theme.iceBlue(SECTION_ICONS[section] ?? "·") + "  " + theme.bold(section), ""];
+    for (const c of cmds) {
+      const plain = `/${c.name}${c.args ? " " + c.args : ""}${c.aliases?.length ? " | /" + c.aliases.join(" | /") : ""}`;
+      const styled =
+        theme.dim("/" + c.name) +
+        (c.args ? " " + c.args : "") +
+        (c.aliases?.length ? theme.dim(" | /" + c.aliases.join(" | /")) : "");
+      const pad = " ".repeat(Math.max(2, USAGE_COL - plain.length));
+      // Clamp to the box interior — an overlong row would spill past the border.
+      lines.push(sliceVisible(styled + pad + c.summary, inner));
+    }
+    lines.push("");
+    out.write(box(lines, { width: BOX }) + "\n\n");
+  }
+  out.write("  " + theme.dim("/help <command> for detail · Tab completes /commands.") + "\n");
+  out.write("  " + theme.dim("/model or /agent with no arg opens the interactive picker.") + "\n\n");
+}
+
+function printCommandHelp(out: Writable, name: string): void {
+  const c = findCommand(name);
+  if (!c) {
+    const near = suggestCommand(name);
+    out.write(`no such command: /${name}${near ? `  — did you mean ${theme.cyan("/" + near)}?` : ""}\n`);
+    return;
+  }
+  out.write("\n  " + theme.bold(`/${c.name}${c.args ? " " + c.args : ""}`) + "\n");
+  out.write("  " + c.summary + "\n");
+  if (c.aliases?.length) out.write("  " + theme.dim("aliases: " + c.aliases.map((a) => "/" + a).join("  /")) + "\n");
+  out.write("  " + theme.dim(`section: ${c.section}`) + "\n\n");
 }
 
 async function doctor(ctx: AppContext, out: Writable): Promise<void> {
