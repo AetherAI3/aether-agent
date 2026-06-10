@@ -1,7 +1,5 @@
 # Aether Agent — Media Asset Production Commands Implementation Plan
 
-> **For Hermes:** Use aether-agent-cli-commands skill to implement this plan task-by-task.
-
 **Goal:** Turn the aether-agent terminal into a scriptable, producer-grade media IDE with dedicated image/video generation commands, asset editing pipelines, batch generation, and downstream animation from existing artifacts.
 
 **Architecture:** Two top-level CLI commands (`aether image`, `aether video`) + 7 REPL slash commands (`/photogen`, `/videogen`, `/frame`, `/re-frame`, `/sequence`, `/animate`, `/re-cut`) + output management. Reuses GET /models catalog for model discovery. Generation dispatches through existing /agent/chat SSE with `forced_model_key` + `media_mode: true`. Downloads stream to `./aether-output/`.
