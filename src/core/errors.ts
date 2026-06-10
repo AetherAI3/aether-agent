@@ -20,6 +20,21 @@ export class StreamUnavailableError extends Error {
   }
 }
 
+/**
+ * Refused to send the session token because the base URL is not a secure
+ * transport (non-https to a non-loopback host). Prevents a cleartext credential
+ * leak / token exfiltration to an arbitrary host.
+ */
+export class InsecureTransportError extends Error {
+  constructor(public baseUrl: string) {
+    super(
+      `refusing to send credentials over insecure transport: ${baseUrl} ` +
+        `(use https, or http only to localhost)`,
+    );
+    this.name = "InsecureTransportError";
+  }
+}
+
 /** Non-2xx HTTP response from the Aether API. Carries status + parsed body when present. */
 export class HttpError extends Error {
   constructor(

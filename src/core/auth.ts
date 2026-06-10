@@ -9,7 +9,7 @@
 // interface keeps that swappable.
 
 import { join } from "node:path";
-import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { configDir } from "./config.js";
 import { NotWiredError } from "./errors.js";
 import { LOGIN_PATH } from "./transport.js";
@@ -31,11 +31,16 @@ export class FileTokenStore implements TokenStore {
   }
 
   async set(token: string): Promise<void> {
-    writeFileSync(this.path, token, "utf8");
+    // Create the dir 0700 and the file 0600 AT CREATION so the token is never
+    // world-readable, even for the window between write and chmod. The trailing
+    // chmod is belt-and-suspenders for a pre-existing file written by an older
+    // build at a looser mode. chmod is a no-op on some Windows filesystems.
+    mkdirSync(configDir(), { recursive: true, mode: 0o700 });
+    writeFileSync(this.path, token, { encoding: "utf8", mode: 0o600 });
     try {
       chmodSync(this.path, 0o600);
     } catch {
-      // chmod is a no-op on some Windows filesystems — non-fatal.
+      // non-fatal on filesystems that don't support POSIX modes.
     }
   }
 
