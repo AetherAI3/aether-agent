@@ -26,6 +26,7 @@ export const SLASH_SECTIONS = [
   "Orchestra",
   "UVT Tools",
   "Media",
+  "HUD",
 ] as const;
 
 export const SLASH_COMMANDS: SlashCommand[] = [
@@ -111,6 +112,10 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "re-cut", args: "<prompt>", summary: "re-edit the last video", section: "Media" },
   { name: "output", args: "[open|clean|list]", summary: "manage generated media files", section: "Media" },
   { name: "storyboard", args: "<title>", summary: "multi-scene storyboard pipeline", section: "Media" },
+
+  // ── HUD ──
+  { name: "add", args: "<element>", summary: "add a HUD overlay (context-bar, timer, tools, help, health, status)", section: "HUD" },
+  { name: "hud", args: "remove|list|clear", summary: "manage HUD overlay elements", section: "HUD" },
 ];
 
 /** Every dispatchable name (canonical + aliases). */

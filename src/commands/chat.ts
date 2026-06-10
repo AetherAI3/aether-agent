@@ -26,6 +26,8 @@ import { completeSlash } from "./slash_registry.js";
 import { hintFor, isAbortError } from "../core/error_hints.js";
 import { loadHistory, appendHistory, historyPath, historyEnabled } from "../core/history_store.js";
 import { VERSION } from "../version.js";
+import { getRegistry } from "../core/context_registry.js";
+import { renderHud, timerLive } from "../core/hud.js";
 
 // Key decoding lives in ui/keys.ts (shared with pickers/viewers); re-exported
 // here so existing imports keep working.
@@ -180,6 +182,24 @@ async function repl(ctx: AppContext): Promise<number> {
   // but repaint is suppressed — a mid-stream "\r\x1b[2K" would stomp the line
   // the answer is currently streaming onto.
   let busy = false;
+  const renderHudLine = (): void => {
+    if (!process.stdout.isTTY) return;
+    const reg = getRegistry();
+    if (reg.hudElements.length === 0) return;
+    const cols = process.stdout.columns ?? 80;
+    const live = timerLive(reg.hudTimer);
+    const state = {
+      tokensUsed: reg.uvtSpent,
+      tokensCap: reg.uvtCap ?? 1_000_000_000,
+      sessionMs: live.userMs + live.agentMs,
+      timer: reg.hudTimer,
+      streamedTokens: 0,
+      uvtUsed: reg.uvtSpent,
+      uvtCap: reg.uvtCap ?? 0,
+    };
+    const line = renderHud(reg.hudElements, state, cols);
+    if (line) process.stdout.write("\n" + line);
+  };
   const repaint = (): void => {
     if (busy) return;
     process.stdout.write(repaintString(prompt, buf.value, buf.pos, process.stdout.columns ?? 80));
@@ -370,10 +390,12 @@ async function repl(ctx: AppContext): Promise<number> {
         } finally {
           busy = false;
         }
+        renderHudLine();
         repaint();
         return;
       }
       try {
+        getRegistry().startAgentTimer();
         // An aborted turn skips the drain entirely — even an item that slipped
         // into the queue during abort teardown must not auto-run.
         let aborted = await runQueuedTurn(t);
@@ -385,7 +407,9 @@ async function repl(ctx: AppContext): Promise<number> {
         }
       } finally {
         busy = false;
+        getRegistry().startUserTimer();
       }
+      renderHudLine();
       repaint();
     };
 
