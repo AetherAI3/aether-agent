@@ -35,7 +35,31 @@ export type BrainEvent =
   // ok is derived from a real final test run; remaining = failing tests when not ok;
   // reason ∈ "" | "stalled" | "no-progress" | "max-turns" | "unverified".
   | { type: "done"; ok: boolean; result: string; remaining: number; reason: string }
-  | { type: "error"; msg: string };
+  | { type: "error"; msg: string }
+  // memory bridge — QOPC memory frames forwarded as events
+  | {
+      type: "memory";
+      subtype: string;
+      text?: string;
+      kind?: string;
+      confidence?: number;
+      skill?: string;
+      narrative?: string;
+      factCount?: number;
+      beforeTokens?: number;
+      afterTokens?: number;
+      freedPct?: number;
+      dimension?: string;
+      from?: number;
+      to?: number;
+      direction?: string;
+      // behavioral skill fields (subtype "behavioral")
+      skill_name?: string;
+      description?: string;
+      triggers?: string[];
+      action?: string;
+      category?: string;
+    };
 
 // --- host -> brain commands ------------------------------------------------
 export type HostCommand =

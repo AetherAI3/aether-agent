@@ -15,6 +15,32 @@ import { humanTokens } from "./statusbar.js";
 import { formatElapsed } from "./elapsed.js";
 import { StdoutSink, type RenderSink } from "./sink.js";
 
+/** Structural shape that StatusRenderer.memoryEvent accepts — matches both
+ *  StreamFrame's memory variant and BrainEvent's memory variant. */
+export interface MemoryFrameShape {
+  type: "memory";
+  subtype: string;
+  text?: string;
+  kind?: string;
+  confidence?: number;
+  skill?: string;
+  narrative?: string;
+  factCount?: number;
+  beforeTokens?: number;
+  afterTokens?: number;
+  freedPct?: number;
+  dimension?: string;
+  from?: number;
+  to?: number;
+  direction?: string;
+  // behavioral skill fields
+  skill_name?: string;
+  description?: string;
+  triggers?: string[];
+  action?: string;
+  category?: string;
+}
+
 const ESC = "\x1b[";
 const CLR_LINE = "\r" + ESC + "2K"; // carriage-return + clear-to-EOL
 const HIDE = ESC + "?25l";
@@ -102,6 +128,54 @@ export class StatusRenderer {
     this.used = used;
     this.cap = cap;
     this.repaint();
+  }
+
+  /** Called when a memory frame arrives. Logs a formatted line + briefly
+   *  switches the status verb to the matching memory phase. */
+  memoryEvent(frame: MemoryFrameShape): void {
+    switch (frame.subtype) {
+      case "extract": {
+        const pct = frame.confidence ? `  ${this.theme.dim(`(${Math.round(frame.confidence * 100)}%)`)}` : "";
+        this.log(`${this.theme.iceBlue("🧠")}  ${this.theme.bold("memory:")} "${frame.text}"${pct}`);
+        this.setVerb("Extracting memory", "(◕‿◕)✎");
+        break;
+      }
+      case "skill": {
+        const pct = frame.confidence ? `  ${this.theme.dim(`(${Math.round(frame.confidence * 100)}%)`)}` : "";
+        this.log(`${this.theme.cyan("🎯")}  ${this.theme.bold("skill learned:")} ${frame.skill} — "${frame.text}"${pct}`);
+        this.setVerb("Learning skill", "🧠✨");
+        break;
+      }
+      case "behavioral": {
+        const name = frame.skill_name ?? "unknown";
+        const pct = frame.confidence ? `  ${this.theme.dim(`(${Math.round(frame.confidence * 100)}%)`)}` : "";
+        this.log(`${this.theme.iceBlue("🧠")}  ${this.theme.bold("new skill created:")} ${name}${pct}`);
+        this.setVerb("Learning workflow", "🧠✨");
+        break;
+      }
+      case "compacting": {
+        const before = humanTokens(frame.beforeTokens ?? 0);
+        const after = humanTokens(frame.afterTokens ?? 0);
+        const pct = frame.freedPct != null ? ` ${this.theme.dim(`(${frame.freedPct}% freed)`)}` : "";
+        this.log(`${this.theme.dim("📦")}  ${this.theme.dim("Compacting context ·")} ${before} → ${after} tokens${pct}`);
+        this.setVerb("Compacting context", "(；・∀・)📦");
+        break;
+      }
+      case "dream": {
+        this.log(`${this.theme.iceBlue("💭")}  ${this.theme.bold("dream:")} ${frame.narrative?.slice(0, 120) ?? ""}`);
+        this.setVerb("Consolidating", "(￣～￣;)💭");
+        break;
+      }
+      case "style": {
+        this.log(
+          `${this.theme.cyan("🎨")}  ${this.theme.bold("style:")} ` +
+          `${frame.dimension} ${this.theme.dim(`${frame.from?.toFixed(2)} → ${frame.to?.toFixed(2)}`)} ` +
+          `(${frame.direction})`
+        );
+        this.setVerb("Adapting style", "(｡•̀ᴗ-)✧");
+        break;
+      }
+    }
   }
 
   /** Tear down: clear the pinned line, restore the cursor. */

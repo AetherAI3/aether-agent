@@ -17,6 +17,8 @@ import { cmdRun } from "./commands/run.js";
 import { cmdCode } from "./commands/code.js";
 import { VERSION } from "./version.js";
 import { cmdGithub } from "./commands/github.js";
+import { cmdVault } from "./commands/vault.js";
+import { cmdWorkflow } from "./commands/workflow.js";
 
 /** Coerce a parsed flag value to string | undefined. */
 const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
@@ -38,6 +40,15 @@ Usage:
   aether auth refresh          Refresh a session   aether auth logout  Log out
   aether github connect        Link GitHub so backend agents can work your repos
   aether github status         Show GitHub link    aether github disconnect  Unlink
+  aether vault list              List vault files/folders
+  aether vault search <query>    Full-text search vault notes
+  aether vault context           Show vault snapshot
+  aether vault status            Vault health check
+  aether vault <sub>             (see 'aether vault help' for all commands)
+  aether workflow new <desc>    Generate a workflow from intent
+  aether workflow templates     List built-in workflow templates
+  aether workflow status        Workflow dashboard
+  aether workflow <sub>         (see 'aether workflow help' for all commands)
   aether mcp                   Manage MCP servers (connect, add, repair)
   aether audit [limit]         Recent audit chain-of-custody trail
   aether receipt <order_id>    Export the proof package for an audit entry
@@ -155,6 +166,10 @@ async function main(argv: string[]): Promise<number> {
       return cmdAuth(ctx, rest, loginOpts);
     case "github":
       return cmdGithub(ctx, rest, { noBrowser: Boolean(values["no-browser"]) });
+    case "vault":
+      return cmdVault(ctx, rest);
+    case "workflow":
+      return cmdWorkflow(ctx, rest);
     case "login":
       return cmdLogin(ctx, loginOpts);
     case "logout":
