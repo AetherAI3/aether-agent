@@ -35,8 +35,5 @@ export const theme: Theme = createTheme(
   Boolean(process.stdout.isTTY) && !process.env["NO_COLOR"],
 );
 
-/** Strip ANSI escapes — for width math + tests. */
-export function stripAnsi(s: string): string {
-  // eslint-disable-next-line no-control-regex
-  return s.replace(/\x1b\[[0-9;]*m/g, "");
-}
+// Width math + tests use the shared, full-coverage stripper (SGR + CSI + OSC).
+export { stripAnsi } from "./text.js";
