@@ -96,64 +96,10 @@ export async function cmdChat(ctx: AppContext, prompt: string): Promise<number> 
   return repl(ctx);
 }
 
-export type Key =
-  | { kind: "char"; value: string }
-  | { kind: "submit" }
-  | { kind: "backspace" }
-  | { kind: "interrupt" }
-  | { kind: "eof" }
-  | { kind: "left" }
-  | { kind: "right" }
-  | { kind: "home" }
-  | { kind: "end" }
-  | { kind: "up" }
-  | { kind: "down" }
-  | { kind: "word-delete" }
-  | { kind: "paste-start" }
-  | { kind: "paste-end" }
-  | { kind: "escape" }
-  | { kind: "ignore" };
-
-/** Decode one raw stdin sequence into a Key. Pure — unit-tested in chat_keys. */
-export function decodeKey(seq: string): Key {
-  switch (seq) {
-    case "\r":
-    case "\n":
-      return { kind: "submit" };
-    case "\x7f":
-    case "\b":
-      return { kind: "backspace" };
-    case "\x03":
-      return { kind: "interrupt" };
-    case "\x04":
-      return { kind: "eof" };
-    case "\x17":
-      return { kind: "word-delete" }; // ctrl-w
-    case "\x1b[D":
-      return { kind: "left" };
-    case "\x1b[C":
-      return { kind: "right" };
-    case "\x1b[H":
-    case "\x1b[1~":
-      return { kind: "home" };
-    case "\x1b[F":
-    case "\x1b[4~":
-      return { kind: "end" };
-    case "\x1b[A":
-      return { kind: "up" };
-    case "\x1b[B":
-      return { kind: "down" };
-    case "\x1b":
-      return { kind: "escape" };
-    case "\x1b[200~":
-      return { kind: "paste-start" };
-    case "\x1b[201~":
-      return { kind: "paste-end" };
-    default:
-      if (seq.length === 1 && seq >= " ") return { kind: "char", value: seq };
-      return { kind: "ignore" };
-  }
-}
+// Key decoding lives in ui/keys.ts (shared with pickers/viewers); re-exported
+// here so existing imports keep working.
+import { decodeKey } from "../ui/keys.js";
+export { decodeKey, type Key } from "../ui/keys.js";
 
 async function repl(ctx: AppContext): Promise<number> {
   const username = userInfo().username || "you";

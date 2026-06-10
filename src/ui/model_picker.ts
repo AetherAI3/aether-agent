@@ -9,7 +9,7 @@ import {
   orange, green, darkBlue, brightWhite, lightBlue,
   box, stripAnsi,
 } from "./box.js";
-import { decodeKey } from "../commands/chat.js";
+import { decodeKey } from "./keys.js";
 
 // ── Provider grouping ──────────────────────────
 
