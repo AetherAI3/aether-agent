@@ -132,12 +132,15 @@ export function wrapVisible(s: string, cols: number): string[] {
 }
 
 /** Sanitize stream-sourced text for terminal output: strip all escape
- *  sequences and C0 controls except \n and \t (\r dropped). Defensive gate for
- *  model/server-controlled strings — blocks OSC/CSI injection (title, clipboard,
- *  screen-clear, hidden text). */
+ *  sequences, C0 controls except \n and \t (\r dropped), and the C1 control
+ *  range (U+0080–U+009F — U+009B is a single-byte CSI some terminals honor,
+ *  and JSON frames can smuggle it as "\u009b"). Defensive gate for
+ *  model/server-controlled strings — blocks OSC/CSI injection (title,
+ *  clipboard, screen-clear, hidden text). */
 export function sanitizeTerm(s: string): string {
   return s
     .replace(ANSI_RE, "")
     .replace(/\x1b/g, "")
-    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "")
+    .replace(/[\u0080-\u009f]/g, "");
 }

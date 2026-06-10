@@ -72,3 +72,9 @@ test("sanitizeTerm strips OSC/CSI/DCS and lone ESC", () => {
 test("sanitizeTerm keeps newline and tab, drops \\r and other C0", () => {
   assert.equal(sanitizeTerm("a\nb\tc\rd\x07e"), "a\nb\tcde");
 });
+
+test("sanitizeTerm strips C1 controls (U+009B is a single-byte CSI)", () => {
+  assert.equal(sanitizeTerm("a" + String.fromCharCode(0x9b) + "2Jb"), "a2Jb");
+  const c1run = String.fromCharCode(0x80, 0x8d, 0x9f);
+  assert.equal(sanitizeTerm("x" + c1run + "y"), "xy", "full C1 range stripped");
+});
