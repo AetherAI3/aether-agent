@@ -6,7 +6,11 @@ dist/
 .env.*
 !.env.example
 # local token cache (never commit a credential)
+.token
 .aether-token
 # editor
 .idea/
 .vscode/
+
+# agent runtime output (plans the agent writes during /plan runs)
+.hermes/

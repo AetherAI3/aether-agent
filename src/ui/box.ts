@@ -52,16 +52,11 @@ export function hyperlink(url: string, label?: string): string {
 
 // ── Box drawing ──
 
-/**
- * Strip ALL ANSI sequences for width calculation:
- * SGR (\x1b[...m), OSC 8 (\x1b]8;;...\x1b\\), and legacy OSC (BEL-terminated).
- */
+import { visibleWidth } from "./text.js";
+
+/** ANSI-aware, wide-char-aware visible width (shared util). */
 function plainLen(s: string): number {
-  return s
-    .replace(/\x1b\[[0-9;]*m/g, "")
-    .replace(/\x1b\][^\x07]*\x07/g, "")
-    .replace(/\x1b\][^\x1b]*\x1b\\/g, "")
-    .length;
+  return visibleWidth(s);
 }
 
 /**

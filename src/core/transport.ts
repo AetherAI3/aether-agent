@@ -3,8 +3,27 @@
 //
 // Paths are constants so they change in one place.
 
-import { HttpError, StreamUnavailableError } from "./errors.js";
+import { HttpError, InsecureTransportError, StreamUnavailableError } from "./errors.js";
 import type { TokenStore } from "./auth.js";
+
+/**
+ * Is `base` a transport we will attach the session token to? https is allowed to
+ * any host; plain http is allowed ONLY to loopback (a local-dev backend), so the
+ * long-lived `aek_` token never traverses cleartext to a remote host and an
+ * attacker-set base URL cannot silently exfiltrate it. Unparseable → unsafe.
+ */
+export function isCredentialSafeUrl(base: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(base);
+  } catch {
+    return false;
+  }
+  if (u.protocol === "https:") return true;
+  if (u.protocol !== "http:") return false;
+  const host = u.hostname.replace(/^\[|\]$/g, ""); // strip IPv6 brackets
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
 
 // Aether API routes.
 export const CHAT_STREAM_PATH = "/agent/chat/stream"; // standard chat SSE
@@ -41,6 +60,8 @@ export const AGENT_DELEGATE_PATH = "/agents/delegate";
 export const AGENT_TREE_PATH = "/agents/tree";
 export const AGENT_BROADCAST_PATH = "/agents/broadcast";
 export const AGENT_GATHER_PATH = "/agents/gather";
+export const AGENT_TEST_DRIVE_PATH = "/agents/test-drive";
+export const AGENT_BENCH_PATH = "/agents/bench";
 // ── Vault (cloud file storage) ─────────────────
 export const VAULT_LIST_PATH = "/vault/list";
 export const VAULT_BROWSE_PATH = "/vault/browse";
@@ -60,6 +81,9 @@ export const AGENT_VAULT_SNAPSHOT_PATH = "/agent/vault/snapshot";
 export const AGENT_VAULT_SLASH_PATH = "/agent/vault/slash";
 export const AGENT_VAULT_STAGING_PATH = "/agent/vault/staging";
 export const AGENT_CONTEXT_PATH = "/agent/context";
+// ── UVT Commands ────────────────────────────
+export const UVT_SCAFFOLD_PATH = "/uvt/scaffold";
+export const UVT_PORT_PATH = "/uvt/port";
 // ── Project conversion (workflow → project) ─────
 export const PROJECT_FROM_WORKFLOW_ASSESS_PATH = "/project/from-workflow/assess";
 export const PROJECT_FROM_WORKFLOW_BRAINSTORM_PATH = "/project/from-workflow/brainstorm";
@@ -78,7 +102,11 @@ export class ApiClient {
 
   private async authHeaders(): Promise<Record<string, string>> {
     const t = await this.tokens.get();
-    return t ? { Authorization: `Bearer ${t}` } : {};
+    if (!t) return {};
+    // Fail closed: never put the bearer on an insecure transport. Unauthenticated
+    // calls (no token) are unaffected — only credentialed requests are refused.
+    if (!isCredentialSafeUrl(this.baseUrl)) throw new InsecureTransportError(this.baseUrl);
+    return { Authorization: `Bearer ${t}` };
   }
 
   /** POST a coding envelope, return the raw SSE byte stream for decodeSse(). */

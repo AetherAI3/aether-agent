@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { gradientLine, type Rgb } from "../src/ui/gradient.js";
+import { gradientLine, gradientBlock, type Rgb } from "../src/ui/gradient.js";
 import { stripAnsi } from "../src/ui/theme.js";
 
 const ICE: Rgb = [135, 215, 255];
@@ -17,4 +17,9 @@ test("gradientLine emits a truecolor escape for a colored run", () => {
 });
 test("gradientLine leaves spaces uncolored", () => {
   assert.equal(stripAnsi(gradientLine("  A  ", ICE, CYAN, true)), "  A  ");
+});
+test("gradientBlock leaves spaces uncolored (parity with gradientLine)", () => {
+  const rows = gradientBlock(["A B", "  C"], ICE, CYAN, true);
+  assert.equal(stripAnsi(rows[0]!), "A B");
+  assert.ok(rows[1]!.startsWith("  "), "leading spaces stay plain");
 });

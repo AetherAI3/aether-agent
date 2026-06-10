@@ -43,3 +43,27 @@ test("deleteWord removes the word before the cursor", () => {
   b.deleteWord();
   assert.equal(b.value, "foo ");
 });
+test("deleteForward removes the char at the cursor", () => {
+  const b = new InputBuffer();
+  for (const c of "abc") b.insert(c);
+  b.left();
+  b.deleteForward();
+  assert.equal(b.value, "ab");
+  assert.equal(b.pos, 2);
+});
+test("killToEnd truncates from the cursor", () => {
+  const b = new InputBuffer();
+  for (const c of "abcd") b.insert(c);
+  b.left();
+  b.left();
+  b.killToEnd();
+  assert.equal(b.value, "ab");
+});
+test("killToStart removes before the cursor and zeroes it", () => {
+  const b = new InputBuffer();
+  for (const c of "abcd") b.insert(c);
+  b.left();
+  b.killToStart();
+  assert.equal(b.value, "d");
+  assert.equal(b.pos, 0);
+});

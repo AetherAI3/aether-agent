@@ -31,6 +31,13 @@ export function parseRepoSpec(spec: string): RepoSpec {
     .replace(/\/$/, "");
   const m = cleaned.match(/^([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/);
   if (!m) throw new Error(`invalid repo "${spec}" — expected owner/name`);
+  // The charset above still admits a leading "-" (parsed as a flag when handed to
+  // gh/git as an argv element) and the path segments "."/"..". Reject both so a
+  // crafted spec can't inject an option or a surprising path into the clone argv.
+  const unsafe = (seg: string): boolean => seg.startsWith("-") || seg === "." || seg === "..";
+  if (unsafe(m[1]!) || unsafe(m[2]!)) {
+    throw new Error(`invalid repo "${spec}" — owner/name may not start with '-' or be '.'/'..'`);
+  }
   return { owner: m[1]!, name: m[2]!, full: `${m[1]}/${m[2]}` };
 }
 

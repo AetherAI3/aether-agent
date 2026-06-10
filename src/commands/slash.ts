@@ -33,6 +33,21 @@ import type { AuditEntry } from "../core/audit.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { delegateWorker, getOrchTree, broadcastToAgents, gatherResults, requireOrchestrator } from "../core/orchestrator.js";
+import {
+  filterMediaModels, resolveModelKey, autoRouteModel,
+  buildMediaPrompt, dispatchGeneration, downloadMediaFile,
+  ensureOutputDir, recordOutput, listOutput, findOutput, openOutput, clearOutput,
+  ASPECT_RATIOS, IMAGE_SHORTCUTS, VIDEO_SHORTCUTS,
+  parseStoryboard, saveStoryboard, loadStoryboard, listStoryboards,
+  type MediaKind, type GenFlags, type GenResult,
+} from "../core/vision.js";
+import { basename } from "node:path";
+import { existsSync as fsExistsSync } from "node:fs";
+import { generateScaffold, isValidScaffoldType, SCAFFOLD_USAGE, type ScaffoldType } from "../core/scaffold.js";
+import { portCode, readSource, writePortedFiles } from "../core/port.js";
+import { generateDiff } from "../core/stage_diff.js";
+import { startTestDrive } from "../core/test_drive.js";
+import { runBenchmark } from "../core/bench.js";
 
 export interface SlashResult {
   exit: boolean;
@@ -42,6 +57,13 @@ export interface SlashResult {
 }
 
 type Kind = "model" | "orchestrator";
+
+// Media pipeline state — persists across turns in the same REPL session.
+// Cleared on REPL restart. Used by /re-frame and /re-cut.
+let _lastMediaUrl: string | null = null;
+let _lastMediaModel: string | null = null;
+let _lastMediaPrompt: string | null = null;
+let _lastMediaKind: MediaKind | null = null;
 
 // Catalog is cached per REPL session; a fresh session re-fetches.
 let _catalog: CatalogResponse | null = null;
@@ -205,6 +227,44 @@ export async function handleSlash(
       await gatherSlash(ctx, out, arg);
       break;
     }
+    case "photogen":
+    case "frame": {
+      await photogenSlash(ctx, out, arg, cmd === "frame");
+      break;
+    }
+    case "re-frame": {
+      await reframeSlash(ctx, out, arg);
+      break;
+    }
+    case "videogen":
+    case "sequence": {
+      await videogenSlash(ctx, out, arg, cmd === "sequence");
+      break;
+    }
+    case "animate": {
+      await animateSlash(ctx, out, arg);
+      break;
+    }
+    case "re-cut": {
+      await recutSlash(ctx, out, arg);
+      break;
+    }
+    case "output": {
+      await outputSlash(ctx, out, arg);
+      break;
+    }
+    case "storyboard": {
+      await storyboardSlash(ctx, out, arg);
+      break;
+    }
+    case "test-drive": {
+      await testDriveSlash(ctx, out, arg);
+      break;
+    }
+    case "bench": {
+      await benchSlash(ctx, out, arg);
+      break;
+    }
     case "clear":
       out.write("\x1b[2J\x1b[H");
       break;
@@ -235,6 +295,9 @@ export async function handleSlash(
     case "limit":
       await limitSlash(ctx, out, arg);
       break;
+    case "token-budget":
+      await limitSlash(ctx, out, arg);
+      break;
     case "audit-receipt":
       await auditReceiptSlash(ctx, out, arg);
       break;
@@ -245,6 +308,26 @@ export async function handleSlash(
     case "logs": {
       out.write("\x1b[?25l"); // Hide cursor
       await runLogsViewer(out);
+      break;
+    }
+    case "scaffold": {
+      await scaffoldSlash(ctx, out, arg);
+      break;
+    }
+    case "port": {
+      await portSlash(ctx, out, arg);
+      break;
+    }
+    case "purge": {
+      await purgeSlash(ctx, out);
+      break;
+    }
+    case "stage-diff": {
+      await stageDiffSlash(ctx, out);
+      break;
+    }
+    case "revert": {
+      await revertSlash(ctx, out, arg);
       break;
     }
     default:
@@ -564,6 +647,208 @@ async function rollbackSlash(ctx: AppContext, out: Writable, arg: string): Promi
   }
 }
 
+// ── /scaffold ─────────────────────────────────
+
+async function scaffoldSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  const parts = arg.trim().split(/\s+/);
+  const type = parts[0]?.toLowerCase() ?? "";
+  const name = parts.slice(1).join(" ");
+
+  if (!type || !name) {
+    out.write(SCAFFOLD_USAGE + "\n");
+    return;
+  }
+
+  if (!isValidScaffoldType(type)) {
+    out.write(`invalid type: ${type} — use component, route, or module\n`);
+    return;
+  }
+
+  try {
+    out.write(`scaffolding ${type} "${name}"...\n`);
+    const r = await generateScaffold(ctx.api, type as ScaffoldType, name);
+    for (const f of r.files) {
+      out.write(`  created: ${theme.bold(f.path)}  (${f.content.split("\n").length} lines)\n`);
+    }
+    out.write(`template: ${theme.dim(r.template_used)}\n`);
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+// ── /purge ─────────────────────────────────────
+
+async function purgeSlash(ctx: AppContext, out: Writable): Promise<void> {
+  const registry = getRegistry();
+  const { clearedPins, removedFiles } = registry.purge();
+
+  // Reset the registry completely
+  resetRegistry();
+
+  // Clear screen
+  out.write("\x1b[2J\x1b[H");
+
+  const lines: string[] = [];
+  if (clearedPins > 0) lines.push(`${clearedPins} pinned files`);
+  if (removedFiles > 0) lines.push(`${removedFiles} temp files`);
+  lines.push("UVT cap reset");
+  lines.push("context flushed");
+
+  out.write(`${theme.cyan("🧹 purged")}  ${lines.join(" · ")}\n`);
+  out.write(theme.dim("  Session goal preserved. Agent memory reset to lean baseline.\n"));
+}
+
+// ── /port ─────────────────────────────────────
+
+async function portSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  const parts = arg.trim().split(/\s+/);
+  const targetPath = parts[0];
+  const targetLang = parts[1]?.toLowerCase();
+
+  if (!targetPath || !targetLang) {
+    out.write("usage: /port <file|dir> <target_language>\n");
+    out.write("  /port src/utils.ts rust\n");
+    out.write("  /port src/services/ python\n");
+    return;
+  }
+
+  try {
+    const files = readSource(targetPath);
+    out.write(`reading ${files.length} file(s) from ${targetPath}...\n`);
+
+    const r = await portCode(ctx.api, files, targetLang);
+    out.write(`translated → ${r.files.length} file(s)\n`);
+
+    const outDir = `ported_${targetLang}`;
+    const written = writePortedFiles(r.files, outDir);
+    for (const w of written) {
+      out.write(`  ${theme.bold(w)}\n`);
+    }
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+// ── /stage-diff ────────────────────────────────
+
+async function stageDiffSlash(ctx: AppContext, out: Writable): Promise<void> {
+  try {
+    const r = generateDiff();
+
+    if (r.files.length === 0) {
+      out.write("(working tree clean — nothing to stage)\n");
+      return;
+    }
+
+    out.write(theme.cyan("📋  Stage Diff\n"));
+    out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
+
+    out.write(`  ${r.stats.filesChanged} files  +${r.stats.additions} -${r.stats.deletions}\n\n`);
+
+    for (const f of r.files.slice(0, 15)) {
+      out.write(`  ${theme.muted(f)}\n`);
+    }
+    if (r.files.length > 15) {
+      out.write(`  ${theme.dim(`... and ${r.files.length - 15} more`)}\n`);
+    }
+
+    out.write(`\n${theme.bold("Suggested commit:")}\n`);
+    out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
+    out.write(r.commitMessage + "\n");
+    out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
+
+    const diffLines = r.diff.split("\n").slice(0, 30);
+    out.write(`\n${theme.dim("Diff preview (first 30 lines):")}\n`);
+    for (const line of diffLines) {
+      if (line.startsWith("+")) out.write(theme.dim(line) + "\n");
+      else if (line.startsWith("-")) out.write(theme.muted(line) + "\n");
+      else out.write(theme.dim(line) + "\n");
+    }
+
+    if (r.diff.split("\n").length > 30) {
+      out.write(theme.dim("  ... (truncated)\n"));
+    }
+
+    out.write(`\n${theme.dim("  Copy the commit message above and commit when ready.")}\n`);
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+// ── /revert ─────────────────────────────────────
+
+async function revertSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  const target = arg.trim();
+  if (!target) {
+    out.write("usage: /revert <file|step_id>    surgical rollback\n");
+    out.write("  /revert src/core/old.ts        revert single file\n");
+    out.write("  /revert step-3                 revert to checkpoint (coming soon)\n");
+    return;
+  }
+
+  const cwd = process.cwd();
+  const gitDir = join(cwd, ".git");
+  if (!existsSync(gitDir)) {
+    out.write(theme.muted("Not in a git repository.\n"));
+    return;
+  }
+
+  const { execSync } = require("node:child_process") as typeof import("node:child_process");
+
+  if (target.startsWith("step-") || target.match(/^\d+$/)) {
+    out.write(theme.muted("Step-based revert not yet available. Use /rollback to revert all, or /revert <file> for a single file.\n"));
+    out.write(theme.dim("  Tracked step checkpoints planned for future release.\n"));
+    return;
+  }
+
+  try {
+    const isTracked = (() => {
+      try {
+        execSync(`git ls-files --error-unmatch "${target}"`, { cwd, encoding: "utf8", timeout: 3000 });
+        return true;
+      } catch { return false; }
+    })();
+
+    if (!isTracked) {
+      out.write(`${theme.muted(target)} is not tracked by git.\n`);
+      return;
+    }
+
+    const diffOut = execSync(`git diff --name-only -- "${target}"`, { cwd, encoding: "utf8", timeout: 3000 });
+    if (!diffOut.trim()) {
+      out.write(`(no uncommitted changes in ${target})\n`);
+      return;
+    }
+
+    const fileDiff = execSync(`git diff -- "${target}"`, { cwd, encoding: "utf8", timeout: 5000 });
+    const changes = fileDiff.trim().split("\n").length;
+
+    out.write(`${theme.cyan("↩  Reverting")} ${theme.bold(target)}  (${changes} line changes)\n`);
+    out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
+
+    for (const line of fileDiff.split("\n").slice(0, 10)) {
+      if (line.startsWith("+")) out.write(theme.dim(line) + "\n");
+      else if (line.startsWith("-")) out.write(theme.muted(line) + "\n");
+      else out.write(theme.dim(line) + "\n");
+    }
+
+    const ok = ctx.flags.yes || (await ctx.confirm(`\nRevert ${target} to last commit? [y/N] `));
+    if (!ok) {
+      out.write("cancelled.\n");
+      return;
+    }
+
+    execSync(`git checkout -- "${target}"`, { cwd, encoding: "utf8", timeout: 10000 });
+    out.write(`${theme.cyan("↩ reverted")}  ${target} restored to last commit.\n`);
+  } catch (err: any) {
+    if (err?.stderr?.includes("did not match any file")) {
+      out.write(`not found: ${target}\n`);
+    } else {
+      out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+  }
+}
+
 function printHelp(out: Writable): void {
   const BOX = 62;
 
@@ -617,6 +902,7 @@ function printHelp(out: Writable): void {
       theme.dim("/snapshot") + "               save session state to disk",
       theme.dim("/snapshot resume") + " <id>     reload a saved snapshot",
       theme.dim("/limit") + " <uvt>              cap UVT spend for this session",
+      theme.dim("/token-budget") + " <uvt>       alias for /limit",
       theme.dim("/audit-receipt") + " [n]       verified log of tool calls + UVT",
       theme.dim("/rollback") + " [n]            revert last n filesystem changes",
       theme.dim("/logs-view") + "              interactive session log browser",
@@ -660,6 +946,20 @@ function printHelp(out: Writable): void {
       theme.dim("/tree") + "                   live orchestration hierarchy",
       theme.dim("/broadcast") + ' "<msg>"      inject directive to all sub-agents',
       theme.dim("/gather") + " <id|all>        merge completed work to staging",
+      "",
+    ],
+    [
+      "",
+      theme.iceBlue("⚡") + "  " + theme.bold("UVT Tools"),
+      "",
+      theme.dim("/scaffold") + " <type> <name>  generate boilerplate (component|route|module)",
+      theme.dim("/port") + " <file> <lang>      translate code to another language",
+      theme.dim("/test-drive") + ' "<target>"  auto-test: generate, run, fix, repeat',
+      theme.dim("/bench") + " <target>          profile & optimize code",
+      theme.dim("/purge") + "                    flush transient context & temp files",
+      theme.dim("/token-budget") + " <uvt>       hard UVT cap (alias: /limit)",
+      theme.dim("/stage-diff") + "               unified diff + commit message",
+      theme.dim("/revert") + " <file|step>       surgical rollback",
       "",
     ],
   ];
@@ -1030,24 +1330,389 @@ async function broadcastSlash(ctx: AppContext, out: Writable, arg: string): Prom
   }
 }
 
+// ═════════════════════════════════════════════════════════════════════
+// Media pipeline — /photogen /frame /re-frame /videogen /sequence
+// /animate /re-cut /output /storyboard handlers
+// ═════════════════════════════════════════════════════════════════════
+
+// NOTE: gatherSlash was originally defined above and is preserved.
+// It was not removed — only its closing brace block was used as the anchor.
+
 async function gatherSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
   if (!requireOrchestrator(ctx, out)) return;
   const workerId = arg.trim();
-  if (!workerId) {
-    out.write("usage: /gather <sub_agent_id|all>\n");
-    return;
-  }
+  if (!workerId) { out.write("usage: /gather <sub_agent_id|all>\n"); return; }
   try {
     const r = await gatherResults(ctx.api, ctx.flags.agent!, workerId);
-    if (r.results.length === 0) {
-      out.write("(no results to gather)\n");
-      return;
-    }
+    if (r.results.length === 0) { out.write("(no results to gather)\n"); return; }
     for (const res of r.results) {
       out.write(`${theme.bold(res.worker_id)}:\n`);
       if (res.files.length) out.write(`  files:  ${res.files.join(", ")}\n`);
       if (res.diffs.length) out.write(`  diffs:  ${res.diffs.length} diff(s)\n`);
       if (res.patches.length) out.write(`  patches: ${res.patches.length} patch(es)\n`);
+    }
+  } catch (err) { out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+}
+
+function parseSlashFlags(raw: string, _kind: MediaKind): { prompt: string; flags: GenFlags } {
+  const flags: GenFlags = {};
+  const parts = raw.split(/\s+/);
+  const promptParts: string[] = [];
+  let inFlags = false;
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i] ?? "";
+    if (!inFlags && p.startsWith("--")) { inFlags = true; }
+    if (inFlags) {
+      const next = parts[i + 1] ?? "";
+      if (p === "--model" && next) { flags.model = next; i++; }
+      else if (p === "--aspect" && next) { flags.aspect = next; i++; }
+      else if ((p === "--count" || p === "--batch") && next) { flags.count = parseInt(next, 10) || 1; i++; }
+      else if (p === "--4k") { flags.fourK = true; }
+      else if (p === "--vector") { flags.vector = true; }
+      else if ((p === "--duration" || p === "--10s") && next) { flags.duration = parseInt(next, 10) || 10; i++; }
+      else if (p === "--1080p") { flags.hd1080 = true; }
+      else if (p === "--audio") { flags.audio = true; }
+      else if (p === "--save-to-vault") { flags.saveToVault = true; }
+      else if (p === "--ref" && next) { flags.ref = next; i++; }
+      else if (p === "--open") { flags.open = true; }
+    } else {
+      promptParts.push(p);
+    }
+  }
+  return { prompt: promptParts.join(" "), flags };
+}
+
+const SF = theme.dim;
+
+async function photogenSlash(ctx: AppContext, out: Writable, arg: string, _framed: boolean): Promise<void> {
+  const { prompt, flags } = parseSlashFlags(arg, "image");
+  if (!prompt) {
+    out.write("usage: /photogen <prompt> [--model nano] [--aspect 16_9] [--count 4] [--4k] [--vector]\n");
+    out.write("usage: /frame <prompt> --aspect <ratio>\n");
+    return;
+  }
+  const kind: MediaKind = "image";
+  const modelKey = flags.model ? resolveModelKey(flags.model) : autoRouteModel(prompt, kind);
+  const fullPrompt = buildMediaPrompt(prompt, flags, kind);
+  const count = Math.min(10, Math.max(1, flags.count ?? 1));
+  const outdir = ensureOutputDir();
+  out.write(SF(`generating ${count} image(s) with ${modelKey}: "${prompt}"\n\n`));
+  for (let i = 0; i < count; i++) {
+    try {
+      const vp = count > 1 ? `${fullPrompt} [variant ${i + 1} of ${count}]` : fullPrompt;
+      out.write(SF(`[${i + 1}/${count}] `));
+      const resp = await dispatchGeneration(ctx.api, vp, modelKey, flags);
+      if (resp.media_url) {
+        out.write(SF("downloading...\n"));
+        const filepath = await downloadMediaFile(ctx.api, resp.media_url, outdir, modelKey, kind, resp.filename);
+        const result: GenResult = {
+          model: modelKey, prompt: vp, kind, filepath, filename: basename(filepath),
+          url: resp.media_url, timestamp: new Date().toISOString(), flags,
+        };
+        const entry = recordOutput(result);
+        out.write(`  ${theme.iceBlue("↓")} #${entry.index}  ${entry.filename}\n`);
+        out.write(`  ${SF(resp.media_url)}\n\n`);
+        _lastMediaUrl = resp.media_url; _lastMediaModel = modelKey; _lastMediaPrompt = vp; _lastMediaKind = kind;
+      } else {
+        out.write(SF("  no media URL returned\n"));
+      }
+    } catch (err) { out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+  }
+}
+
+async function reframeSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  if (!_lastMediaUrl || _lastMediaKind !== "image") { out.write(SF("  no previous image to edit\n")); return; }
+  if (!arg) { out.write("usage: /re-frame <edit description>\n"); return; }
+  const editPrompt = `Edit the previously generated image: ${arg}`;
+  const flags: GenFlags = { model: "edit", ref: _lastMediaUrl };
+  out.write(SF(`editing with gpt-image-2: "${arg}"\n\n`));
+  try {
+    const resp = await dispatchGeneration(ctx.api, editPrompt, "vision_gpt_image2", flags);
+    if (resp.media_url) {
+      const filepath = await downloadMediaFile(ctx.api, resp.media_url, ensureOutputDir(), "vision_gpt_image2", "image", resp.filename);
+      const entry = recordOutput({ model: "vision_gpt_image2", prompt: editPrompt, kind: "image", filepath, filename: basename(filepath), url: resp.media_url, timestamp: new Date().toISOString(), flags });
+      out.write(`${theme.iceBlue("↓")} #${entry.index}  ${entry.filename}\n`);
+      _lastMediaUrl = resp.media_url; _lastMediaModel = "vision_gpt_image2"; _lastMediaPrompt = editPrompt;
+    }
+  } catch (err) { out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+}
+
+async function videogenSlash(ctx: AppContext, out: Writable, arg: string, cinematic: boolean): Promise<void> {
+  const { prompt, flags } = parseSlashFlags(arg, "video");
+  if (!prompt) { out.write("usage: /videogen <prompt> [--model seedance] [--duration 10] [--1080p] [--audio]\n  /sequence <prompt>\n"); return; }
+  const kind: MediaKind = "video";
+  const modelKey = flags.model ? resolveModelKey(flags.model) : cinematic ? "seedance" : autoRouteModel(prompt, kind);
+  if (!flags.duration) flags.duration = 5;
+  const fullPrompt = buildMediaPrompt(prompt, flags, kind);
+  out.write(SF(`generating video with ${modelKey}: "${prompt}"\n\n`));
+  try {
+    const resp = await dispatchGeneration(ctx.api, fullPrompt, modelKey, flags);
+    if (resp.media_url) {
+      out.write(SF("downloading video...\n"));
+      const filepath = await downloadMediaFile(ctx.api, resp.media_url, ensureOutputDir(), modelKey, kind, resp.filename);
+      const entry = recordOutput({ model: modelKey, prompt: fullPrompt, kind, filepath, filename: basename(filepath), url: resp.media_url, timestamp: new Date().toISOString(), flags });
+      out.write(`${theme.iceBlue("↓")} #${entry.index}  ${entry.filename}\n  ${SF(resp.media_url)}\n\n`);
+      _lastMediaUrl = resp.media_url; _lastMediaModel = modelKey; _lastMediaPrompt = fullPrompt; _lastMediaKind = kind;
+    }
+  } catch (err) { out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+}
+
+async function animateSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  const args = arg.trim().split(/\s+/);
+  const ref = args[0];
+  const extraPrompt = args.slice(1).join(" ");
+  if (!ref) { out.write("usage: /animate <image_url|file.png|#n> [motion description]\n"); return; }
+  let refUrl = ref;
+  if (/^#?\d+$/.test(ref)) {
+    const entry = findOutput(ref.replace("#", ""));
+    if (entry) refUrl = entry.url;
+    else { out.write(SF(`  no output matching "${ref}"\n`)); return; }
+  }
+  const prompt = `Animate this image into a fluid video sequence${extraPrompt ? ": " + extraPrompt : ""}`;
+  out.write(SF(`animating from ${refUrl.slice(0, 50)}...\n\n`));
+  try {
+    const resp = await dispatchGeneration(ctx.api, prompt, "vision_seedance", { model: "seedance", ref: refUrl, duration: 5 });
+    if (resp.media_url) {
+      const filepath = await downloadMediaFile(ctx.api, resp.media_url, ensureOutputDir(), "vision_seedance", "video", resp.filename);
+      const entry = recordOutput({ model: "vision_seedance", prompt, kind: "video", filepath, filename: basename(filepath), url: resp.media_url, timestamp: new Date().toISOString(), flags: { model: "seedance", ref: refUrl, duration: 5 } });
+      out.write(`${theme.iceBlue("↓")} #${entry.index}  ${entry.filename}\n`);
+      _lastMediaUrl = resp.media_url; _lastMediaModel = "vision_seedance"; _lastMediaPrompt = prompt; _lastMediaKind = "video";
+    }
+  } catch (err) { out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+}
+
+async function recutSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  if (!_lastMediaUrl || _lastMediaKind !== "video") { out.write(SF("  no previous video to edit\n")); return; }
+  if (!arg) { out.write("usage: /re-cut <edit description>\n"); return; }
+  const modelKey = _lastMediaModel || "vision_seedance";
+  const editPrompt = `Edit the previously generated video: ${arg}`;
+  out.write(SF(`editing video: "${arg}"\n\n`));
+  try {
+    const resp = await dispatchGeneration(ctx.api, editPrompt, modelKey, { model: modelKey, ref: _lastMediaUrl });
+    if (resp.media_url) {
+      const filepath = await downloadMediaFile(ctx.api, resp.media_url, ensureOutputDir(), modelKey, "video", resp.filename);
+      const entry = recordOutput({ model: modelKey, prompt: editPrompt, kind: "video", filepath, filename: basename(filepath), url: resp.media_url, timestamp: new Date().toISOString(), flags: {} });
+      out.write(`${theme.iceBlue("↓")} #${entry.index}  ${entry.filename}\n`);
+      _lastMediaUrl = resp.media_url; _lastMediaPrompt = editPrompt;
+    }
+  } catch (err) { out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+}
+
+async function outputSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  const parts = arg.split(/\s+/);
+  const sub = parts[0]?.toLowerCase();
+  const ref = parts.slice(1).join(" ");
+  if (sub === "open" || sub === "o") {
+    if (!ref) { out.write("usage: /output open <n|filename>\n"); return; }
+    const entry = findOutput(ref);
+    if (!entry) { out.write(SF(`  no output matching "${ref}"\n`)); return; }
+    try { openOutput(entry); out.write(`${theme.iceBlue("→")} opened ${entry.filename}\n`); }
+    catch (err) { out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+    return;
+  }
+  if (sub === "clean" || sub === "clear") { out.write(SF(`  cleared ${clearOutput()} entries\n`)); return; }
+  const entries = listOutput(10);
+  if (!entries.length) { out.write(SF("  (no generations yet — use /photogen or /videogen)\n")); return; }
+  out.write(`${theme.iceBlue("📦")}  RECENT GENERATIONS\n\n`);
+  for (const e of entries) {
+    const icon = e.kind === "video" ? "🎬" : e.kind === "3d" ? "🧊" : "🖼";
+    const sp = e.prompt.length > 50 ? e.prompt.slice(0, 47) + "..." : e.prompt;
+    out.write(`  ${theme.iceBlue("#" + e.index)} ${icon}  ${e.filename}\n     ${SF(`${e.model}  ${(e.size_bytes/1024/1024).toFixed(1)}MB  ${sp}`)}\n`);
+  }
+  out.write(SF("\n  /output open <n>  — open in default viewer\n\n"));
+}
+
+async function storyboardSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  const parts = arg.trim().split(/\s+/);
+  const sub = parts[0]?.toLowerCase();
+  const rest = parts.slice(1).join(" ");
+  if (sub === "list" || sub === "ls") {
+    const boards = listStoryboards();
+    if (!boards.length) { out.write(SF("  (no saved storyboards)\n")); return; }
+    out.write(`\n${theme.iceBlue("🎬")}  STORYBOARDS\n\n`);
+    for (const b of boards) out.write(`  ${b.id.padEnd(20)} ${b.title.slice(0, 40)}  ${b.scenes} scenes  [${b.status}]\n`);
+    return;
+  }
+  if (sub === "view" && rest) {
+    const sb = loadStoryboard(rest);
+    if (!sb) { out.write(SF(`  no storyboard "${rest}"\n`)); return; }
+    sbPreview(sb, out);
+    return;
+  }
+  if (sub === "--preview" || sub === "--generate" || sub === "--animate" || sub === "--render") {
+    const boards = listStoryboards();
+    const id = rest || (boards[0]?.id ?? "");
+    const sb = loadStoryboard(id);
+    if (!sb) { out.write(SF("  no storyboard found\n")); return; }
+    const phase = sub.replace("--", "");
+    if (phase === "preview") { sbPreview(sb, out); return; }
+    await sbRender(ctx, sb, phase, out);
+    return;
+  }
+  if (!arg.trim()) { out.write("usage: /storyboard <prompt|file> [--scenes n] [--style style]\n  /storyboard --preview|--generate|--animate|--render [id]\n  /storyboard list|view <id>\n"); return; }
+  let sourceType: "prompt" | "script_file" = "prompt";
+  let source = arg;
+  let opts: { scenes?: number; style?: string } = {};
+  const firstArg = parts[0] ?? "";
+  if (fsExistsSync(firstArg) && /\.(md|txt)$/i.test(firstArg)) {
+    sourceType = "script_file"; source = firstArg; opts = sbFlagParse(parts.slice(1).join(" "));
+  } else {
+    const fi = parts.findIndex(p => p.startsWith("--"));
+    if (fi > 0) { source = parts.slice(0, fi).join(" "); opts = sbFlagParse(parts.slice(fi).join(" ")); }
+  }
+  out.write(SF("parsing storyboard...\n"));
+  try {
+    const result = await parseStoryboard(ctx.api, source, sourceType, opts);
+    const sb = { id: `sb_${Date.now().toString(36)}`, title: result.title, source_type: sourceType, source, style: result.style, total_scenes: result.scenes.length, scenes: result.scenes, created_at: new Date().toISOString(), status: "draft" as const };
+    saveStoryboard(sb);
+    sbPreview(sb, out);
+    out.write(SF("\n/storyboard --generate   to generate all keyframes\n"));
+    out.write(SF("/storyboard --animate    to animate the sequence\n"));
+    out.write(SF("/storyboard --render     full pipeline\n"));
+  } catch (err) { out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+}
+
+function sbFlagParse(raw: string): { scenes?: number; style?: string } {
+  const r: { scenes?: number; style?: string } = {};
+  const p = raw.split(/\s+/);
+  for (let i = 0; i < p.length; i++) {
+    const next = p[i + 1] ?? "";
+    if ((p[i] === "--scenes" || p[i] === "-n") && next) { r.scenes = parseInt(next, 10); i++; }
+    else if (p[i] === "--style" && next) { r.style = next; i++; }
+  }
+  return r;
+}
+
+function sbPreview(sb: any, out: Writable): void {
+  out.write(`\n${theme.iceBlue("🎬")}  STORYBOARD: ${sb.title}\n`);
+  out.write(SF(`   style: ${sb.style}  |  scenes: ${sb.total_scenes}  |  status: ${sb.status}\n\n`));
+  for (const s of sb.scenes) {
+    out.write(
+      `${theme.iceBlue("SCENE " + s.index)}  ${(s.shot_type||"WIDE").padEnd(8)} | ${(s.camera_movement||"static").padEnd(10)} | ${s.duration_sec}s  | ${s.transition}\n` +
+      `  ${SF("visual:")} ${(s.keyframe_prompt||"").slice(0,80)}${(s.keyframe_prompt||"").length>80?"...":""}\n` +
+      `  ${SF("motion:")} ${(s.animation_prompt||"").slice(0,80)}\n` +
+      `  ${SF("palette:")} ${s.color_palette||"natural"}  ${SF("light:")} ${s.lighting||"ambient"}\n\n`
+    );
+  }
+}
+
+async function sbRender(ctx: AppContext, sb: any, phase: string, out: Writable): Promise<void> {
+  if (phase === "generate" || phase === "render") {
+    out.write(SF(`generating ${sb.total_scenes} keyframes...\n\n`));
+    for (const s of sb.scenes) {
+      out.write(SF(`  scene ${s.index}/${sb.total_scenes}: ${s.shot_type}\n`));
+      try {
+        const mk = autoRouteModel(s.keyframe_prompt, "image");
+        const resp = await dispatchGeneration(ctx.api, s.keyframe_prompt, mk, { aspect: "16_9" });
+        if (resp.media_url) {
+          const fp = await downloadMediaFile(ctx.api, resp.media_url, ensureOutputDir(), mk, "image");
+          s.generated_frame_url = resp.media_url; s.generated_frame_path = fp;
+          recordOutput({ model: mk, prompt: s.keyframe_prompt, kind: "image", filepath: fp, filename: basename(fp), url: resp.media_url, timestamp: new Date().toISOString(), flags: {} });
+          out.write(`    ${theme.iceBlue("✓")} scene ${s.index}\n`);
+        }
+      } catch (err) { out.write(`    ✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+    }
+    sb.status = "keyframes_generated"; saveStoryboard(sb);
+  }
+  if (phase === "animate" || phase === "render") {
+    const anim = sb.scenes.filter((s: any) => s.generated_frame_url);
+    out.write(SF(`animating ${anim.length} scenes...\n\n`));
+    for (const s of anim) {
+      out.write(SF(`  scene ${s.index}: ${s.camera_movement} over ${s.duration_sec}s\n`));
+      try {
+        const resp = await dispatchGeneration(ctx.api, s.animation_prompt, "vision_seedance", { model: "seedance", ref: s.generated_frame_url, duration: s.duration_sec });
+        if (resp.media_url) {
+          const fp = await downloadMediaFile(ctx.api, resp.media_url, ensureOutputDir(), "vision_seedance", "video");
+          recordOutput({ model: "vision_seedance", prompt: s.animation_prompt, kind: "video", filepath: fp, filename: basename(fp), url: resp.media_url, timestamp: new Date().toISOString(), flags: {} });
+          out.write(`    ${theme.iceBlue("✓")} scene ${s.index}\n`);
+        }
+      } catch (err) { out.write(`    ✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+    }
+    sb.status = "animated"; saveStoryboard(sb);
+  }
+}
+
+// ── /test-drive ─────────────────────────────────
+
+async function testDriveSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  if (!requireOrchestrator(ctx, out)) return;
+
+  const target = arg.trim().replace(/^["']|["']$/g, "");
+  if (!target) {
+    out.write('usage: /test-drive "<route|function>"\n');
+    out.write('  /test-drive "POST /api/users"\n');
+    out.write('  /test-drive "src/utils/validate.ts:validateEmail"\n');
+    return;
+  }
+
+  try {
+    out.write(`${theme.cyan("🧪 test-drive")}  targeting: ${theme.bold(target)}\n`);
+    out.write(theme.dim("  Generating test matrix, running, iterating until green...\n\n"));
+
+    const r = await startTestDrive(ctx.api, ctx.flags.agent!, target, process.cwd());
+
+    if (r.status === "passed") {
+      out.write(`${theme.cyan("✓ all tests pass")}  after ${r.iterations} iteration(s)\n`);
+      if (r.final_result) {
+        out.write(`  ${r.final_result.passed} passed · ${r.final_result.failed} failed\n`);
+      }
+      if (r.patches.length > 0) {
+        out.write(`  ${r.patches.length} source file(s) modified\n`);
+        for (const p of r.patches) {
+          out.write(`    ${theme.bold(p.file)}\n`);
+        }
+      }
+    } else {
+      out.write(`${theme.muted("✗ tests did not converge")} after ${r.iterations} iteration(s)\n`);
+      if (r.final_result?.errors.length) {
+        for (const e of r.final_result.errors.slice(0, 3)) {
+          out.write(`  ${theme.muted(e.slice(0, 200))}\n`);
+        }
+      }
+    }
+  } catch (err) {
+    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
+// ── /bench ─────────────────────────────────────
+
+async function benchSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+  if (!requireOrchestrator(ctx, out)) return;
+
+  const target = arg.trim();
+  if (!target) {
+    out.write("usage: /bench <function|endpoint>\n");
+    out.write("  /bench src/services/search.ts:fullTextSearch\n");
+    out.write("  /bench GET /api/search\n");
+    return;
+  }
+
+  try {
+    out.write(`${theme.cyan("⚡ benchmarking")}  ${theme.bold(target)}...\n`);
+
+    const r = await runBenchmark(ctx.api, ctx.flags.agent!, target);
+
+    if (r.complexity) {
+      out.write(`\n  complexity: ${theme.bold(r.complexity)}\n`);
+    }
+    if (r.bottlenecks.length > 0) {
+      out.write(`\n  ${theme.muted("bottlenecks:")}\n`);
+      for (const b of r.bottlenecks) {
+        out.write(`    ${theme.muted("•")} ${b}\n`);
+      }
+    }
+    if (r.optimizations.length > 0) {
+      out.write(`\n  ${theme.cyan("optimizations:")}\n`);
+      for (const o of r.optimizations) {
+        out.write(`    ${theme.cyan("→")} ${o.description}  ${theme.dim(`(${o.improvement})`)}\n`);
+      }
+    }
+    if (r.patches.length > 0) {
+      out.write(`\n  ${r.patches.length} optimization(s) applied\n`);
+      for (const p of r.patches) {
+        out.write(`    ${theme.bold(p.file)}\n`);
+      }
     }
   } catch (err) {
     out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyRestart, buildPromptContext } from "../src/commands/chat.js";
+import { applyRestart, buildPromptContext, repaintString } from "../src/commands/chat.js";
 import { handleSlash } from "../src/commands/slash.js";
 import type { GlobalFlags, AppContext } from "../src/core/context.js";
 
@@ -113,6 +113,21 @@ test("buildPromptContext clears btwNotes after a single use (single-shot)", () =
   const result2 = buildPromptContext("task two", null, []);
   assert.deepEqual(result2.btwNotes, []);
   assert.equal(result2.prompt, "task two");
+});
+
+// ── repaintString ──
+
+test("repaintString clears the row, draws the view, and places the caret", () => {
+  const s = repaintString("> ", "abc", 1, 40);
+  assert.ok(s.startsWith("\r\x1b[2K"));
+  assert.ok(s.includes("> abc"));
+  assert.ok(s.endsWith("\x1b[4G")); // 2 prompt cols + 1 char + 1
+});
+
+test("repaintString keeps the caret on-row for overflowing input", () => {
+  const s = repaintString("> ", "x".repeat(200), 200, 30);
+  const col = Number(/\x1b\[(\d+)G$/.exec(s)![1]);
+  assert.ok(col <= 30);
 });
 
 // ── helpers ──
