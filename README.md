@@ -104,7 +104,7 @@ aether config set defaultModel opus
 
 Inside the REPL, `/` commands control the session — grouped into **Session** (`/model` `/agent` `/tier` `/audit` `/doctor`), **Agent modes** (`/recon` `/plan` `/review` `/autonomous-execution` …), **Steering** (`/queue` `/steer` `/btw`), **Context & limits** (`/pin` `/snapshot` `/limit` `/rollback`), **Goals & workflows** (`/goal` `/workflow`), **Vault** (`/vault*`), and **Orchestra** (`/delegate` `/tree` `/broadcast` `/gather`). Run `/help` to see them all.
 
-**Full reference:** every command, flag, slash command, and env var lives in [COMMANDS.md](COMMANDS.md). Dated patch notes live in [release/](release/).
+**Full reference:** every command, flag, slash command, and env var lives in [COMMANDS.md](COMMANDS.md). Dated patch notes live in [docs/releases/](docs/releases/).
 
 ---
 
