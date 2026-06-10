@@ -40,7 +40,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "doctor", summary: "diagnose your setup", section: "Session" },
   { name: "clear", summary: "clear screen", section: "Session" },
   { name: "exit", aliases: ["quit"], summary: "leave the REPL", section: "Session" },
-  { name: "mcp", summary: "MCP server manager (coming soon)", section: "Session", hidden: true },
+  { name: "mcp", summary: "manage MCP servers (connect, add, repair)", section: "Session" },
 
   // ── Agent Modes (prompt rewrites) ──
   { name: "autonomous-execution", args: "<task>", summary: "execute without asking", section: "Agent Modes" },
