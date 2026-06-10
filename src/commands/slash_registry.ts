@@ -33,8 +33,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "help", args: "[command]", summary: "this help, or detail for one command", section: "Session" },
   { name: "models", summary: "interactive model picker", section: "Session" },
   { name: "model", args: "<n|id>", summary: "switch model (no arg → picker)", section: "Session" },
-  { name: "agent", args: "<n|id>", summary: "switch orchestrator (no arg → picker)", section: "Session" },
-  { name: "agents", summary: "view active agent sessions (name, time, UVT)", section: "Session" },
+  { name: "agent", args: "<n|id>", summary: "switch orchestrator (or picker)", section: "Session" },
+  { name: "agents", summary: "active agent sessions + UVT", section: "Session" },
   { name: "tier", summary: "plan tier + default model", section: "Session" },
   { name: "audit", args: "[n]", summary: "recent audit trail", section: "Session" },
   { name: "doctor", summary: "diagnose your setup", section: "Session" },
@@ -102,10 +102,10 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "revert", args: "<file|step>", summary: "surgical rollback", section: "UVT Tools" },
 
   // ── Media ──
-  { name: "photogen", args: "<prompt> [--model --aspect --count --4k --vector]", summary: "generate images", section: "Media" },
+  { name: "photogen", args: "<prompt> [--model --aspect]", summary: "generate images", section: "Media" },
   { name: "frame", args: "<prompt>", summary: "generate a single styled frame", section: "Media" },
   { name: "re-frame", args: "<prompt>", summary: "re-run the last image with a new prompt", section: "Media" },
-  { name: "videogen", args: "<prompt> [--model --duration --1080p --audio]", summary: "generate video", section: "Media" },
+  { name: "videogen", args: "<prompt> [--model --duration]", summary: "generate video", section: "Media" },
   { name: "sequence", args: "<prompt>", summary: "cinematic multi-shot video", section: "Media" },
   { name: "animate", args: "<prompt>", summary: "animate the last image", section: "Media" },
   { name: "re-cut", args: "<prompt>", summary: "re-edit the last video", section: "Media" },

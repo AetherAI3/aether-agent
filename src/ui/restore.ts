@@ -42,20 +42,35 @@ export function restoreCount(): number {
   return steps.size;
 }
 
+/** Render a crash payload without losing the stack (Error) or the shape
+ *  (non-Error rejection values would otherwise print "[object Object]"). */
+function describeFailure(v: unknown): string {
+  if (v instanceof Error) return v.stack ?? v.message;
+  if (typeof v === "object" && v !== null) {
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return String(v);
+    }
+  }
+  return String(v);
+}
+
 function installProcessHooks(): void {
   if (hooksInstalled) return;
   hooksInstalled = true;
   process.on("exit", runRestores);
+  // Under the node:test runner, leave crash semantics alone — an exit(1) from
+  // a shared hook would abort the whole test file with no useful trace.
+  if (process.env["NODE_TEST_CONTEXT"]) return;
   process.on("uncaughtException", (err) => {
     runRestores();
-    const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
-    process.stderr.write(`\n✗ unexpected crash: ${msg}\n`);
+    process.stderr.write(`\n✗ unexpected crash: ${describeFailure(err)}\n`);
     process.exit(1);
   });
   process.on("unhandledRejection", (reason) => {
     runRestores();
-    const msg = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
-    process.stderr.write(`\n✗ unhandled rejection: ${msg}\n`);
+    process.stderr.write(`\n✗ unhandled rejection: ${describeFailure(reason)}\n`);
     process.exit(1);
   });
 }

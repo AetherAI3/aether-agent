@@ -44,17 +44,17 @@ export class MdStream {
     return out;
   }
 
-  /** Flush whatever partial line remains (end of stream). */
+  /** Flush whatever partial line remains (end of stream) and reset state so a
+   *  reused instance can't carry fence state across streams. */
   flush(): string {
     if (!this.enabled) return "";
     const rest = this.partial;
+    const wasRaw = this.partialFlushed;
     this.partial = "";
+    this.partialFlushed = false;
+    this.inFence = false;
     if (!rest) return "";
-    if (this.partialFlushed) {
-      this.partialFlushed = false;
-      return rest;
-    }
-    return this.styleLine(rest);
+    return wasRaw ? rest : this.styleLine(rest);
   }
 
   /** Lines that must wait for their newline to be styled correctly. */

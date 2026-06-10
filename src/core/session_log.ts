@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { BrainEvent } from "./brain_protocol.js";
 import type { ToolResult } from "./tool_executor.js";
+import { registerRestore } from "../ui/restore.js";
 
 export function logsRoot(): string {
   return process.env["AETHER_LOG_DIR"] ?? join(homedir(), ".aether-agent", "logs");
@@ -64,7 +65,12 @@ export class SessionLog {
     this.monologuePath = join(this.dir, "monologue.txt");
     this.manifestPath = join(this.dir, "manifest.json");
     this.writeManifest(null);
+    // Batched writes must still land if the process exits abruptly (SIGINT
+    // handlers call process.exit) — the exit hook drains the buffer.
+    this.unregisterFlush = registerRestore(() => this.flush());
   }
+
+  private readonly unregisterFlush: () => void;
 
   /** Record one brain event (and mirror human-readable lines to monologue.txt). */
   event(ev: BrainEvent, ts: string): void {
@@ -131,6 +137,7 @@ export class SessionLog {
    * failing tests when not ok (only written when > 0). */
   close(finalStatus: FinalStatus, ended: string, remaining = 0): void {
     this.flush();
+    this.unregisterFlush();
     this.writeManifest({ ended, finalStatus, remaining });
   }
 

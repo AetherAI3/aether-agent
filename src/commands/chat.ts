@@ -210,7 +210,7 @@ async function repl(ctx: AppContext): Promise<number> {
   return await new Promise<number>((resolve) => {
     const onResize = (): void => repaint();
     const cleanup = (): void => {
-      process.stdout.write("\x1b[?2004l");
+      process.stdout.write("\x1b[?2004l\x1b[?25h"); // paste off + cursor shown
       try {
         process.stdin.setRawMode(false);
       } catch {
@@ -227,21 +227,24 @@ async function repl(ctx: AppContext): Promise<number> {
       resolve(code);
     };
 
-    const runQueuedTurn = async (text: string): Promise<void> => {
+    /** Run one turn. Returns true when the user aborted it (Ctrl+C). */
+    const runQueuedTurn = async (text: string): Promise<boolean> => {
       const built = buildPromptContext(text, steering, btwNotes);
       steering = built.steering;
       btwNotes.length = 0;
       turnAbort = new AbortController();
       try {
         await runTurn(ctx, built.prompt, turnAbort.signal);
+        return false;
       } catch (err) {
         if (isAbortError(err)) {
           // User said stop: drop the queued follow-ups too.
           queue.length = 0;
           process.stdout.write("\n" + theme.dim("✗ turn aborted") + "\n");
-        } else {
-          printError(err);
+          return true;
         }
+        printError(err);
+        return false;
       } finally {
         turnAbort = null;
       }
@@ -371,14 +374,16 @@ async function repl(ctx: AppContext): Promise<number> {
         return;
       }
       try {
-        await runQueuedTurn(t);
-      } finally {
-        while (queue.length > 0) {
+        // An aborted turn skips the drain entirely — even an item that slipped
+        // into the queue during abort teardown must not auto-run.
+        let aborted = await runQueuedTurn(t);
+        while (!aborted && queue.length > 0) {
           const next = queue.shift()!;
           const preview = next.length > 55 ? next.slice(0, 55) + "…" : next;
           process.stdout.write(`\n→ Queued: "${preview}"\n`);
-          await runQueuedTurn(next);
+          aborted = await runQueuedTurn(next);
         }
+      } finally {
         busy = false;
       }
       repaint();

@@ -26,6 +26,7 @@ import { theme } from "../ui/theme.js";
 import { SLASH_COMMANDS, SLASH_SECTIONS, findCommand, suggestCommand } from "./slash_registry.js";
 import { handleGoal, handleGoals, goalHelp } from "./goals.js";
 import { box, titledBox } from "../ui/box.js";
+import { sliceVisible } from "../ui/text.js";
 import { pickModel } from "../ui/model_picker.js";
 import { runLogsViewer } from "../ui/logs_viewer.js";
 import { getRegistry, resetRegistry, saveSnapshot, loadSnapshot, listSnapshots, ContextRegistry, syncToBackend, loadFromBackend } from "../core/context_registry.js";
@@ -867,7 +868,7 @@ const SECTION_ICONS: Record<string, string> = {
   "UVT Tools": "🛠",
   "Media": "🎬",
 };
-const USAGE_COL = 28;
+const USAGE_COL = 30;
 
 function printHelp(out: Writable, arg = ""): void {
   const name = arg.trim().replace(/^\//, "").toLowerCase();
@@ -875,7 +876,8 @@ function printHelp(out: Writable, arg = ""): void {
     printCommandHelp(out, name);
     return;
   }
-  const BOX = 62;
+  const BOX = 74;
+  const inner = BOX - 8; // box() padding + a one-column safety margin
   for (const section of SLASH_SECTIONS) {
     const cmds = SLASH_COMMANDS.filter((c) => c.section === section && !c.hidden);
     if (cmds.length === 0) continue;
@@ -887,7 +889,8 @@ function printHelp(out: Writable, arg = ""): void {
         (c.args ? " " + c.args : "") +
         (c.aliases?.length ? theme.dim(" | /" + c.aliases.join(" | /")) : "");
       const pad = " ".repeat(Math.max(2, USAGE_COL - plain.length));
-      lines.push(styled + pad + c.summary);
+      // Clamp to the box interior — an overlong row would spill past the border.
+      lines.push(sliceVisible(styled + pad + c.summary, inner));
     }
     lines.push("");
     out.write(box(lines, { width: BOX }) + "\n\n");
