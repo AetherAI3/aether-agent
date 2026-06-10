@@ -31,6 +31,19 @@ export class InputBuffer {
       this.cursor--;
     }
   }
+  /** Delete the char at the cursor (the `Del` key). */
+  deleteForward(): void {
+    if (this.cursor < this.chars.length) this.chars.splice(this.cursor, 1);
+  }
+  /** Kill from the cursor to end of line (ctrl-k). */
+  killToEnd(): void {
+    this.chars.splice(this.cursor);
+  }
+  /** Kill from start of line to the cursor (ctrl-u). */
+  killToStart(): void {
+    this.chars.splice(0, this.cursor);
+    this.cursor = 0;
+  }
   deleteWord(): void {
     let i = this.cursor;
     while (i > 0 && this.chars[i - 1] === " ") i--;
