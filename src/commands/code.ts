@@ -228,7 +228,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     sr.start();
     if (opts.resume) replaySession(opts.resume, (line) => sr.log(line));
     const anim = new AnimationController({
-      onFrame: (stage, art) => sr.setStage(stage, art),
+      onFrame: (_stage, art) => sr.setAnim(art),
       onProgress: (used, c) => sr.setProgress(used, c),
     });
     const hb = new HeartbeatIndicator({ onFrame: (g) => sr.setHeartbeat(g) });

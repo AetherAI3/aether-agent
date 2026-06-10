@@ -2,18 +2,22 @@
 // Renders phase boxes side-by-side with status colors, arrows, detail panel.
 
 import type { Goal, GoalPhase } from "../core/goals.js";
-import { stripAnsi } from "./theme.js";
+import { visibleWidth } from "./text.js";
 
 // ── Truecolor palette ──
-function esc(n: number): string { return `\x1b[${n}m`; }
-function bold(s: string): string { return `${esc(1)}${s}${esc(0)}`; }
-function cyan(s: string): string { return `${esc(38)};2;26;166;183m${s}${esc(0)}`; }
-function iceBlue(s: string): string { return `${esc(38)};2;135;215;255m${s}${esc(0)}`; }
-function dim(s: string): string { return `${esc(2)}${s}${esc(0)}`; }
-function muted(s: string): string { return `${esc(38)};5;240m${s}${esc(0)}`; }
-function green(s: string): string { return `${esc(38)};2;0;200;100m${s}${esc(0)}`; }
-function yellow(s: string): string { return `${esc(38)};2;220;200;50m${s}${esc(0)}`; }
-function red(s: string): string { return `${esc(38)};2;220;60;60m${s}${esc(0)}`; }
+// One complete SGR sequence per color: \x1b[38;2;R;G;Bm … \x1b[0m. (The old
+// helpers closed the escape at \x1b[38m and printed ";2;R;G;Bm" as literal
+// text on screen.)
+const fg = (r: number, g: number, b: number) => (s: string): string =>
+  `\x1b[38;2;${r};${g};${b}m${s}\x1b[0m`;
+const bold = (s: string): string => `\x1b[1m${s}\x1b[0m`;
+const dim = (s: string): string => `\x1b[2m${s}\x1b[0m`;
+const muted = (s: string): string => `\x1b[38;5;240m${s}\x1b[0m`;
+const cyan = fg(26, 166, 183);
+const iceBlue = fg(135, 215, 255);
+const green = fg(0, 200, 100);
+const yellow = fg(220, 200, 50);
+const red = fg(220, 60, 60);
 
 function statusIcon(status: string): string {
   switch (status) {
@@ -29,7 +33,7 @@ function statusIcon(status: string): string {
 const PHASE_W = 22;
 
 function pad(s: string, w: number): string {
-  return s + " ".repeat(Math.max(0, w - stripAnsi(s).length));
+  return s + " ".repeat(Math.max(0, w - visibleWidth(s)));
 }
 
 function phaseBox(p: GoalPhase, selected: boolean, isActive: boolean): string[] {

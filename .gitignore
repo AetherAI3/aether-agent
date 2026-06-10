@@ -11,3 +11,6 @@ dist/
 # editor
 .idea/
 .vscode/
+
+# agent runtime output (plans the agent writes during /plan runs)
+.hermes/

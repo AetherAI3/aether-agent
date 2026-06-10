@@ -11,6 +11,7 @@
 import type { Writable } from "node:stream";
 import type { StreamFrame } from "./stream.js";
 import { header, actionLine } from "../ui/agent.js";
+import { sanitizeTerm } from "../ui/text.js";
 
 export interface RenderOptions {
   json: boolean;
@@ -56,44 +57,47 @@ export class Renderer {
         this.ensureHeader();
         break;
       case "reasoning":
-        this.err.write(f.text); // thinking → stderr, keeps answer on stdout
+        // thinking → stderr, keeps answer on stdout. Stream-sourced text is
+        // sanitized: a hostile/buggy server must not be able to emit OSC/CSI
+        // (title/clipboard rewrite, screen clear, hidden text) into the TTY.
+        this.err.write(sanitizeTerm(f.text));
         break;
       case "delta":
-        this.out.write(f.text);
+        this.out.write(sanitizeTerm(f.text));
         break;
       case "usage":
-        this.err.write(`\r⟢ ${f.uvt} UVT · ${f.cents.toFixed(2)}¢   `);
+        // Interim ticker suppressed: a "\r⟢ …" mid-stream stomps the line the
+        // answer is currently streaming onto. `done` reports the final figure.
         break;
       case "progress":
-        if (f.text) this.err.write(`\n· ${f.text}\n`);
+        if (f.text) this.err.write(`\n· ${sanitizeTerm(f.text)}\n`);
         break;
       case "task_start": {
         this.ensureHeader();
         this.tasksStarted += 1;
-        const label = f.label ?? `task ${f.taskId ?? ""}`;
-        this.out.write("\n" + actionLine(label, "active", f.taskId ?? "", this.projFrac()) + "\n");
+        const label = sanitizeTerm(f.label ?? `task ${f.taskId ?? ""}`);
+        this.out.write("\n" + actionLine(label, "active", sanitizeTerm(f.taskId ?? ""), this.projFrac()) + "\n");
         break;
       }
       case "task_progress":
-        if (f.delta) this.out.write(f.delta);
-        if (f.uvt != null) this.err.write(`\r⟢ ${f.uvt} UVT · ${(f.cents ?? 0).toFixed(2)}¢   `);
+        if (f.delta) this.out.write(sanitizeTerm(f.delta));
         break;
       case "task_done":
         this.tasksDone += 1;
-        this.out.write("\n" + actionLine(`${f.taskId ?? "task"} done`, "logging", "", this.projFrac()) + "\n");
+        this.out.write("\n" + actionLine(`${sanitizeTerm(f.taskId ?? "task")} done`, "logging", "", this.projFrac()) + "\n");
         break;
       case "task_failed":
-        this.err.write("\n" + actionLine(`${f.taskId ?? "task"} failed`, "error", f.msg ?? "", this.projFrac()) + "\n");
+        this.err.write("\n" + actionLine(`${sanitizeTerm(f.taskId ?? "task")} failed`, "error", sanitizeTerm(f.msg ?? ""), this.projFrac()) + "\n");
         break;
       case "task_blocked":
-        this.err.write("\n" + actionLine(`${f.taskId ?? "task"} blocked`, "idle", f.msg ?? "", this.projFrac()) + "\n");
+        this.err.write("\n" + actionLine(`${sanitizeTerm(f.taskId ?? "task")} blocked`, "idle", sanitizeTerm(f.msg ?? ""), this.projFrac()) + "\n");
         break;
       case "project_done":
         this.out.write("\n" + actionLine("project complete", "active", "", 1) + "\n");
         break;
       case "custody": {
         // Persistence happens in the chat loop; here we only confirm receipt.
-        const orderId = String(f.custody["order_id"] ?? "");
+        const orderId = sanitizeTerm(String(f.custody["order_id"] ?? ""));
         this.err.write(`  ⛓ signed · ${orderId.slice(0, 8)}\n`);
         break;
       }
@@ -107,15 +111,14 @@ export class Renderer {
   }
 
   private done(f: Extract<StreamFrame, { type: "done" }>): void {
-    this.err.write("\r");
     this.out.write("\n");
     this.err.write(`— ${f.uvt} UVT · ${f.cents.toFixed(2)}¢\n`);
   }
 
   private error(f: Extract<StreamFrame, { type: "error" }>): void {
-    this.err.write(`\n✗ ${f.msg}`);
-    if (f.errorCode) this.err.write(` [${f.errorCode}]`);
-    if (f.refId) this.err.write(` (ref ${f.refId})`);
+    this.err.write(`\n✗ ${sanitizeTerm(f.msg)}`);
+    if (f.errorCode) this.err.write(` [${sanitizeTerm(f.errorCode)}]`);
+    if (f.refId) this.err.write(` (ref ${sanitizeTerm(f.refId)})`);
     this.err.write("\n");
   }
 }

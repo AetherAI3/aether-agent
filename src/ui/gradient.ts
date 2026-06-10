@@ -66,11 +66,16 @@ export function gradientBlock(
   return lines.map((line) => {
     let out = "";
     for (let i = 0; i < line.length; i++) {
+      const ch = line[i]!;
+      if (ch === " ") {
+        out += ch; // parity with gradientLine: padding stays plain
+        continue;
+      }
       const t = maxLen <= 1 ? 0 : i / (maxLen - 1);
       const r = Math.round(from[0] + (to[0] - from[0]) * t);
       const g = Math.round(from[1] + (to[1] - from[1]) * t);
       const b = Math.round(from[2] + (to[2] - from[2]) * t);
-      out += `\x1b[38;2;${r};${g};${b}m${line[i]}\x1b[0m`;
+      out += `\x1b[38;2;${r};${g};${b}m${ch}\x1b[0m`;
     }
     return out;
   });

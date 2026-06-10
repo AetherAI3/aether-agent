@@ -177,7 +177,7 @@ test("StatusRenderer non-TTY = plain lines, zero ANSI (keeps §8 logs clean)", (
   try {
     const sr = new StatusRenderer({ mode: "local" });
     sr.start();
-    sr.setStage("execute", "▸▹");
+    sr.setAnim("▸▹");
     sr.log("  : run_tests");
     sr.setProgress(100, 500);
     sr.end();
@@ -209,20 +209,89 @@ test("TuiLayout non-TTY stays plain (no ANSI)", () => {
   assert.ok(!out.some((x) => x.includes("\x1b[")), "no ANSI in non-TTY");
 });
 
+test("pager reflows long lines into wrapped rows (cropping loses nothing)", () => {
+  const t = new TuiLayout({ mode: "api", cols: 20, rows: 10 });
+  t.tty = true;
+  const real = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (() => true) as typeof process.stdout.write;
+  try {
+    t.log("x".repeat(50)); // 50 cols at width 20 -> 3 rows
+    const [, rows] = t.visibleWindow();
+    assert.equal(rows.length, 3, "long line wrapped into 3 display rows");
+    assert.ok(rows.every((r) => stripAnsi(r).length <= 20), "every row fits");
+  } finally {
+    process.stdout.write = real;
+  }
+});
+
+test("pager re-wraps on resize so all content stays reachable", () => {
+  const t = new TuiLayout({ mode: "api", cols: 40, rows: 10 });
+  t.tty = true;
+  const real = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (() => true) as typeof process.stdout.write;
+  try {
+    t.log("y".repeat(40)); // exactly one row at 40 cols
+    assert.equal(t.visibleWindow()[1].length, 1);
+    t.handleResize(10, 10); // crop the window
+    const [, rows] = t.visibleWindow();
+    assert.equal(rows.length, 4, "re-wrapped to 4 rows at width 10");
+    assert.equal(rows.map((r) => stripAnsi(r)).join(""), "y".repeat(40), "no content lost");
+  } finally {
+    process.stdout.write = real;
+  }
+});
+
+test("status row is clamped to the terminal width", () => {
+  const t = new TuiLayout({ mode: "api", cols: 30, rows: 10, now: () => 0 });
+  t.tty = true;
+  const out: string[] = [];
+  const real = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((c: string) => (out.push(String(c)), true)) as typeof process.stdout.write;
+  try {
+    t.setVerb("Reconnoitring the perimeter fences", "( ⚆ _ ⚆ )");
+    t.setUvt(123456, 999999);
+    const status = out[out.length - 1]!;
+    const visible = stripAnsi(status);
+    assert.ok(visible.length <= 30, `status fits 30 cols (got ${visible.length})`);
+  } finally {
+    process.stdout.write = real;
+  }
+});
+
+test("unmount removes the resize listener", () => {
+  const t = new TuiLayout({ mode: "api", cols: 40, rows: 10 });
+  t.tty = true;
+  const real = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (() => true) as typeof process.stdout.write;
+  try {
+    const before = process.stdout.listenerCount("resize");
+    t.mount();
+    assert.equal(process.stdout.listenerCount("resize"), before + 1);
+    t.unmount();
+    assert.equal(process.stdout.listenerCount("resize"), before, "listener detached");
+  } finally {
+    process.stdout.write = real;
+  }
+});
+
 test("a colored header line keeps its visible width (ANSI-safe slicing invariant)", () => {
   const colored = "\x1b[38;2;135;215;255mAETHER\x1b[0m";
   assert.equal(stripAnsi(colored).length, 6);
 });
 
-test("TuiLayout setVerb/setStreamed exist and don't throw off-TTY", () => {
+test("TuiLayout setVerb/setStreamed are silent off-TTY (no stray writes)", () => {
   const prev = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
   Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
+  const out: string[] = [];
+  const real = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((c: string) => (out.push(String(c)), true)) as typeof process.stdout.write;
   try {
     const t = new TuiLayout({ mode: "api", now: () => 0 });
     t.setVerb("Forging", "(ง'̀-'́)ง");
     t.setStreamed(33_000);
-    assert.ok(true);
+    assert.equal(out.length, 0, "status setters write nothing when not a TTY");
   } finally {
+    process.stdout.write = real;
     if (prev) Object.defineProperty(process.stdout, "isTTY", prev);
   }
 });

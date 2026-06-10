@@ -13,6 +13,7 @@
 import { createTheme, type Theme } from "./theme.js";
 import { humanTokens } from "./statusbar.js";
 import { formatElapsed } from "./elapsed.js";
+import { sliceVisible } from "./text.js";
 import { StdoutSink, type RenderSink } from "./sink.js";
 
 /** Structural shape that StatusRenderer.memoryEvent accepts — matches both
@@ -68,6 +69,7 @@ export class StatusRenderer {
   private readonly mode: "local" | "api";
   private readonly now: () => number;
   private hb = "·";
+  private anim = "";
   private verb = "Working";
   private kao = "";
   private streamed = 0; // output tokens streamed this run (the ↑ figure)
@@ -122,8 +124,11 @@ export class StatusRenderer {
     this.streamed = n;
     this.repaint();
   }
-  /** Legacy no-op: stage now drives the verb via setVerb in code.ts. */
-  setStage(_stage: string, _art: string): void {}
+  /** Current stage-animation frame (from AnimationController.onFrame). */
+  setAnim(art: string): void {
+    this.anim = art;
+    this.repaint();
+  }
   setProgress(used: number, cap: number): void {
     this.used = used;
     this.cap = cap;
@@ -193,9 +198,12 @@ export class StatusRenderer {
     this.sink.write(CLR_LINE + this.composeLine());
   }
 
-  /** The pinned heartbeat line. Reads the injected clock — public for tests. */
+  /** The pinned heartbeat line. Reads the injected clock — public for tests.
+   *  Clamped to the sink width: a wrapped pinned line breaks the \r+2K repaint
+   *  and strands a junk row every tick. */
   composeLine(): string {
     const hb = this.theme.cyan(this.hb);
+    const anim = this.anim ? `${this.theme.cyan(this.anim)}  ` : "";
     const kao = this.kao ? this.theme.dim(this.kao) + " " : "";
     const head = `${kao}${this.theme.bold(this.verb)}…`;
     const elapsed = formatElapsed(this.now() - this.startedMs);
@@ -204,7 +212,8 @@ export class StatusRenderer {
       this.mode === "api" && this.cap > 0
         ? `  ${this.theme.dim(`UVT ${humanTokens(this.used)}/${humanTokens(this.cap)} ${this.bar()}`)}`
         : "";
-    return `${hb}  ${head} ${this.theme.dim(`(${elapsed}${up})`)}${uvt}`;
+    const line = `${hb}  ${anim}${head} ${this.theme.dim(`(${elapsed}${up})`)}${uvt}`;
+    return sliceVisible(line, Math.max(20, this.sink.columns - 1));
   }
 
   private bar(width = 12): string {
