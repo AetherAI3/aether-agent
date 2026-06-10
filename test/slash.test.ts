@@ -60,6 +60,17 @@ test("/model switch on no does NOT restart", async () => {
   assert.equal(res.restart, undefined);
 });
 
+test("/mcp no longer prints coming soon", async () => {
+  const out: string[] = [];
+  // non-TTY test environment: handler must fall back to a helpful message
+  // instead of opening the interactive menu.
+  const res = await handleSlash(fakeCtx(false), "/mcp", {
+    write: (s: string) => out.push(s),
+  } as never);
+  assert.equal(res.exit, false);
+  assert.doesNotMatch(out.join(""), /coming soon/i);
+});
+
 test("primeCatalog swallows fetch errors (never blocks the prompt)", async () => {
   const ctx = {
     api: {

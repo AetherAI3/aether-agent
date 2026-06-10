@@ -105,9 +105,15 @@ export async function handleSlash(
     case "doctor":
       await doctor(ctx, out);
       break;
-    case "mcp":
-      out.write("MCP servers — coming soon. Aether Agent will manage MCP tools here.\n");
+    case "mcp": {
+      if (!process.stdin.isTTY) {
+        out.write("MCP manager needs an interactive terminal — run `aether mcp`.\n");
+        break;
+      }
+      const { mcpFromRepl } = await import("./mcp.js");
+      await mcpFromRepl(ctx);
       break;
+    }
     case "clear":
       out.write("\x1b[2J\x1b[H");
       break;
@@ -127,7 +133,7 @@ function printHelp(out: Writable): void {
       "/tier              plan tier + default",
       "/audit [n]         recent Aether audit trail",
       "/doctor            diagnose your setup",
-      "/mcp               MCP servers (coming soon)",
+      "/mcp               manage MCP servers (connect, add, repair)",
       "/clear             clear screen",
       "/exit              leave",
       "",

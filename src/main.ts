@@ -38,6 +38,7 @@ Usage:
   aether auth refresh          Refresh a session   aether auth logout  Log out
   aether github connect        Link GitHub so backend agents can work your repos
   aether github status         Show GitHub link    aether github disconnect  Unlink
+  aether mcp                   Manage MCP servers (connect, add, repair)
   aether audit [limit]         Recent audit chain-of-custody trail
   aether receipt <order_id>    Export the proof package for an audit entry
   aether config [show|get <k>|set <k> <v>]
@@ -161,6 +162,10 @@ async function main(argv: string[]): Promise<number> {
     case "audit": {
       const { cmdAudit } = await import("./commands/audit.js");
       return cmdAudit(ctx, rest);
+    }
+    case "mcp": {
+      const { cmdMcp } = await import("./commands/mcp.js");
+      return cmdMcp(ctx);
     }
     case "models":
       return cmdModels(ctx, rest);
