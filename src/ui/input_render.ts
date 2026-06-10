@@ -5,6 +5,14 @@
 
 import { charWidth, visibleWidth, sliceVisible } from "./text.js";
 
+/** Map a buffer code point to its single-row display form: embedded newlines
+ *  show as ⏎, tabs as ⇥ (both width 1); everything else passes through. */
+function displayChar(ch: string): string {
+  if (ch === "\n" || ch === "\r") return "⏎";
+  if (ch === "\t") return "⇥";
+  return ch;
+}
+
 export interface InputView {
   /** The row to draw: prompt + the visible slice of the value. */
   text: string;
@@ -28,7 +36,9 @@ export function renderInputView(prompt: string, value: string, cursor: number, c
     pw = visibleWidth(p);
   }
   const avail = Math.max(1, cols - pw - 1); // one spare column for the caret
-  const cps = [...value];
+  // Control chars from multi-line pastes render as glyphs — a raw \n written
+  // during repaint would drop the cursor a row and stack garbage lines.
+  const cps = [...value].map(displayChar);
   const cur = Math.max(0, Math.min(cursor, cps.length));
   const w = (i: number): number => charWidth(cps[i]!.codePointAt(0)!);
   // O(n): one pass for the cursor's prefix width, then slide the window start.

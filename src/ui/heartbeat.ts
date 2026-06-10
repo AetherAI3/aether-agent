@@ -25,9 +25,12 @@ export class HeartbeatIndicator {
     this.onFrame = opts.onFrame ?? (() => {});
   }
 
-  /** Trigger one beat. Called on each real heartbeat event. */
+  /** Trigger one beat. Called on each real heartbeat event. A beat that
+   *  arrives while the envelope is still playing is absorbed — restarting
+   *  mid-pulse snaps the glyph back to "·" and reads as stutter. */
   beat(): void {
     this.stalled = false;
+    if (this.timer) return; // pulse in flight — liveness is already visible
     this.idx = 0;
     this.step();
   }

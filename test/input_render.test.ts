@@ -31,3 +31,10 @@ test("wide chars position the cursor by columns, not chars", () => {
   const v = renderInputView("> ", "漢字", 2, 40);
   assert.equal(v.cursorCol, 7); // 2 + 4 cols + 1
 });
+
+test("embedded newlines render as ⏎ on the single row (no raw linefeed)", () => {
+  const v = renderInputView("> ", "ab\ncd", 5, 40);
+  assert.ok(!v.text.includes("\n"), "a raw LF would break the pinned row");
+  assert.ok(v.text.includes("⏎"));
+  assert.equal(v.cursorCol, 2 + 5 + 1); // ⏎ counts one column
+});

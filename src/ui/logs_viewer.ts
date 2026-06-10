@@ -12,6 +12,7 @@ import { logsRoot } from "../core/session_log.js";
 import { theme } from "./theme.js";
 import { titledBox } from "./box.js";
 import { decodeKey, splitKeys, type Key } from "./keys.js";
+import { registerRestore } from "./restore.js";
 
 interface LogEntry {
   ts: string;
@@ -145,6 +146,18 @@ export async function runLogsViewer(out: NodeJS.WritableStream): Promise<void> {
   const suspended = stdin.rawListeners("data");
   stdin.removeAllListeners("data");
 
+  // Alt-screen: the conversation scrollback survives the viewer. Crash-safe —
+  // the restore registry exits the alt-screen even on an uncaught throw.
+  out.write("\x1b[?1049h\x1b[?25l");
+  const unregister = registerRestore(() => {
+    process.stdout.write("\x1b[?1049l\x1b[?25h");
+    try {
+      if (!wasRaw) process.stdin.setRawMode(false);
+    } catch {
+      /* terminal already gone */
+    }
+  });
+
   let state: ViewerState = { mode: "list", query: "", sessionIdx: 0, scrollOffset: 0 };
 
   const filteredEntries = (): LogEntry[] => {
@@ -186,11 +199,16 @@ export async function runLogsViewer(out: NodeJS.WritableStream): Promise<void> {
       stdin.removeListener("data", onData);
       for (const l of suspended) stdin.on("data", l as (...args: unknown[]) => void);
       process.stdout.removeListener("resize", onResize);
-      if (!wasRaw) {
-        stdin.setRawMode(false);
-        stdin.pause();
+      try {
+        if (!wasRaw) {
+          stdin.setRawMode(false);
+          stdin.pause();
+        }
+      } catch {
+        /* terminal already gone */
       }
-      out.write("\x1b[?25h"); // Show cursor
+      out.write("\x1b[?1049l\x1b[?25h"); // leave alt-screen, show cursor
+      unregister();
     };
 
     const step = (k: Key): boolean => {
@@ -221,11 +239,18 @@ export async function runLogsViewer(out: NodeJS.WritableStream): Promise<void> {
     };
 
     const onData = (chunk: Buffer): void => {
-      for (const seq of splitKeys(chunk.toString("utf8"))) {
-        const k = decodeKey(seq);
-        // A printable run is reduced one char at a time (j/k/q… are per-char bindings).
-        const keys: Key[] = k.kind === "char" ? [...k.value].map((v) => ({ kind: "char", value: v }) as Key) : [k];
-        for (const kk of keys) if (step(kk)) return;
+      try {
+        for (const seq of splitKeys(chunk.toString("utf8"))) {
+          const k = decodeKey(seq);
+          // A printable run is reduced one char at a time (j/k/q… are per-char bindings).
+          const keys: Key[] = k.kind === "char" ? [...k.value].map((v) => ({ kind: "char", value: v }) as Key) : [k];
+          for (const kk of keys) if (step(kk)) return;
+        }
+      } catch {
+        // A throw mid-render must not strand the suspended REPL listeners
+        // or leave the alt-screen up. Mirrors model_picker.
+        cleanup();
+        resolve();
       }
     };
 

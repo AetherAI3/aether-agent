@@ -10,6 +10,11 @@ import {
   box, stripAnsi,
 } from "./box.js";
 import { decodeKey, splitKeys, type Key } from "./keys.js";
+import { registerRestore } from "./restore.js";
+
+const ALT_ON = "\x1b[?1049h";
+const ALT_OFF = "\x1b[?1049l";
+const CURSOR_SHOW = "\x1b[?25h";
 
 // ── Provider grouping ──────────────────────────
 
@@ -190,9 +195,13 @@ export async function pickModel(
   let selectedIdx = 0;
   const total = flat.length;
 
-  // Initial render — clear screen first
-  out.write("\x1b[2J\x1b[H");
+  // Alt-screen, not 2J: the user's scrollback (the conversation they're
+  // mid-way through) survives the picker and reappears on exit.
+  out.write(ALT_ON + "\x1b[H");
   out.write(renderPicker(groups, flat, selectedIdx) + "\n");
+  const unregister = registerRestore(() => {
+    process.stdout.write(ALT_OFF + CURSOR_SHOW);
+  });
 
   return new Promise((resolve) => {
     // Returns true when the picker is finished (resolved) and onKey must stop.
@@ -209,7 +218,6 @@ export async function pickModel(
         case "submit": {
           const picked = flat[selectedIdx]!;
           cleanup();
-          out.write("\x1b[2J\x1b[H");
           resolve(picked.item);
           return true;
         }
@@ -217,7 +225,6 @@ export async function pickModel(
         case "eof":
         case "escape":
           cleanup();
-          out.write("\x1b[2J\x1b[H");
           resolve(null);
           return true;
         default:
@@ -235,7 +242,6 @@ export async function pickModel(
         // If anything throws in the key handler (render, decode), bail out
         // and restore the REPL listeners so the session isn't bricked.
         cleanup();
-        out.write("\x1b[2J\x1b[H");
         resolve(null);
       }
     };
@@ -248,6 +254,8 @@ export async function pickModel(
     };
 
     const cleanup = (): void => {
+      out.write(ALT_OFF + CURSOR_SHOW); // back to the real screen, scrollback intact
+      unregister();
       process.stdin.removeListener("data", onKey);
       // Re-attach the REPL's original listeners
       for (const l of oldListeners) {

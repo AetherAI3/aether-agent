@@ -10,8 +10,12 @@ export type Key =
   | { kind: "eof" }
   | { kind: "left" }
   | { kind: "right" }
+  | { kind: "word-left" }
+  | { kind: "word-right" }
   | { kind: "home" }
   | { kind: "end" }
+  | { kind: "tab" }
+  | { kind: "clear-screen" }
   | { kind: "up" }
   | { kind: "down" }
   | { kind: "delete" }
@@ -90,9 +94,21 @@ export function decodeKey(seq: string): Key {
       return { kind: "kill-start" }; // ctrl-u
     case "\x17":
       return { kind: "word-delete" }; // ctrl-w
+    case "\t":
+      return { kind: "tab" };
+    case "\x0c":
+      return { kind: "clear-screen" }; // ctrl-l
     case "\x1b\x7f":
     case "\x1b\b":
       return { kind: "word-delete" }; // alt-backspace
+    case "\x1b[1;5D":
+    case "\x1b[1;3D":
+    case "\x1bb":
+      return { kind: "word-left" }; // ctrl/alt-left, alt-b
+    case "\x1b[1;5C":
+    case "\x1b[1;3C":
+    case "\x1bf":
+      return { kind: "word-right" }; // ctrl/alt-right, alt-f
     case "\x1b[D":
       return { kind: "left" };
     case "\x1b[C":
