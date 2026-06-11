@@ -12,22 +12,99 @@ npm i -g aether-agent     # or run once: npx aether-agent
 
 </div>
 
-> **🔷 [Open the interactive terminal card →](https://dbarr3.github.io/aether-agent/)**
->
-> An open-source coding agent — **cloud** or **`--local`**. Scans, plans, edits, and runs your tests on its own. With **QOPC** 🧠 it learns from what you accept or discard, getting better the more you use it.
->
-> ```
-> aether agent           [ SCAN ]  ▸ src/auth.ts · 142 lines · 4 callbacks
-> /opus · /effort        [REASON]  ▸ 4 hunks + 1 test file · confidence 0.93
-> code-pro               [VERIFY]  ▸ 6 passed in 0.42s · GREEN
-> ```
->
-> | INSTALL | HOSTED | LOCAL |
->|---|---|---|
->| `npm i -g aether-agent` | `aether auth login` | `ollama pull qwen2.5-coder:7b` |
->| one global install · Node ≥ 20 | Claude · GPT · DeepSeek · Neo | any Ollama model · fully offline |
->
-> [![Open interactive card](https://img.shields.io/badge/▶%20Open%20Interactive%20Card-Aether%20Agent-22d3ee?style=for-the-badge&logo=windowsterminal&logoColor=white)](https://dbarr3.github.io/aether-agent/)
+<div align="center">
+<a href="https://dbarr3.github.io/aether-agent/">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 460" width="720" height="460" role="img">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#04161e"/>
+      <stop offset="100%" stop-color="#020e15"/>
+    </linearGradient>
+    <linearGradient id="ctx" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#4ea8ff"/>
+    </linearGradient>
+  </defs>
+
+  <!-- card bg -->
+  <rect width="720" height="460" rx="16" fill="url(#bg)" stroke="#1a3a44" stroke-width="1"/>
+
+  <!-- title bar -->
+  <rect x="0" y="0" width="720" height="38" rx="16" fill="#020d14"/>
+  <rect x="0" y="16" width="720" height="22" fill="#020d14"/>
+  <circle cx="28" cy="19" r="5" fill="#ff5f57"/>
+  <circle cx="48" cy="19" r="5" fill="#febc2e"/>
+  <circle cx="68" cy="19" r="5" fill="#28c840"/>
+  <text x="92" y="23" font-family="monospace" font-size="12" fill="#6f93a0">aether agent — coding session</text>
+
+  <!-- header row -->
+  <text x="360" y="90" font-family="monospace" font-size="28" font-weight="bold" fill="#38bdf8" text-anchor="middle" letter-spacing="8">AETHER</text>
+  <text x="360" y="118" font-family="sans-serif" font-size="12.5" fill="#9fc0cc" text-anchor="middle">An open-source coding agent for your terminal — cloud or --local.</text>
+  <text x="360" y="136" font-family="sans-serif" font-size="12.5" fill="#9fc0cc" text-anchor="middle">Scans, plans, edits, and runs your tests on its own.</text>
+  <line x1="60" y1="148" x2="660" y2="148" stroke="#1e4a54" stroke-dasharray="4,4" stroke-width="1"/>
+
+  <!-- agent strip -->
+  <text x="60" y="172" font-family="monospace" font-size="11" fill="#6f93a0">aether agent</text>
+  <text x="160" y="172" font-family="monospace" font-size="11" fill="#22d3ee" font-weight="bold">/opus</text>
+  <text x="214" y="172" font-family="monospace" font-size="11" fill="#4a6873">·</text>
+  <text x="224" y="172" font-family="monospace" font-size="11" fill="#22d3ee" font-weight="bold">/effort</text>
+  <text x="290" y="172" font-family="monospace" font-size="11" fill="#6f93a0">code-pro</text>
+  <text x="60" y="198" font-family="monospace" font-size="11.5" fill="#22d3ee" font-weight="bold">[ SCAN ]</text>
+  <text x="140" y="198" font-family="monospace" font-size="11" fill="#cfeef4">src/auth.ts · 142 lines · 4 callbacks</text>
+  <text x="60" y="220" font-family="monospace" font-size="11.5" fill="#22d3ee" font-weight="bold">[ REASON ]</text>
+  <text x="160" y="220" font-family="monospace" font-size="11" fill="#cfeef4">4 hunks + 1 test file · confidence 0.93 → accept</text>
+  <text x="60" y="242" font-family="monospace" font-size="11.5" fill="#22d3ee" font-weight="bold">[ VERIFY ]</text>
+  <text x="152" y="242" font-family="monospace" font-size="11" fill="#34d399" font-weight="bold">6 passed in 0.42s · GREEN</text>
+
+  <!-- context bar -->
+  <line x1="60" y1="258" x2="660" y2="258" stroke="#1e4a54" stroke-dasharray="4,4" stroke-width="1"/>
+  <rect x="60" y="268" width="600" height="8" rx="3" fill="#020d14" stroke="#1a3a44" stroke-width="0.5"/>
+  <rect x="60" y="268" width="210" height="8" rx="3" fill="url(#ctx)"/>
+  <text x="60" y="292" font-family="monospace" font-size="10" fill="#4a6873">anchoring context</text>
+  <text x="640" y="292" font-family="monospace" font-size="10" fill="#22d3ee" text-anchor="end">412.6M / 1.17B</text>
+
+  <!-- separator -->
+  <line x1="60" y1="304" x2="660" y2="304" stroke="#1e4a54" stroke-dasharray="4,4" stroke-width="1"/>
+
+  <!-- install heading -->
+  <text x="360" y="328" font-family="sans-serif" font-size="14" font-weight="bold" fill="#eafafe" text-anchor="middle">Install in three moves</text>
+
+  <!-- install cards -->
+  <!-- card 1 -->
+  <rect x="60" y="340" width="190" height="102" rx="8" fill="rgba(8,28,38,0.7)" stroke="#1a3a44" stroke-width="1"/>
+  <text x="155" y="358" font-family="monospace" font-size="9" fill="#22d3ee" text-anchor="middle" font-weight="bold">INSTALL</text>
+  <text x="155" y="376" font-family="sans-serif" font-size="12" font-weight="bold" fill="#eafafe" text-anchor="middle">Drop it in</text>
+  <text x="155" y="392" font-family="sans-serif" font-size="9.5" fill="#6f93a0" text-anchor="middle">one global install · Node ≥ 20</text>
+  <rect x="72" y="400" width="166" height="22" rx="4" fill="#020d14" stroke="#1a3a44" stroke-width="0.5"/>
+  <text x="85" y="415" font-family="monospace" font-size="10.5" fill="#bfeaf2">$ npm i -g aether-agent</text>
+  <circle cx="80" cy="433" r="1.5" fill="#34d399"/>
+  <text x="88" y="436" font-family="sans-serif" font-size="8" fill="#4a6873">or curl install.sh · no native deps</text>
+
+  <!-- card 2 -->
+  <rect x="265" y="340" width="190" height="102" rx="8" fill="rgba(8,28,38,0.7)" stroke="#1a3a44" stroke-width="1"/>
+  <text x="360" y="358" font-family="monospace" font-size="9" fill="#22d3ee" text-anchor="middle" font-weight="bold">HOSTED</text>
+  <text x="360" y="376" font-family="sans-serif" font-size="12" font-weight="bold" fill="#eafafe" text-anchor="middle">Run on the fleet</text>
+  <text x="360" y="392" font-family="sans-serif" font-size="9.5" fill="#6f93a0" text-anchor="middle">Claude · GPT · DeepSeek · Neo</text>
+  <rect x="277" y="400" width="166" height="22" rx="4" fill="#020d14" stroke="#1a3a44" stroke-width="0.5"/>
+  <text x="290" y="415" font-family="monospace" font-size="10.5" fill="#bfeaf2">$ aether auth login</text>
+  <circle cx="285" cy="433" r="1.5" fill="#34d399"/>
+  <text x="293" y="436" font-family="sans-serif" font-size="8" fill="#4a6873">your code stays local</text>
+
+  <!-- card 3 -->
+  <rect x="470" y="340" width="190" height="102" rx="8" fill="rgba(8,28,38,0.7)" stroke="#1a3a44" stroke-width="1"/>
+  <text x="565" y="358" font-family="monospace" font-size="9" fill="#22d3ee" text-anchor="middle" font-weight="bold">LOCAL</text>
+  <text x="565" y="376" font-family="sans-serif" font-size="12" font-weight="bold" fill="#eafafe" text-anchor="middle">Go fully offline</text>
+  <text x="565" y="392" font-family="sans-serif" font-size="9.5" fill="#6f93a0" text-anchor="middle">any Ollama model · no account</text>
+  <rect x="482" y="400" width="166" height="22" rx="4" fill="#020d14" stroke="#1a3a44" stroke-width="0.5"/>
+  <text x="495" y="415" font-family="monospace" font-size="10.5" fill="#bfeaf2">$ ollama pull qwen2.5-coder:7b</text>
+  <circle cx="490" cy="433" r="1.5" fill="#34d399"/>
+  <text x="498" y="436" font-family="sans-serif" font-size="8" fill="#4a6873">nothing leaves the machine</text>
+
+  <!-- click hint -->
+  <text x="360" y="455" font-family="monospace" font-size="9" fill="#4a6873" text-anchor="middle">🔷 click for interactive version ▸</text>
+</svg>
+</a>
+</div>
 
 ---
 
