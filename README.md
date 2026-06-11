@@ -30,15 +30,6 @@ npm i -g aether-agent     # or run once: npx aether-agent
 </div>
 ---
 
-## What it is
-
-Aether Agent reads your code, plans, edits files, runs your tests, and fixes what broke — right in your terminal, showing its work as it goes. Like Claude Code or Aider, but with two differences that matter:
-
-- **Model-agnostic.** Sign in to use Aether's hosted fleet (Claude, GPT, DeepSeek, Kimi, Gemma + the **Neo** and **Kronus** orchestrators) — or run `--local` on **Ollama** with no account and no network at all.
-- **Verification is ground truth.** When a run finishes, the host runs *your* test command itself and reads the exit code. A green result means your tests actually passed — it's never the model's word for it.
-
-Either way it's a thin client: edits apply to **your** files on **your** disk, path-guarded. Your repository is never uploaded.
-
 ## Memory & self-improving agents 🧠
 The [QOPC] System watches what you accept, revise, publish, or discard, and tunes its own prompt weights. Your AI gets measurably better the more you use it — no config, no fine-tuning.
 
@@ -137,26 +128,6 @@ aether agent --local "refactor src/auth.ts"    # local brain
 - **The server is the authority.** On the API path, usage limits, model access, and signing (chain-of-custody receipts) are enforced server-side — the client only displays what the server reports.
 
 Found a vulnerability? See [SECURITY.md](SECURITY.md).
-
-## Embed the core
-
-The CLI is a thin terminal frontend over a small, typed client. Import it and route any surface — desktop app, web chat, your own tool — through the same path.
-
-```ts
-import { createClient } from "aether-agent";
-
-const aether = createClient({ token: process.env.AETHER_TOKEN });
-
-for await (const frame of aether.chatStream("Summarize this diff", { model: "sonnet" })) {
-  if (frame.type === "delta") process.stdout.write(frame.text);
-}
-
-const { models } = await aether.catalog();   // same /models menu, one source
-```
-
-The headless-brain ↔ host event protocol is documented and open — see [docs/BRIDGE_PROTOCOL.md](docs/BRIDGE_PROTOCOL.md).
-
----
 
 ## Part of the Aether platform
 
