@@ -13,10 +13,8 @@ npm i -g aether-agent     # or run once: npx aether-agent
 </div>
 
 <div align="center">
-<a href="https://dbarr3.github.io/aether-agent/">
-<img src="assets/aether_agent_card.png" alt="Aether Agent — terminal coding session card" width="720" />
-</a>
-<p><em>Click the card for the <a href="https://dbarr3.github.io/aether-agent/">interactive version →</a></em></p>
+<a href="https://app.aethersystems.net/">
+<img src="assets/aether_agent_card.png" alt="Aether Agent — terminal coding session" width="720" /></a>
 </div>
 
 ---
