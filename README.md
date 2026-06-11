@@ -9,7 +9,6 @@
 ```bash
 npm i -g aether-agent     # or run once: npx aether-agent
 ```
-```
 </div>
 
 <div align="center">
@@ -29,7 +28,6 @@ npm i -g aether-agent     # or run once: npx aether-agent
 </table>
 
 </div>
-```
 ---
 
 ## What it is
