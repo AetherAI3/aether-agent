@@ -46,7 +46,7 @@ Both brains run through the **same** host loop, render, tools, and commands — 
 
 <div align="center">
 
-<a href="https://aethersystems.net/pricing">
+<a href="(https://aethersystems.net/)">
 <img width="800" alt="Model fleet with open per-token pricing — text and coding models, image and video generation, orchestrators" src="https://github.com/user-attachments/assets/63662c5f-2b05-4935-ac14-6a131767c8f5" />
 </a>
 
