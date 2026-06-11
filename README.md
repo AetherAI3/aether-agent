@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-06b6d4)](LICENSE) [![Node](https://img.shields.io/badge/node-%E2%89%A520-14b8a6)](https://nodejs.org) [![Release notes](https://img.shields.io/badge/release_notes-june_2026-7c3aed)](RELEASE_NOTES.md)
 
 ```bash
-npm i -g aether-agent     # or run once: npx aether-agent
+npm i -g aether-agents     # or run once: npx aether-agents
 ```
 
 [Install](#install-in-three-moves) · [Models & pricing](#models--pricing) · [Commands](#commands) · [Security](#security) · [Release notes](RELEASE_NOTES.md)
@@ -29,16 +29,16 @@ It scans, plans, edits, and runs your tests — in your repo, on your terms. Ver
 </div>
 
 ```bash
-npm i -g aether-agent                            # 01 — drop it in (Node ≥ 20)
+npm i -g aether-agents     # 01 — drop it in (Node ≥ 20)
 
-aether auth login                                # 02 — hosted: sign in once…
-aether agent "refactor src/auth.ts to async"     #      …and run on the fleet
+aether auth login          # 02 — sign in once
+aether agent               #      …terminal opens. Just start chatting.
 
-ollama pull qwen2.5-coder:7b                     # 03 — local: no account, no network
-aether agent --local "same task, offline"        #      nothing leaves the machine
+ollama pull qwen2.5-coder:7b   # 03 — or go offline: no account, no network
+aether agent --local           #      …same terminal, nothing leaves the machine
 ```
 
-Both brains run through the **same** host loop, render, tools, and commands — switching just swaps the transport. On the hosted path your code stays local and only the prompt + context you send leaves; on `--local`, nothing leaves at all. The local brain runs on **[Unlimited Context](https://github.com/DBarr3/Unlimited-Context-LLM)** — Aether's open-source (Apache-2.0) memory engine that gives any Ollama model a billion-token working memory.
+`aether agent` opens the REPL — chat with the model, slash-commands at hand, the agent edits files and runs your tests **in the same session**. Both brains run through the same host loop, render, tools, and commands — switching just swaps the transport. On the hosted path your code stays local and only the prompt + context you send leaves; on `--local`, nothing leaves at all. The local brain runs on **[Unlimited Context](https://github.com/DBarr3/Unlimited-Context-LLM)** — Aether's open-source (Apache-2.0) memory engine that gives any Ollama model a billion-token working memory.
 
 > Prefer a script? `curl -fsSL https://aethersystems.net/install.sh | sh` (macOS / Linux / WSL) · `irm https://aethersystems.net/install.ps1 | iex` (Windows PowerShell). Both just verify Node and run the npm install — no native deps, no daemon.
 
@@ -69,14 +69,15 @@ Usage is metered in **UVT** — one universal credit, one balance, shared across
 Inside the REPL, `/` commands control the whole session — type `/help` to see them in-session, or click the card above for the full reference. That includes generating images and video from the prompt line (`/photogen`, `/videogen`, `/storyboard` …) and connecting **MCP servers** with `/mcp`. From the shell:
 
 ```bash
-aether                            # interactive REPL — chat + /slash commands
-aether "explain src/router.ts"    # one-shot answer, then exit
-aether agent [flags] "<task>"     # autonomous agent: edits files + verifies
+aether agent                      # the main thing — open the REPL and chat
+aether agent --local              # same REPL on a local Ollama brain (offline)
 aether models                     # list models + orchestrators
-aether resume                     # replay / continue the last session (offline)
+aether resume                     # replay / continue the last session
 ```
 
-| `aether agent` flag | What it does |
+Flags you can set when launching the REPL (or pass with an inline task `aether agent "<task>"` for one-shot autonomous mode):
+
+| Flag | What it does |
 |---|---|
 | `--local` | Local Ollama brain instead of the hosted API. |
 | `--model <id>` | Force a model (`--model opus`, or an Ollama tag with `--local`). |
@@ -84,7 +85,6 @@ aether resume                     # replay / continue the last session (offline)
 | `--test-cmd <cmd>` | Command the verification gate runs (default `pytest -q`). |
 | `--worktree` | Fresh git worktree on an auto-named branch (isolated). |
 | `--repo <owner/name>` | Clone a GitHub repo via your own `gh`/`git` auth, work it in a worktree. |
-| `--interactive` | Pause at each stage boundary to type a steer (TTY only). |
 | `-y`, `--yes` | Auto-confirm prompts (non-interactive). |
 
 **Full reference** — every command, flag, slash command, and env var: [COMMANDS.md](COMMANDS.md). Dated patch notes: [RELEASE_NOTES.md](RELEASE_NOTES.md) · [docs/releases/](docs/releases/).

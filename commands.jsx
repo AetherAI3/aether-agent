@@ -317,7 +317,7 @@ const CARDS = [
     title: 'Drop it in',
     sub: 'one global install · Node ≥ 20',
     lines: [
-      { p: '$', cmd: 'npm i -g aether-agent' },
+      { p: '$', cmd: 'npm i -g aether-agents' },
     ],
     foot: 'or curl install.sh · no native deps',
   },

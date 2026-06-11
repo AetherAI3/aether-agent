@@ -124,7 +124,7 @@ if ($alreadyInstalled) {
   Write-Step "Installing aether-agent"
 }
 
-npm install -g aether-agent 2>&1 | ForEach-Object {
+npm install -g aether-agents 2>&1 | ForEach-Object {
   Write-Host "." -NoNewline
 }
 Write-Host ""

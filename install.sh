@@ -103,7 +103,7 @@ else
 fi
 
 # Capture npm output, show spinner dots while installing
-npm install -g aether-agent 2>&1 | while IFS= read -r line; do
+npm install -g aether-agents 2>&1 | while IFS= read -r line; do
   # print dots for progress
   printf '.' >&2
 done
@@ -113,7 +113,7 @@ if [ "${PIPESTATUS[0]}" -ne 0 ]; then
   error "Install failed. Check your network and npm permissions."
   echo ""
   info "If you see EACCES errors, try one of:"
-  info "  npm install -g aether-agent --prefix ~/.local"
+  info "  npm install -g aether-agents --prefix ~/.local"
   info "  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash"
   exit 1
 fi
