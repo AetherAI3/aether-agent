@@ -2,6 +2,7 @@
 
 Aether Agent
 Copyright 2026 Aether AI LLC
+Created by Brandon Barrante (https://github.com/DBarr3), founder of Aether AI.
 
 This product is licensed under the Apache License, Version 2.0 (the "License");
 you may not use this software except in compliance with the License. A copy of
