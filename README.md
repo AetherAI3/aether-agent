@@ -54,7 +54,7 @@ Both brains run through the **same** host loop, render, tools, and commands — 
 
 One fleet, transparent per-token pricing — Claude, GPT, DeepSeek, Kimi, and Gemma for text & code, image and video generation, plus the **Neo · Kronus · Aether-Vision** orchestrators. On `--local`, any Ollama model you've pulled. Run `aether models` to list everything from the terminal.
 
-Usage is metered in **UVT** — one universal credit, one balance, shared across this agent, the [AetherCloud desktop](https://github.com/DBarr3/aethercloud), and Aether AI on the web. Free tier to try (no card), subscription for premium models, UVT top-ups for pay-as-you-go. **Current tiers and prices: [aethersystems.net/pricing](https://aethersystems.net/pricing)**
+Usage is metered in **UVT** — one universal credit, one balance, shared across this agent, the [AetherCloud desktop](https://github.com/DBarr3/aethercloud), and Aether AI on the web. Free tier to try (no card), subscription for premium models, UVT top-ups for pay-as-you-go. **Current tiers and prices: [aethersystems.net](https://aethersystems.net/))**
 
 ## Commands
 
@@ -100,7 +100,7 @@ Found a vulnerability? See [SECURITY.md](SECURITY.md).
 
 ## Part of the Aether platform
 
-Aether Agent is the **terminal sibling** of **[AetherCloud](https://github.com/DBarr3/aethercloud)**, the agentic desktop app — same login, same UVT balance, same model fleet. Drive your repo from the command line; drive projects, workflows, and the memory Vault from the desktop. Get the desktop at **[aethersystems.net/download](https://aethersystems.net/download)** — installs in about a minute, no card needed.
+Aether Agent is the **terminal sibling** of **[AetherCloud](https://github.com/DBarr3/aethercloud)**, the agentic desktop app — same login, same UVT balance, same model fleet. Drive your repo from the command line; drive projects, workflows, and the memory Vault from the desktop. Get the desktop at **[aethersystems.net/download](https://aethersystems.net/)** — installs in about a minute, no card needed.
 
 ## License
 
