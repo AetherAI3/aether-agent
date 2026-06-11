@@ -46,7 +46,7 @@ Both brains run through the **same** host loop, render, tools, and commands — 
 
 <div align="center">
 
-<a href="(https://aethersystems.net/)">
+<a href="https://aethersystems.net/">
 <img width="800" alt="Model fleet with open per-token pricing — text and coding models, image and video generation, orchestrators" src="https://github.com/user-attachments/assets/63662c5f-2b05-4935-ac14-6a131767c8f5" />
 </a>
 
@@ -54,7 +54,7 @@ Both brains run through the **same** host loop, render, tools, and commands — 
 
 One fleet, transparent per-token pricing — Claude, GPT, DeepSeek, Kimi, and Gemma for text & code, image and video generation, plus the **Neo · Kronus · Aether-Vision** orchestrators. On `--local`, any Ollama model you've pulled. Run `aether models` to list everything from the terminal.
 
-Usage is metered in **UVT** — one universal credit, one balance, shared across this agent, the [AetherCloud desktop](https://github.com/DBarr3/aethercloud), and Aether AI on the web. Free tier to try (no card), subscription for premium models, UVT top-ups for pay-as-you-go. **Current tiers and prices: [aethersystems.net](https://aethersystems.net/))**
+Usage is metered in **UVT** — one universal credit, one balance, shared across this agent, the [AetherCloud desktop](https://github.com/DBarr3/aethercloud), and Aether AI on the web. Free tier to try (no card), subscription for premium models, UVT top-ups for pay-as-you-go. **Current tiers and prices: [aethersystems.net](https://aethersystems.net/)**
 
 ## Commands
 
