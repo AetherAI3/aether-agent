@@ -9,17 +9,13 @@
 ```bash
 npm i -g aether-agent     # or run once: npx aether-agent
 ```
-
-</div>
-
 <div align="center">
-<a href="https://app.aethersystems.net/"><img src="assets/card_main.png" alt="Aether Agent" width="720" /></a>
-  
-</div>
+
 <img width="764" height="255" alt="image" src="https://github.com/user-attachments/assets/fabfd1ac-ca6a-43a4-86cd-c63bb80317b0" />
 <img width="793" height="424" alt="image" src="https://github.com/user-attachments/assets/63662c5f-2b05-4935-ac14-6a131767c8f5" />
 <img width="794" height="457" alt="image" src="https://github.com/user-attachments/assets/52ca6de0-0958-4237-9dfd-776c9e55822d" />
 
+<div align="center">
 
 ---
 
