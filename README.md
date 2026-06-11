@@ -41,8 +41,8 @@ Aether Agent reads your code, plans, edits files, runs your tests, and fixes wha
 
 Either way it's a thin client: edits apply to **your** files on **your** disk, path-guarded. Your repository is never uploaded.
 
-## Memory & self-improving agents 🧠 QOPC
-The Quantum Optimized Prompt Circuit watches what you accept, revise, publish, or discard, and tunes its own prompt weights. Your AI gets measurably better the more you use it — no config, no fine-tuning.
+## Memory & self-improving agents 🧠
+The [QOPC] System watches what you accept, revise, publish, or discard, and tunes its own prompt weights. Your AI gets measurably better the more you use it — no config, no fine-tuning.
 
 ---
 
