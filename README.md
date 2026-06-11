@@ -9,14 +9,26 @@
 ```bash
 npm i -g aether-agent     # or run once: npx aether-agent
 ```
-<div align="center">
 
-<img width="601" height="436" alt="image" src="https://github.com/user-attachments/assets/f7a71cbb-6be2-41ea-b2a4-35c7c0d889d6" />
-<img width="764" height="255" alt="image" src="https://github.com/user-attachments/assets/fabfd1ac-ca6a-43a4-86cd-c63bb80317b0" />
-<img width="793" height="424" alt="image" src="https://github.com/user-attachments/assets/63662c5f-2b05-4935-ac14-6a131767c8f5" />
-<img width="794" height="457" alt="image" src="https://github.com/user-attachments/assets/52ca6de0-0958-4237-9dfd-776c9e55822d" />
+</div>
 
 <div align="center">
+
+<a href="https://app.aethersystems.net/">
+<img width="720" alt="Aether Agent — terminal coding session" src="https://github.com/user-attachments/assets/f7a71cbb-6be2-41ea-b2a4-35c7c0d889d6" />
+</a>
+
+<br><br>
+
+<table>
+<tr align="center">
+<td><img width="260" alt="Install" src="https://github.com/user-attachments/assets/fabfd1ac-ca6a-43a4-86cd-c63bb80317b0" /></td>
+<td><img width="260" alt="Model fleet" src="https://github.com/user-attachments/assets/63662c5f-2b05-4935-ac14-6a131767c8f5" /></td>
+<td><img width="260" alt="Slash commands" src="https://github.com/user-attachments/assets/52ca6de0-0958-4237-9dfd-776c9e55822d" /></td>
+</tr>
+</table>
+
+</div>
 
 ---
 
