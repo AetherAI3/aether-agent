@@ -38,7 +38,7 @@ ollama pull qwen2.5-coder:7b                     # 03 — local: no account, no 
 aether agent --local "same task, offline"        #      nothing leaves the machine
 ```
 
-Both brains run through the **same** host loop, render, tools, and commands — switching just swaps the transport. On the hosted path your code stays local and only the prompt + context you send leaves; on `--local`, nothing leaves at all.
+Both brains run through the **same** host loop, render, tools, and commands — switching just swaps the transport. On the hosted path your code stays local and only the prompt + context you send leaves; on `--local`, nothing leaves at all. The local brain runs on **[Unlimited Context](https://github.com/DBarr3/Unlimited-Context-LLM)** — Aether's open-source (Apache-2.0) memory engine that gives any Ollama model a billion-token working memory.
 
 > Prefer a script? `curl -fsSL https://aethersystems.net/install.sh | sh` (macOS / Linux / WSL) · `irm https://aethersystems.net/install.ps1 | iex` (Windows PowerShell). Both just verify Node and run the npm install — no native deps, no daemon.
 
@@ -66,7 +66,7 @@ Usage is metered in **UVT** — one universal credit, one balance, shared across
 
 </div>
 
-Inside the REPL, `/` commands control the whole session — type `/help` to see them in-session, or click the card above for the full reference. From the shell:
+Inside the REPL, `/` commands control the whole session — type `/help` to see them in-session, or click the card above for the full reference. That includes generating images and video from the prompt line (`/photogen`, `/videogen`, `/storyboard` …) and connecting **MCP servers** with `/mcp`. From the shell:
 
 ```bash
 aether                            # interactive REPL — chat + /slash commands
