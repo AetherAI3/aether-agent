@@ -13,8 +13,17 @@ npm i -g aether-agent     # or run once: npx aether-agent
 </div>
 
 <div align="center">
-<a href="https://app.aethersystems.net/">
-<img src="assets/aether_agent_card.png" alt="Aether Agent — terminal coding session" width="720" /></a>
+<a href="https://app.aethersystems.net/"><img src="assets/card_main.png" alt="Aether Agent" width="720" /></a>
+
+<details open>
+<summary><b>▸ Model fleet &amp; pricing</b></summary>
+<br><img src="assets/card_models.png" alt="Models" width="720" />
+</details>
+
+<details open>
+<summary><b>▸ Slash commands</b></summary>
+<br><img src="assets/card_commands.png" alt="Commands" width="720" />
+</details>
 </div>
 
 ---
