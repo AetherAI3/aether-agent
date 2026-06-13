@@ -6,6 +6,7 @@
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-06b6d4)](LICENSE) [![Node](https://img.shields.io/badge/node-%E2%89%A520-14b8a6)](https://nodejs.org) [![Release notes](https://img.shields.io/badge/release_notes-june_2026-7c3aed)](RELEASE_NOTES.md)
 
+**Aether Agent is in **BETA** shipping updates as fast as possible
 ```bash
 npm i -g aether-agents     # or run once: npx aether-agents
 ```
