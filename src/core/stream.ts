@@ -54,7 +54,15 @@ export type StreamFrame =
       triggers?: string[];
       action?: string;
       category?: string;
-    };
+    }
+  // workflow swarm frames (emitted by WorkflowEngine in AETHER-CLOUD)
+  | { type: "workflow_start"; workflow_id: string; phases: Array<{ n: number; type: string; agents: number }>; total_agents: number }
+  | { type: "phase_start"; phase_n: number; phase_type: string; agent_count: number }
+  | { type: "phase_done"; phase_n: number; artifact_summary: string }
+  | { type: "agent_spawn"; agent_id: string; phase_n: number; brief: string }
+  | { type: "agent_progress"; agent_id: string; delta: string }
+  | { type: "agent_done"; agent_id: string; phase_n: number; summary: string }
+  | { type: "workflow_done"; synthesis: string; total_phases: number; total_agents: number };
 
 /** Normalize a parsed JSON object (snake_case wire → camelCase) into a frame. */
 export function normalizeFrame(obj: Record<string, unknown>): StreamFrame | null {
@@ -150,6 +158,53 @@ export function normalizeFrame(obj: Record<string, unknown>): StreamFrame | null
         category: strOrUndef(obj["category"]),
       };
     }
+    case "workflow_start":
+      return {
+        type: "workflow_start",
+        workflow_id: String(obj["workflow_id"] ?? ""),
+        phases: (Array.isArray(obj["phases"]) ? obj["phases"] : []) as Array<{ n: number; type: string; agents: number }>,
+        total_agents: Number(obj["total_agents"] ?? 0),
+      };
+    case "phase_start":
+      return {
+        type: "phase_start",
+        phase_n: Number(obj["phase_n"] ?? 0),
+        phase_type: String(obj["phase_type"] ?? ""),
+        agent_count: Number(obj["agent_count"] ?? 0),
+      };
+    case "phase_done":
+      return {
+        type: "phase_done",
+        phase_n: Number(obj["phase_n"] ?? 0),
+        artifact_summary: String(obj["artifact_summary"] ?? ""),
+      };
+    case "agent_spawn":
+      return {
+        type: "agent_spawn",
+        agent_id: String(obj["agent_id"] ?? ""),
+        phase_n: Number(obj["phase_n"] ?? 0),
+        brief: String(obj["brief"] ?? ""),
+      };
+    case "agent_progress":
+      return {
+        type: "agent_progress",
+        agent_id: String(obj["agent_id"] ?? ""),
+        delta: String(obj["delta"] ?? ""),
+      };
+    case "agent_done":
+      return {
+        type: "agent_done",
+        agent_id: String(obj["agent_id"] ?? ""),
+        phase_n: Number(obj["phase_n"] ?? 0),
+        summary: String(obj["summary"] ?? ""),
+      };
+    case "workflow_done":
+      return {
+        type: "workflow_done",
+        synthesis: String(obj["synthesis"] ?? ""),
+        total_phases: Number(obj["total_phases"] ?? 0),
+        total_agents: Number(obj["total_agents"] ?? 0),
+      };
     default:
       return null; // unknown type — ignore per contract
   }

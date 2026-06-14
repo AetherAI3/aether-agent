@@ -28,6 +28,9 @@ import { loadHistory, appendHistory, historyPath, historyEnabled } from "../core
 import { VERSION } from "../version.js";
 import { getRegistry } from "../core/context_registry.js";
 import { renderHud, timerLive } from "../core/hud.js";
+import { createViewerState, applyViewerFrame, moveCursor, renderCiTree } from "../ui/workflow_viewer.js";
+import type { WorkflowViewerState } from "../ui/workflow_viewer.js";
+import type { StreamFrame } from "../core/stream.js";
 
 // Key decoding lives in ui/keys.ts (shared with pickers/viewers); re-exported
 // here so existing imports keep working.
@@ -40,7 +43,7 @@ interface ChatJsonResponse {
 }
 
 /** Run a single coding turn end to end. Exported for `run.ts` (orchestrators). */
-export async function runTurn(ctx: AppContext, prompt: string, signal?: AbortSignal): Promise<void> {
+export async function runTurn(ctx: AppContext, prompt: string, signal?: AbortSignal, onFrame?: (f: StreamFrame) => void): Promise<void> {
   const req = buildChatRequest({
     prompt,
     model: ctx.flags.model ?? ctx.cfg.defaultModel,
@@ -62,6 +65,7 @@ export async function runTurn(ctx: AppContext, prompt: string, signal?: AbortSig
       // The server signs each turn and returns it; persist the signed receipt
       // locally (best-effort, never breaks the chat).
       if (frame.type === "custody") appendCustody(frame.custody);
+      onFrame?.(frame);
       renderer.frame(frame);
     }
   } catch (err) {
@@ -227,6 +231,9 @@ async function repl(ctx: AppContext): Promise<number> {
   let turnAbort: AbortController | null = null; // live while a cloud turn streams
   let ctrlCArmedAt = 0; // double-press window for quitting
   const CTRL_C_WINDOW_MS = 1500;
+  // Workflow swarm viewer — updated as workflow_* frames arrive during a turn.
+  let viewerState: WorkflowViewerState = createViewerState();
+  let viewerOpen = false;
   return await new Promise<number>((resolve) => {
     const onResize = (): void => repaint();
     const cleanup = (): void => {
@@ -252,9 +259,36 @@ async function repl(ctx: AppContext): Promise<number> {
       const built = buildPromptContext(text, steering, btwNotes);
       steering = built.steering;
       btwNotes.length = 0;
+      viewerState = createViewerState();
+      viewerOpen = false;
       turnAbort = new AbortController();
       try {
-        await runTurn(ctx, built.prompt, turnAbort.signal);
+        await runTurn(ctx, built.prompt, turnAbort.signal, (f) => {
+          switch (f.type) {
+            case "workflow_start":
+              viewerState = applyViewerFrame(viewerState, { type: "workflow_start", workflowId: f.workflow_id, phases: f.phases, totalAgents: f.total_agents });
+              break;
+            case "phase_start":
+              viewerState = applyViewerFrame(viewerState, { type: "phase_start", phaseN: f.phase_n, phaseType: f.phase_type, agentCount: f.agent_count });
+              break;
+            case "phase_done":
+              viewerState = applyViewerFrame(viewerState, { type: "phase_done", phaseN: f.phase_n, artifactSummary: f.artifact_summary });
+              break;
+            case "agent_spawn":
+              viewerState = applyViewerFrame(viewerState, { type: "agent_spawn", agentId: f.agent_id, phaseN: f.phase_n, brief: f.brief });
+              break;
+            case "agent_progress":
+              viewerState = applyViewerFrame(viewerState, { type: "agent_progress", agentId: f.agent_id, delta: f.delta });
+              break;
+            case "agent_done":
+              viewerState = applyViewerFrame(viewerState, { type: "agent_done", agentId: f.agent_id, phaseN: f.phase_n, summary: f.summary });
+              break;
+            case "workflow_done":
+              viewerState = applyViewerFrame(viewerState, { type: "workflow_done", synthesis: f.synthesis, totalPhases: f.total_phases, totalAgents: f.total_agents });
+              viewerOpen = false;
+              break;
+          }
+        });
         return false;
       } catch (err) {
         if (isAbortError(err)) {
@@ -516,12 +550,31 @@ async function repl(ctx: AppContext): Promise<number> {
           repaint();
           return;
         case "up":
-          buf.historyUp();
-          repaint();
+          if (viewerOpen) {
+            viewerState = moveCursor(viewerState, -1);
+            process.stdout.write("\r\x1b[2K");
+            process.stdout.write(renderCiTree(viewerState) + "\n");
+            repaint();
+          } else {
+            buf.historyUp();
+            repaint();
+          }
           return;
         case "down":
-          buf.historyDown();
-          repaint();
+          if (viewerState.visible && !viewerOpen) {
+            viewerOpen = true;
+            process.stdout.write("\r\x1b[2K");
+            process.stdout.write(renderCiTree(viewerState) + "\n");
+            repaint();
+          } else if (viewerOpen) {
+            viewerState = moveCursor(viewerState, 1);
+            process.stdout.write("\r\x1b[2K");
+            process.stdout.write(renderCiTree(viewerState) + "\n");
+            repaint();
+          } else {
+            buf.historyDown();
+            repaint();
+          }
           return;
         case "interrupt":
           onCtrlC();
@@ -533,7 +586,12 @@ async function repl(ctx: AppContext): Promise<number> {
           void onSubmit().catch((err) => printError(err));
           return;
         case "escape":
-          return; // ignore — picker handles its own escape
+          if (viewerOpen) {
+            viewerOpen = false;
+            process.stdout.write("\r\x1b[2K");
+            repaint();
+          }
+          return;
         default:
           return; // ignore
       }
