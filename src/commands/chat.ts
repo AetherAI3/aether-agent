@@ -264,13 +264,29 @@ async function repl(ctx: AppContext): Promise<number> {
       turnAbort = new AbortController();
       try {
         await runTurn(ctx, built.prompt, turnAbort.signal, (f) => {
-          if (
-            f.type === "workflow_start" || f.type === "phase_start" ||
-            f.type === "phase_done" || f.type === "agent_spawn" ||
-            f.type === "agent_progress" || f.type === "agent_done" ||
-            f.type === "workflow_done"
-          ) {
-            viewerState = applyViewerFrame(viewerState, f as Parameters<typeof applyViewerFrame>[1]);
+          switch (f.type) {
+            case "workflow_start":
+              viewerState = applyViewerFrame(viewerState, { type: "workflow_start", workflowId: f.workflow_id, phases: f.phases, totalAgents: f.total_agents });
+              break;
+            case "phase_start":
+              viewerState = applyViewerFrame(viewerState, { type: "phase_start", phaseN: f.phase_n, phaseType: f.phase_type, agentCount: f.agent_count });
+              break;
+            case "phase_done":
+              viewerState = applyViewerFrame(viewerState, { type: "phase_done", phaseN: f.phase_n, artifactSummary: f.artifact_summary });
+              break;
+            case "agent_spawn":
+              viewerState = applyViewerFrame(viewerState, { type: "agent_spawn", agentId: f.agent_id, phaseN: f.phase_n, brief: f.brief });
+              break;
+            case "agent_progress":
+              viewerState = applyViewerFrame(viewerState, { type: "agent_progress", agentId: f.agent_id, delta: f.delta });
+              break;
+            case "agent_done":
+              viewerState = applyViewerFrame(viewerState, { type: "agent_done", agentId: f.agent_id, phaseN: f.phase_n, summary: f.summary });
+              break;
+            case "workflow_done":
+              viewerState = applyViewerFrame(viewerState, { type: "workflow_done", synthesis: f.synthesis, totalPhases: f.total_phases, totalAgents: f.total_agents });
+              viewerOpen = false;
+              break;
           }
         });
         return false;
@@ -534,7 +550,7 @@ async function repl(ctx: AppContext): Promise<number> {
           repaint();
           return;
         case "up":
-          if (viewerOpen && !busy) {
+          if (viewerOpen) {
             viewerState = moveCursor(viewerState, -1);
             process.stdout.write("\r\x1b[2K");
             process.stdout.write(renderCiTree(viewerState) + "\n");
@@ -545,12 +561,12 @@ async function repl(ctx: AppContext): Promise<number> {
           }
           return;
         case "down":
-          if (viewerState.visible && !viewerOpen && !busy) {
+          if (viewerState.visible && !viewerOpen) {
             viewerOpen = true;
             process.stdout.write("\r\x1b[2K");
             process.stdout.write(renderCiTree(viewerState) + "\n");
             repaint();
-          } else if (viewerOpen && !busy) {
+          } else if (viewerOpen) {
             viewerState = moveCursor(viewerState, 1);
             process.stdout.write("\r\x1b[2K");
             process.stdout.write(renderCiTree(viewerState) + "\n");
