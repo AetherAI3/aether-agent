@@ -8,13 +8,10 @@ import type { TokenStore } from "./auth.js";
 
 // Aether API routes.
 export const CHAT_STREAM_PATH = "/agent/chat/stream"; // standard chat SSE
-export const PROJECT_STREAM_PATH = "/project/stream"; // orchestrator; + "/{id}"
-export const MCP_CHAT_PATH = "/agent/mcp-chat"; // custom/MCP agent (Accept: SSE)
 export const CHAT_PATH = "/agent/chat"; // non-streaming fail-soft fallback
 // Auth (session_token via username/password; Bearer on all authed calls).
 export const LOGIN_PATH = "/auth/login";
 export const LOGOUT_PATH = "/auth/logout";
-export const VERIFY_PATH = "/auth/verify";
 export const REFRESH_PATH = "/auth/refresh";
 // OAuth / account platform: `aether auth login` opens this to sign in and mint
 // or copy a CLI API token. Override with AETHER_LOGIN_URL.
@@ -23,8 +20,6 @@ export const PLATFORM_URL =
 // Device Authorization Grant (RFC 8628) — `aether auth login` default flow.
 export const DEVICE_CODE_PATH = "/auth/device/code"; // CLI requests a user_code
 export const DEVICE_TOKEN_PATH = "/auth/device/token"; // CLI polls until approved
-// API-key management (locked contract): GET/POST/DELETE.
-export const API_KEYS_PATH = "/account/api-keys";
 // GitHub Connect (web-canonical GitHub App; Bearer-authed). connect returns an
 // install_url the user approves in the browser; status is polled until linked.
 // Backend mounts these at root (api_server include_router, no prefix).
@@ -34,9 +29,8 @@ export const GITHUB_DISCONNECT_PATH = "/account/github/disconnect";
 // request audit (chain of custody) (integrity id = commitment_hash).
 export const AUDIT_TRAIL_PATH = "/audit/trail/live"; // entries carry commitment_hash
 export const EXPORT_PROOF_PATH = "/audit/export-proof"; // {entry_ids} -> proof package
-// Note — no REST model registry route exists yet on the the Aether API.
+// Note — no REST model registry route exists yet on the Aether API.
 export const MODELS_PATH = "/models";
-export const AGENTS_PATH = "/agents";
 
 export class ApiClient {
   constructor(
