@@ -17,6 +17,11 @@ import { renderSplash } from "../ui/splash.js";
 import { promptPrefix } from "../ui/prompt.js";
 import { InputBuffer } from "../ui/input_line.js";
 import { VERSION } from "../version.js";
+import { chooseBackend, type BackendPath } from "../core/backend.js";
+import { OllamaBrain } from "../core/brain_ollama.js";
+import { ToolExecutor } from "../core/tool_executor.js";
+import { HostRenderer } from "../ui/host_render.js";
+import type { TaskCommand } from "../core/brain.js";
 
 // the Aether API ChatResponse: { response, commitment_hash, verified, threat_level }.
 interface ChatJsonResponse {
@@ -24,8 +29,30 @@ interface ChatJsonResponse {
   commitment_hash?: string;
 }
 
+/**
+ * Resolve which brain runs this turn. AETHER_BACKEND (env) wins, then the saved
+ * config, then 'auto'. 'auto' is local-first: cloud when signed in, else local
+ * Ollama. Exported so the REPL banner can show the same answer the turn uses.
+ */
+export async function resolveBackend(ctx: AppContext): Promise<BackendPath> {
+  const pref = (process.env["AETHER_BACKEND"] || ctx.cfg.backend || "auto").trim();
+  const authed = Boolean(await ctx.tokens.get());
+  return chooseBackend(pref, authed);
+}
+
 /** Run a single coding turn end to end. Exported for `run.ts` (orchestrators). */
 export async function runTurn(ctx: AppContext, prompt: string): Promise<void> {
+  const backend = await resolveBackend(ctx);
+  if (backend === "local") {
+    await runLocalTurn(ctx, prompt);
+    return;
+  }
+  await runCloudTurn(ctx, prompt);
+}
+
+/** The cloud path — build an envelope, POST to the universal stream, render.
+ * Unchanged behavior; only extracted so runTurn can fork local vs cloud. */
+async function runCloudTurn(ctx: AppContext, prompt: string): Promise<void> {
   const req = buildChatRequest({
     prompt,
     model: ctx.flags.model ?? ctx.cfg.defaultModel,
@@ -53,6 +80,38 @@ export async function runTurn(ctx: AppContext, prompt: string): Promise<void> {
       return;
     }
     throw err;
+  }
+}
+
+/**
+ * The local path — drive an OllamaBrain through the SAME event/tool-exec loop
+ * the code command uses: the brain DECIDES (emits events), the host EXECUTES
+ * each tool_call (one path-guarded ToolExecutor) and replies, the HostRenderer
+ * draws every event. Identical UX to cloud, just an offline brain.
+ */
+async function runLocalTurn(ctx: AppContext, prompt: string): Promise<void> {
+  const cwd = ctx.flags.cwd;
+  const brain = new OllamaBrain(ctx.flags.model ? { model: ctx.flags.model } : {});
+  const exec = new ToolExecutor(cwd);
+  const renderer = new HostRenderer({ poolGb: 5, json: ctx.flags.json });
+  const task: TaskCommand = {
+    type: "task",
+    text: prompt,
+    cwd,
+    poolGb: 5,
+    ...(ctx.flags.model ? { model: ctx.flags.model } : {}),
+  };
+  try {
+    for await (const ev of brain.run(task)) {
+      renderer.event(ev);
+      if (ev.type === "tool_call") {
+        // executeAsync so the two web tools (web_search/web_fetch) work too.
+        const result = await exec.executeAsync(ev.name, ev.args);
+        brain.sendToolResult(ev.id, result);
+      }
+    }
+  } finally {
+    brain.close();
   }
 }
 
@@ -143,6 +202,10 @@ async function repl(ctx: AppContext): Promise<number> {
   process.stdout.write(
     renderSplash({ version: VERSION, model: model || "auto", effort: "default" }) + "\n\n",
   );
+  // One-line dim banner: which brain serves turns this session (local-first).
+  const backend = await resolveBackend(ctx);
+  const where = backend === "local" ? "local Ollama (offline)" : "cloud (Aether API)";
+  process.stdout.write(theme.dim(`backend: ${where}`) + "\n");
   process.stdout.write("Type a prompt, or /help for commands. /exit to quit.\n\n");
   if (!process.stdin.isTTY) return replLines(ctx);
   void primeCatalog(ctx); // non-blocking warm; first /models is then instant

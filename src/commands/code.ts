@@ -30,6 +30,7 @@ import { loadSession, replayLines } from "../core/session_resume.js";
 import { resumeHint } from "./resume.js";
 import { createWorktree, mergeHint, type Worktree } from "../core/worktree.js";
 import { parseRepoSpec, ensureLocalClone, prCreateHint, type RepoSpec } from "../core/repo.js";
+import { chooseBackend } from "../core/backend.js";
 
 export interface CodeOpts {
   /** Use the local Python/Ollama brain instead of the cloud API. */
@@ -147,9 +148,18 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   }
   const cwd = worktree ? worktree.dir : ctx.flags.cwd;
   const poolGb = opts.pool > 0 ? opts.pool : 5;
-  const brainKind: "local" | "cloud" = opts.local ? "local" : "cloud";
+  // --local forces the local brain. Otherwise honor the backend preference
+  // (AETHER_BACKEND env > config.backend > 'auto'); 'auto' is local-first, so an
+  // unauthed user gets the local brain and a signed-in user keeps the cloud default.
+  let goLocal = opts.local;
+  if (!opts.local) {
+    const pref = (process.env["AETHER_BACKEND"] || ctx.cfg.backend || "auto").trim();
+    const authed = Boolean(await ctx.tokens.get());
+    goLocal = chooseBackend(pref, authed) === "local";
+  }
+  const brainKind: "local" | "cloud" = goLocal ? "local" : "cloud";
 
-  const brain: Brain = opts.local ? new LocalBrain() : new CloudBrain(ctx.api);
+  const brain: Brain = goLocal ? new LocalBrain() : new CloudBrain(ctx.api);
   const exec = new ToolExecutor(cwd, opts.testCmd);
   const log = opts.noLog
     ? null

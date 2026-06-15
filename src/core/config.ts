@@ -15,6 +15,9 @@ export const DEFAULT_CONFIG: AetherConfig = {
   permissionMode: "ask",
   autoApply: false,
   telemetry: true,
+  // Local-first: 'auto' runs the cloud brain when signed in, else local Ollama.
+  // A config.json written before this key existed merges to this default.
+  backend: "auto",
 };
 
 export function configDir(): string {
