@@ -31,6 +31,7 @@
     "dev": "node --experimental-strip-types src/main.ts",
     "start": "node dist/src/main.js",
     "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
+    "smoke": "npm run build && node -e \"import('./dist/src/core/smoke.js').then(m=>m.smokeMain()).then(c=>process.exit(c)).catch(e=>{console.error(e);process.exit(1)})\"",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
   },
   "keywords": [
