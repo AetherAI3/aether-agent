@@ -303,7 +303,10 @@ export async function hostLoop(
       switch (ev.type) {
         case "tool_call": {
           // The host owns execution + the path-guard; reply with the result.
-          const result = exec.execute(ev.name, ev.args);
+          // executeAsync delegates the 6 sync tools to execute() unchanged and
+          // awaits the 2 async web tools (web_search/web_fetch) so they run on
+          // this path too — otherwise execute() returns "[tool … is async]".
+          const result = await exec.executeAsync(ev.name, ev.args);
           onToolResult?.(ev.id, result);
           brain.sendToolResult(ev.id, result);
           break;

@@ -139,6 +139,39 @@ test("webFetch refuses a public host that resolves to loopback (rebind defense)"
   assert.match(out, /\[web_fetch refused:/);
 });
 
+// A public page that 30x-redirects to an internal address must be REFUSED.
+// redirect:"follow" would silently fetch the metadata/loopback target after the
+// pre-flight guard passed the original host (TOCTOU). The manual-redirect guard
+// re-checks each Location, so the loopback hop is blocked.
+test("webFetch refuses a redirect that points at an internal address", async () => {
+  const out = await webFetch("https://public.example/start", 8000, {
+    resolve: async () => ["93.184.216.34"],
+    fetchTransport: async (u: string) => {
+      if (u === "https://public.example/start") {
+        return new Response(null, { status: 302, headers: { location: "http://169.254.169.254/latest/meta-data/" } });
+      }
+      // Should never be reached — the guard must refuse the redirect first.
+      return new Response("SECRET METADATA", { status: 200 });
+    },
+  });
+  assert.match(out, /\[web_fetch (refused|error):/);
+  assert.doesNotMatch(out, /SECRET METADATA/, "internal target was never fetched");
+});
+
+// A redirect chain to another PUBLIC host is followed and its body returned.
+test("webFetch follows a redirect to another public host", async () => {
+  const out = await webFetch("https://a.example/", 8000, {
+    resolve: async () => ["93.184.216.34"],
+    fetchTransport: async (u: string) => {
+      if (u === "https://a.example/") {
+        return new Response(null, { status: 301, headers: { location: "https://b.example/final" } });
+      }
+      return new Response("<h1>Final Public Page</h1>", { status: 200 });
+    },
+  });
+  assert.match(out, /Final Public Page/);
+});
+
 // web_search happy path: guard passes for the DDG host (public), stub the bytes.
 test("webSearch happy path: parses DDG-shaped results via injected transport", async () => {
   const html = `<a class="result-link" href="https://example.com/a">First Result</a>

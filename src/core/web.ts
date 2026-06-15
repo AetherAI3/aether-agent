@@ -27,12 +27,15 @@ export interface SafeUrlResult {
 /**
  * Test-only injection seams. `resolve` overrides getaddrinfo so a test can let a
  * (public) hostname pass the SSRF guard deterministically; `fetchImpl` overrides
- * the transport so a test can return stub bytes WITHOUT weakening the guard or
- * opening a real socket. Production passes neither and uses node:dns + fetch.
+ * the WHOLE transport so a test can return stub bytes WITHOUT weakening the guard
+ * or opening a real socket; `fetchTransport` overrides only the per-hop fetch so a
+ * test can drive the manual-redirect guard (return a 30x Response with a Location)
+ * deterministically. Production passes none and uses node:dns + global fetch.
  */
 export interface FetchDeps {
   readonly resolve?: (host: string) => Promise<readonly string[]>;
   readonly fetchImpl?: (url: string) => Promise<string>;
+  readonly fetchTransport?: (url: string) => Promise<Response>;
 }
 
 // --- IP classification ------------------------------------------------------
@@ -223,17 +226,50 @@ export function parseDuckDuckGoLite(html: string, limit: number = 5): string {
   return lines.join("\n\n");
 }
 
+const MAX_REDIRECTS = 5;
+
+/**
+ * Resolve redirects MANUALLY, re-running the SSRF guard on every hop's Location.
+ * `redirect:"follow"` would let a public page 30x-redirect to an internal
+ * address (169.254.169.254 metadata, 127.0.0.1, …) AFTER the pre-flight guard
+ * already passed the original host — a TOCTOU bypass. We refuse that by guarding
+ * each Location before following it. Returns the final Response (2xx/4xx body).
+ */
+async function fetchGuardedRedirects(
+  url: string,
+  signal: AbortSignal,
+  deps?: FetchDeps,
+): Promise<Response> {
+  let current = url;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+    const res = deps?.fetchTransport
+      ? await deps.fetchTransport(current)
+      : await fetch(current, {
+          method: "GET",
+          headers: { "user-agent": USER_AGENT, accept: "text/html,*/*" },
+          redirect: "manual",
+          signal,
+        });
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get("location");
+      if (!loc) return res; // redirect with no target — treat as terminal
+      const next = new URL(loc, current).toString();
+      const blocked = await guard(next, deps);
+      if (blocked) throw new Error(`refused redirect to ${blocked}`);
+      current = next;
+      continue;
+    }
+    return res;
+  }
+  throw new Error(`too many redirects (>${MAX_REDIRECTS})`);
+}
+
 // --- fetch with byte cap + timeout ------------------------------------------
-async function fetchCapped(url: string): Promise<string> {
+async function fetchCapped(url: string, deps?: FetchDeps): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
-      method: "GET",
-      headers: { "user-agent": USER_AGENT, accept: "text/html,*/*" },
-      redirect: "follow",
-      signal: controller.signal,
-    });
+    const res = await fetchGuardedRedirects(url, controller.signal, deps);
     if (!res.ok && !res.body) {
       return `[http ${res.status}]`;
     }
@@ -271,7 +307,7 @@ export async function webFetch(
   try {
     const blocked = await guard(url, deps);
     if (blocked) return `[web_fetch refused: ${blocked}]`;
-    const html = deps?.fetchImpl ? await deps.fetchImpl(url) : await fetchCapped(url);
+    const html = deps?.fetchImpl ? await deps.fetchImpl(url) : await fetchCapped(url, deps);
     return htmlToText(html, maxChars);
   } catch (err) {
     return `[web_fetch error: ${err instanceof Error ? err.message : String(err)}]`;
@@ -290,7 +326,7 @@ export async function webSearch(
     const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(q)}`;
     const blocked = await guard(url, deps);
     if (blocked) return `[web_search refused: ${blocked}]`;
-    const html = deps?.fetchImpl ? await deps.fetchImpl(url) : await fetchCapped(url);
+    const html = deps?.fetchImpl ? await deps.fetchImpl(url) : await fetchCapped(url, deps);
     return parseDuckDuckGoLite(html, limit);
   } catch (err) {
     return `[web_search error: ${err instanceof Error ? err.message : String(err)}]`;
