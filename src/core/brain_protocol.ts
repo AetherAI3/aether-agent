@@ -11,7 +11,7 @@
 // Bump on ANY breaking change to the message shapes below. The Python mirror
 // (aether_agent/protocol.py) MUST carry the same number; the conformance fixture
 // (test/fixtures/bridge_conformance.json) pins both. Canonical: docs/CONTRACTS.md.
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 // --- brain -> host events --------------------------------------------------
 export type BrainEvent =
@@ -51,6 +51,8 @@ export const TOOLS = [
   "run_tests",
   "repo_search",
   "git_commit",
+  "web_search",
+  "web_fetch",
 ] as const;
 export type ToolName = (typeof TOOLS)[number];
 
