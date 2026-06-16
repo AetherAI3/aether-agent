@@ -21,6 +21,16 @@ test("parseRepoSpec rejects junk", () => {
   assert.throws(() => parseRepoSpec(""), /expected owner\/name/);
 });
 
+test("parseRepoSpec rejects argument-injection segments (leading dash, '.'/'..')", () => {
+  assert.throws(() => parseRepoSpec("-x/y"), /may not start with '-'/);
+  assert.throws(() => parseRepoSpec("x/-y"), /may not start with '-'/);
+  assert.throws(() => parseRepoSpec("../y"), /'\.'\/'\.\.'/);
+  assert.throws(() => parseRepoSpec("a/.."), /'\.'\/'\.\.'/);
+  assert.throws(() => parseRepoSpec("./y"), /'\.'\/'\.\.'/);
+  // Legit names containing dots/dashes (not leading) still parse.
+  assert.equal(parseRepoSpec("my.org/my-repo.js").full, "my.org/my-repo.js");
+});
+
 test("cloneArgs uses gh when available, git otherwise", () => {
   const s = parseRepoSpec("octocat/hello-world");
   assert.deepEqual(cloneArgs(s, "/d", true), { cmd: "gh", args: ["repo", "clone", "octocat/hello-world", "/d"] });

@@ -1,4 +1,4 @@
-// Shared types for the Aether Code CLI.
+// Shared types for the Aether Agent CLI.
 // The CLI is a thin front door: it never enforces UVT or signs anything.
 // Aether's servers do enforcement and signing. The client only
 // builds requests, streams frames, renders, and applies edits locally.
@@ -13,9 +13,9 @@ export interface AetherConfig {
   baseUrl: string;
   /** Default model id when --model is not passed (server smart-routes if empty). */
   defaultModel: string;
-  /** Edit/command gating. Mirrors Aether Code desktop "skip-perms" setting. */
+  /** Edit/command gating. Mirrors Aether Agent desktop "skip-perms" setting. */
   permissionMode: PermissionMode;
-  /** Auto-apply streamed edits without per-edit prompt. Mirrors Aether Code. */
+  /** Auto-apply streamed edits without per-edit prompt. Mirrors Aether Agent. */
   autoApply: boolean;
   /** Anonymous usage telemetry opt-in. */
   telemetry: boolean;

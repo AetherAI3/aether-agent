@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -196,6 +196,31 @@ test("hostLoop executes a tool_call and feeds the result back", async () => {
   }
 });
 
+test("hostLoop gate denies a tool_call: not executed, brain gets a refusal result", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aether-gate-"));
+  try {
+    const brain = new FakeBrain(); // emits write_file id=c1 then done on result
+    const exec = new ToolExecutor(dir);
+    // Deny every gated call (simulates `ask` mode on a non-TTY → fail closed).
+    const gate = async (): Promise<boolean> => false;
+    const code = await hostLoop(
+      brain,
+      exec,
+      () => {},
+      { type: "task", text: "write x.txt", cwd: dir, poolGb: 5 },
+      undefined,
+      gate,
+    );
+    assert.equal(code, 0); // the run still completes; the call was just refused
+    assert.equal(brain.toolResults.length, 1);
+    assert.equal(brain.toolResults[0]?.exitCode, 1);
+    assert.match(brain.toolResults[0]?.output ?? "", /denied/);
+    assert.equal(existsSync(join(dir, "x.txt")), false); // never written
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // --- probe 1: two sequential tool calls stay correlated --------------------
 class TwoCallBrain implements Brain {
   private readonly q = new EventQueue();
@@ -369,8 +394,8 @@ test("--swarm > 1 is refused with exit 2 and never spawns a brain", async () => 
   try {
     const code = await cmdCode(ctx, "fix all the things", { local: true, pool: 5, quiet: true, swarm: 4 });
     assert.equal(code, 2);
-    assert.match(captured, /--swarm is gated/);
-    assert.match(captured, /SWARM_PLAN\.md/);
+    assert.match(captured, /--swarm is not enabled/);
+    assert.match(captured, /emission fraying/);
   } finally {
     process.stderr.write = orig;
   }

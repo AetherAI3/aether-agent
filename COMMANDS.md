@@ -1,4 +1,4 @@
-# Aether Code — Command Reference
+# Aether Agent — Command Reference
 
 Complete reference for every command, flag, slash command, and environment
 variable. For a quick tour, see the [README](README.md).
@@ -51,15 +51,15 @@ aether run kronus "audit this service for race conditions and fix them"
 > Orchestrators are gated to paid tiers. Neo is available on Solo+; Kronus on Pro+.
 
 ### `aether resume [id]` — replay a session
-Replays a prior local coding session's transcript from `~/.aether-code/logs/`.
+Replays a prior local coding session's transcript from `~/.aether-agent/logs/`.
 With no id, resumes the most recent session.
 ```bash
 aether resume                 # the latest session
 aether resume <session-id>    # a specific session
-aether code --resume <id> "<task>"   # resume, then continue working
+aether agent --resume <id> "<task>"   # resume, then continue working
 ```
 > Local-first: sessions are read from disk, so resume works offline. When you stop
-> a coding run with Ctrl-C, the exact `aether code --resume <id>` command is printed.
+> a coding run with Ctrl-C, the exact `aether agent --resume <id>` command is printed.
 
 ### `aether models [use <id>]` — list / pick a model
 - `aether models` — list every model **and** orchestrator visible to your tier.
@@ -132,17 +132,100 @@ aether config set autoApply true
 
 ## Slash commands (inside the REPL)
 
+Type a prompt to chat; type `/` to drive the session. `/help` renders this same
+set, grouped, inside the REPL. This table is the single source of truth — it
+mirrors the live registry in `src/commands/slash.ts`.
+
+### Session
+
 | Command | Action |
 |---|---|
+| `/help` | Show the grouped command menu. |
 | `/models` | List chat models (numbered; `›` current, `🔒` locked). |
-| `/model <n\|id>` | Switch model by list number or id. |
-| `/agents` | List orchestrators (Neo / Kronus). |
-| `/agent <n\|id>` | Switch to an orchestrator. |
+| `/model <n\|id>` | Switch model — opens the picker with no arg. Restarts the session. |
+| `/agents` | View active agent sessions (name, status, time, UVT, task). |
+| `/agent <n\|id>` | Switch orchestrator (Neo / Kronus) — opens the picker with no arg. |
 | `/tier` | Show your plan tier, default, and available counts. |
 | `/audit [n]` | Recent chain-of-custody receipts. |
+| `/doctor` | Diagnose setup: API base, auth state, server reachability. |
 | `/clear` | Clear the screen. |
-| `/help` | List slash commands. |
+| `/mcp` | MCP server management (coming soon). |
 | `/exit`, `/quit` | Leave the REPL. |
+
+### Agent modes
+
+Each starts an agent loop in the REPL.
+
+| Command | Action |
+|---|---|
+| `/autonomous-execution <task>` | Execute a task end-to-end without per-step prompts. |
+| `/subagent-driven-execution <task>` | Decompose a task and delegate to sub-agents. |
+| `/self-review` | Review your own recent work. |
+| `/recon <topic>` | Deep reconnaissance pass over the codebase. |
+| `/plan <topic>` | Write an implementation plan. |
+| `/writing-plans <topic>` | Write a plan to `.hermes/plans/`. |
+| `/research <topic>` | Research → gather → summarize. |
+| `/review` | Full project review + summary. |
+| `/code-review` | Sweep: clean up + simplify. |
+| `/writing-skills` | Author reusable skills. |
+
+### Steering
+
+| Command | Action |
+|---|---|
+| `/queue <task>` | Queue a task to run when the current one finishes. |
+| `/steer <guidance>` | Mid-task steering applied on the next turn. |
+| `/btw <note>` | Contextual side note (accumulates into context). |
+
+### Context & limits
+
+| Command | Action |
+|---|---|
+| `/pin <path> [reason]` | Force a file into persistent context across loops. |
+| `/pin list` | List pinned files. |
+| `/drop <path>` | Evict a file from context. |
+| `/snapshot` | Save session state to disk. |
+| `/snapshot resume [id]` | Reload a snapshot (cloud first, else local; lists with no id). |
+| `/snapshot list` | List saved snapshots. |
+| `/limit <uvt>` | Cap UVT spend for the session (`/limit off` to remove). |
+| `/audit-receipt [n]` | Verified log of tool calls + UVT (local custody + server). |
+| `/rollback [n]` | Revert the last n uncommitted filesystem changes (git-backed). |
+| `/logs-view`, `/logs` | Interactive session log browser. |
+
+### Goals & workflows
+
+| Command | Action |
+|---|---|
+| `/goal <desc>` | Create a goal; the agent plans phases. |
+| `/goal view [id]` | Show the goal chain + detail. |
+| `/goal start\|pause\|resume\|cancel\|complete\|note` | Drive a goal's lifecycle. |
+| `/goals [id]` | List goals, or view one by id. |
+| `/workflow` | Workflow status. |
+| `/workflow-templates` | List workflow templates. |
+| `/workflow-template <n>` | Load a template. |
+
+### Vault
+
+| Command | Action |
+|---|---|
+| `/vault` | Vault status (note count). |
+| `/vault-context` | Load vault context into the next agent turn. |
+| `/vault-search <q>` | Search notes. |
+| `/vault-recent [n]` | Most recent notes. |
+| `/vault-project <name>` | Notes for a project. |
+| `/vault-tag <tag>` | Notes by tag. |
+| `/vault-tree` | Vault folder tree. |
+
+### Orchestra
+
+Requires an active orchestrator — switch with `/agent neo` or `/agent kronus` first.
+
+| Command | Action |
+|---|---|
+| `/delegate <model> <task>` | Delegate a sub-task to a worker model. |
+| `/tree` | Live orchestration hierarchy (workers, step, tokens, UVT). |
+| `/broadcast "<msg>"` | Inject a directive to all sub-agents. |
+| `/gather <id\|all>` | Merge completed sub-agent work to staging. |
 
 ---
 
@@ -172,7 +255,7 @@ See [`.env.example`](.env.example).
 ## Embedding (library API)
 
 ```ts
-import { createClient } from "aether-code";
+import { createClient } from "aether-agent";
 const aether = createClient({ baseUrl, token });
 
 aether.chatStream(prompt, { model?, agent?, manualModel? })  // AsyncIterable<StreamFrame>

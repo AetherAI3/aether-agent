@@ -30,7 +30,39 @@ export type StreamFrame =
   | { type: "task_done"; taskId?: string }
   | { type: "task_failed"; taskId?: string; msg?: string }
   | { type: "task_blocked"; taskId?: string; msg?: string }
-  | { type: "project_done" };
+  | { type: "project_done" }
+  // memory bridge — QOPC memory frames (subtype-discriminated, forward-compat)
+  | {
+      type: "memory";
+      subtype: string;
+      text?: string;
+      kind?: string;
+      confidence?: number;
+      skill?: string;
+      narrative?: string;
+      factCount?: number;
+      beforeTokens?: number;
+      afterTokens?: number;
+      freedPct?: number;
+      dimension?: string;
+      from?: number;
+      to?: number;
+      direction?: string;
+      // behavioral skill fields (subtype "behavioral")
+      skill_name?: string;
+      description?: string;
+      triggers?: string[];
+      action?: string;
+      category?: string;
+    }
+  // workflow swarm frames (emitted by WorkflowEngine in AETHER-CLOUD)
+  | { type: "workflow_start"; workflow_id: string; phases: Array<{ n: number; type: string; agents: number }>; total_agents: number }
+  | { type: "phase_start"; phase_n: number; phase_type: string; agent_count: number }
+  | { type: "phase_done"; phase_n: number; artifact_summary: string }
+  | { type: "agent_spawn"; agent_id: string; phase_n: number; brief: string }
+  | { type: "agent_progress"; agent_id: string; delta: string }
+  | { type: "agent_done"; agent_id: string; phase_n: number; summary: string }
+  | { type: "workflow_done"; synthesis: string; total_phases: number; total_agents: number };
 
 /** Normalize a parsed JSON object (snake_case wire → camelCase) into a frame. */
 export function normalizeFrame(obj: Record<string, unknown>): StreamFrame | null {
@@ -101,6 +133,78 @@ export function normalizeFrame(obj: Record<string, unknown>): StreamFrame | null
       };
     case "project_done":
       return { type: "project_done" };
+    case "memory": {
+      const subtype = String(obj["subtype"] ?? "");
+      return {
+        type: "memory",
+        subtype,
+        text: strOrUndef(obj["text"]),
+        kind: strOrUndef(obj["kind"]),
+        confidence: numOrUndef(obj["confidence"]),
+        skill: strOrUndef(obj["skill"]),
+        narrative: strOrUndef(obj["narrative"]),
+        factCount: numOrUndef(obj["fact_count"] ?? obj["factCount"]),
+        beforeTokens: numOrUndef(obj["before_tokens"] ?? obj["beforeTokens"]),
+        afterTokens: numOrUndef(obj["after_tokens"] ?? obj["afterTokens"]),
+        freedPct: numOrUndef(obj["freed_pct"] ?? obj["freedPct"]),
+        dimension: strOrUndef(obj["dimension"]),
+        from: numOrUndef(obj["from"]),
+        to: numOrUndef(obj["to"]),
+        direction: strOrUndef(obj["direction"]),
+        skill_name: strOrUndef(obj["skill_name"]),
+        description: strOrUndef(obj["description"]),
+        triggers: parseStrArray(obj["triggers"]),
+        action: strOrUndef(obj["action"]),
+        category: strOrUndef(obj["category"]),
+      };
+    }
+    case "workflow_start":
+      return {
+        type: "workflow_start",
+        workflow_id: String(obj["workflow_id"] ?? ""),
+        phases: (Array.isArray(obj["phases"]) ? obj["phases"] : []) as Array<{ n: number; type: string; agents: number }>,
+        total_agents: Number(obj["total_agents"] ?? 0),
+      };
+    case "phase_start":
+      return {
+        type: "phase_start",
+        phase_n: Number(obj["phase_n"] ?? 0),
+        phase_type: String(obj["phase_type"] ?? ""),
+        agent_count: Number(obj["agent_count"] ?? 0),
+      };
+    case "phase_done":
+      return {
+        type: "phase_done",
+        phase_n: Number(obj["phase_n"] ?? 0),
+        artifact_summary: String(obj["artifact_summary"] ?? ""),
+      };
+    case "agent_spawn":
+      return {
+        type: "agent_spawn",
+        agent_id: String(obj["agent_id"] ?? ""),
+        phase_n: Number(obj["phase_n"] ?? 0),
+        brief: String(obj["brief"] ?? ""),
+      };
+    case "agent_progress":
+      return {
+        type: "agent_progress",
+        agent_id: String(obj["agent_id"] ?? ""),
+        delta: String(obj["delta"] ?? ""),
+      };
+    case "agent_done":
+      return {
+        type: "agent_done",
+        agent_id: String(obj["agent_id"] ?? ""),
+        phase_n: Number(obj["phase_n"] ?? 0),
+        summary: String(obj["summary"] ?? ""),
+      };
+    case "workflow_done":
+      return {
+        type: "workflow_done",
+        synthesis: String(obj["synthesis"] ?? ""),
+        total_phases: Number(obj["total_phases"] ?? 0),
+        total_agents: Number(obj["total_agents"] ?? 0),
+      };
     default:
       return null; // unknown type — ignore per contract
   }
@@ -152,4 +256,8 @@ function numOrUndef(v: unknown): number | undefined {
 }
 function strOrUndef(v: unknown): string | undefined {
   return v == null ? undefined : String(v);
+}
+function parseStrArray(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  return v.map((x) => String(x));
 }

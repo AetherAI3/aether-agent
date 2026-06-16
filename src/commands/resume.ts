@@ -7,13 +7,13 @@ import { theme } from "../ui/theme.js";
 
 /** The exact command a paused session can be re-entered with. */
 export function resumeHint(sessionId: string): string {
-  return `session paused — resume with:  aether code --resume ${sessionId}`;
+  return `session paused — resume with:  aether agent --resume ${sessionId}`;
 }
 
 export async function cmdResume(_ctx: AppContext, id: string): Promise<number> {
   const s = id ? loadSession(id) : latestSession();
   if (!s) {
-    process.stderr.write('no sessions to resume (run `aether code "<task>"` first)\n');
+    process.stderr.write('no sessions to resume (run `aether agent "<task>"` first)\n');
     return 1;
   }
   process.stdout.write(theme.dim(`▸ ${s.manifest.sessionId} · ${s.manifest.task}\n\n`));
@@ -21,7 +21,7 @@ export async function cmdResume(_ctx: AppContext, id: string): Promise<number> {
   process.stdout.write(
     "\n" +
       theme.dim(`status: ${s.manifest.finalStatus ?? "running"} · continue with: `) +
-      `aether code --resume ${s.manifest.sessionId}\n`,
+      `aether agent --resume ${s.manifest.sessionId}\n`,
   );
   return 0;
 }

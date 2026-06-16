@@ -1,5 +1,5 @@
 // Kaomoji that personify the Aether AI agent's internal state + tool execution.
-// Source: aether_code_kaomoji.txt.
+// Source: aether_agent_kaomoji.txt.
 
 export type AgentState = "active" | "scanning" | "logging" | "idle" | "error";
 

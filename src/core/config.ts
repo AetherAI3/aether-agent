@@ -6,9 +6,9 @@ import { join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { AetherConfig } from "../types.js";
 
-// The public API front door. The backend is exposed under /cloud; the apex
-// returns an info blob, so the /cloud suffix is required for every API call
-// (auth, chat, github connect). Override with AETHER_BASE_URL.
+// The public API front door. The backend is served under the `/cloud` path; the
+// apex returns an info blob, so the `/cloud` suffix is required for every API
+// call (auth, chat, github connect). Override with AETHER_BASE_URL.
 export const DEFAULT_CONFIG: AetherConfig = {
   baseUrl: "https://api.aethersystems.net/cloud",
   defaultModel: "",
@@ -51,6 +51,7 @@ export function loadConfig(): AetherConfig {
 
 export function saveConfig(cfg: AetherConfig): void {
   const dir = configDir();
-  mkdirSync(dir, { recursive: true });
+  // 0700: this directory also holds the .token credential — keep it owner-only.
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
   writeFileSync(configPath(), JSON.stringify(cfg, null, 2) + "\n", "utf8");
 }

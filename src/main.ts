@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Aether Code — CLI entry. Parses global flags, builds the AppContext, and
+// Aether Agent — CLI entry. Parses global flags, builds the AppContext, and
 // dispatches to a command. The CLI is the front door; all enforcement (UVT)
 // and signing (Aether audit) happen server-side on Aether's servers.
 
@@ -17,11 +17,15 @@ import { cmdRun } from "./commands/run.js";
 import { cmdCode } from "./commands/code.js";
 import { VERSION } from "./version.js";
 import { cmdGithub } from "./commands/github.js";
+import { cmdVault } from "./commands/vault.js";
+import { cmdWorkflow } from "./commands/workflow.js";
+import { cmdImage, cmdVideo } from "./commands/media.js";
+import { cmdOutput } from "./commands/output.js";
 
 /** Coerce a parsed flag value to string | undefined. */
 const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
-const HELP = `Aether Code — an open-source coding agent for your terminal.
+const HELP = `Aether Agent — an open-source coding agent for your terminal.
 
 Local-first: when you're signed in, turns run on the cloud brain (Aether API,
 UVT-metered, signed). When you're NOT signed in, turns run fully offline on a
@@ -31,10 +35,10 @@ local Ollama brain — no account, no network. Override with AETHER_BACKEND or
 Usage:
   aether                       Start an interactive coding REPL (local-first)
   aether "<prompt>"            One-shot coding turn (cloud if authed, else local)
-  aether code "<task>"         Autonomous coding agent (cloud when signed in)
-  aether code --local "<task>" Force the local Python/Ollama brain (offline)
+  aether agent "<task>"         Autonomous coding agent (cloud when signed in)
+  aether agent --local "<task>" Force the local Python/Ollama brain (offline)
   aether resume [id]           Replay a local session (latest if no id)
-  aether code --resume <id>    Resume a paused coding session
+  aether agent --resume <id>    Resume a paused coding session
   aether run <neo|kronus> "<task>"   Stream an orchestrator run
   aether models [use <id>]     List models + orchestrators / set default
   aether agents                List orchestrators (Neo / Kronus)
@@ -43,6 +47,21 @@ Usage:
   aether auth refresh          Refresh a session   aether auth logout  Log out
   aether github connect        Link GitHub so backend agents can work your repos
   aether github status         Show GitHub link    aether github disconnect  Unlink
+  aether vault list              List vault files/folders
+  aether vault search <query>    Full-text search vault notes
+  aether vault context           Show vault snapshot
+  aether vault status            Vault health check
+  aether vault <sub>             (see 'aether vault help' for all commands)
+  aether workflow new <desc>    Generate a workflow from intent
+  aether workflow templates     List built-in workflow templates
+  aether workflow status        Workflow dashboard
+  aether workflow <sub>         (see 'aether workflow help' for all commands)
+  aether image "<prompt>" [--model] [--aspect] [--count] [--4k] [--vector] [--i]
+  aether video "<prompt>" [--model] [--duration] [--1080p] [--audio] [--i]
+  aether image models              aether video models
+  aether output                    Show recent 10 generations
+  aether output open <n>           Open generation in viewer
+  aether mcp                   Manage MCP servers (connect, add, repair)
   aether audit [limit]         Recent audit chain-of-custody trail
   aether receipt <order_id>    Export the proof package for an audit entry
   aether config [show|get <k>|set <k> <v>]
@@ -54,17 +73,17 @@ Global flags:
   --audit        Show signature     -y, --yes      Auto-confirm prompts
   -h, --help     This help          -v, --version  Print version
 
-aether code flags:
+aether agent flags:
   --local        Use the local brain (Python/Ollama) instead of the cloud
   --pool <gb>    Context pool size in GB (status-bar reach = pool x 233M)
   --effort <t>   Effort tier: LOW | MED | MAX | ULTRA | CODEPRO
   --test-cmd <c> Command the grounding gate runs (default: pytest -q)
   --quiet        Plain output (strip the personality frames)
   --interactive  Pause at each stage boundary to type a steer (TTY only)
-  --no-log       Disable the local session log (~/.aether-code/logs)
+  --no-log       Disable the local session log (~/.aether-agent/logs)
   --worktree     Run in a fresh git worktree on an auto-named branch (isolated)
   --repo <o/n>   Work on a GitHub repo (clones via your gh/git auth, worktrees it)
-  --swarm <N>    N-agent swarm (gated; local-only; see docs/SWARM_PLAN.md)
+  --swarm <N>    N-agent swarm (not enabled yet; will be local-only)
 
 Local model tiers (--model, via Ollama):
   small (universal) qwen2.5-coder:7b   ~4.7GB · fits 8GB GPU · best small tools
@@ -98,7 +117,7 @@ async function main(argv: string[]): Promise<number> {
       yes: { type: "boolean", short: "y", default: false },
       help: { type: "boolean", short: "h", default: false },
       version: { type: "boolean", short: "v", default: false },
-      // `aether code` flags:
+      // `aether agent` flags:
       local: { type: "boolean", default: false },
       pool: { type: "string" },
       effort: { type: "string" },
@@ -165,6 +184,19 @@ async function main(argv: string[]): Promise<number> {
       return cmdAuth(ctx, rest, loginOpts);
     case "github":
       return cmdGithub(ctx, rest, { noBrowser: Boolean(values["no-browser"]) });
+    case "vault":
+      return cmdVault(ctx, rest);
+    case "workflow":
+      return cmdWorkflow(ctx, rest);
+    case "image":
+    case "img":
+      return cmdImage(ctx, rest);
+    case "video":
+    case "vid":
+      return cmdVideo(ctx, rest);
+    case "output":
+    case "out":
+      return cmdOutput(ctx, rest);
     case "login":
       return cmdLogin(ctx, loginOpts);
     case "logout":
@@ -172,6 +204,10 @@ async function main(argv: string[]): Promise<number> {
     case "audit": {
       const { cmdAudit } = await import("./commands/audit.js");
       return cmdAudit(ctx, rest);
+    }
+    case "mcp": {
+      const { cmdMcp } = await import("./commands/mcp.js");
+      return cmdMcp(ctx);
     }
     case "models":
       return cmdModels(ctx, rest);
@@ -187,8 +223,13 @@ async function main(argv: string[]): Promise<number> {
       const { cmdConfig } = await import("./commands/config.js");
       return cmdConfig(ctx, rest);
     }
-    case "code":
-      return cmdCode(ctx, rest.join(" "), {
+    case "agent":
+    case "code": {
+      const task = rest.join(" ");
+      // No task and not resuming → open the persistent interactive agent REPL
+      // (chat bar ready for the first question), Claude Code style.
+      if (!task && !sf(values["resume"])) return cmdChat(ctx, "");
+      return cmdCode(ctx, task, {
         local: Boolean(values["local"]),
         pool: Number(sf(values["pool"]) ?? "5") || 5,
         effort: sf(values["effort"]),
@@ -201,6 +242,7 @@ async function main(argv: string[]): Promise<number> {
         swarm: Number(sf(values["swarm"]) ?? "1") || 1,
         resume: sf(values["resume"]),
       });
+    }
     case "resume": {
       const { cmdResume } = await import("./commands/resume.js");
       return cmdResume(ctx, rest[0] ?? "");

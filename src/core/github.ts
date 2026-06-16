@@ -1,5 +1,5 @@
 // GitHub Connect client — links the user's real GitHub account to their Aether
-// account so the Aether backend's coding agents can clone/branch/PR on their repos.
+// account so Aether's backend coding agents can clone/branch/PR on their repos.
 //
 // Web-canonical, same shape as `auth login`'s device flow: the CLI asks the
 // backend for an install_url, the user approves the GitHub App in the browser,

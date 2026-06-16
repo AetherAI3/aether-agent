@@ -1,4 +1,4 @@
-// `aether code [--local] "<task>"` — the hybrid coding terminal. One host loop
+// `aether agent [--local] "<task>"` — the hybrid coding terminal. One host loop
 // drives a pluggable brain: cloud (Aether API, UVT-metered) by default, or the
 // local Python/Ollama brain with --local. Same host, same render, same tools,
 // same commands — only the brain transport differs (specs/aethercode_bridge.md).
@@ -31,6 +31,10 @@ import { resumeHint } from "./resume.js";
 import { createWorktree, mergeHint, type Worktree } from "../core/worktree.js";
 import { parseRepoSpec, ensureLocalClone, prCreateHint, type RepoSpec } from "../core/repo.js";
 import { chooseBackend } from "../core/backend.js";
+import { decideGate } from "../core/autonomy.js";
+
+/** Approve (or refuse) one brain-emitted tool call before the host executes it. */
+export type ToolGate = (call: { name: string; args: Record<string, unknown> }) => Promise<boolean>;
 
 export interface CodeOpts {
   /** Use the local Python/Ollama brain instead of the cloud API. */
@@ -101,20 +105,18 @@ function replaySession(id: string, emit: (line: string) => void): void {
 
 export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Promise<number> {
   if (!task.trim()) {
-    process.stderr.write('✗ nothing to do — try: aether code "fix the failing tests"\n');
+    process.stderr.write('✗ nothing to do — try: aether agent "fix the failing tests"\n');
     return 1;
   }
-  // Swarm is GATED on purpose. The brainstorm sequences it last: "never swarm an
-  // unproven loop — you'd multiply the failure." It is also LOCAL-ONLY (the cloud
-  // path has its own orchestration). The runtime is specified in docs/SWARM_PLAN.md
-  // and is built only after single-agent emission is proven (TESTING_HANDOFF §8).
+  // Swarm is GATED on purpose: never swarm an unproven loop — N agents multiply
+  // the #1 failure (tool-call emission fraying). It is also LOCAL-ONLY (the cloud
+  // path has its own orchestration). Stays gated until the single-agent loop is
+  // proven on real long sessions.
   if ((opts.swarm ?? 1) > 1) {
     process.stderr.write(
-      "✗ --swarm is gated.\n" +
-        "  N-agent swarms multiply the #1 risk (tool-call emission fraying). Prove the\n" +
-        "  single-agent loop first — run TESTING_HANDOFF.md §8 and confirm late-third\n" +
-        "  emission holds. The runtime + build order live in docs/SWARM_PLAN.md.\n" +
-        "  Swarm is also local-only; it will require --local when enabled.\n",
+      "✗ --swarm is not enabled yet.\n" +
+        "  N-agent swarms multiply the #1 risk (tool-call emission fraying), so the\n" +
+        "  single-agent loop is proven first. Swarm will also be local-only (--local).\n",
     );
     return 2;
   }
@@ -187,6 +189,29 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   const interactive = Boolean(opts.interactive) && Boolean(process.stdin.isTTY);
   const onToolResult = (id: string, result: ToolResult): void => log?.toolResult(id, result, nowIso());
 
+  // Permission gate: every brain-emitted mutating/shell tool call is approved
+  // here before the host runs it. Honors the configured permission mode + auto-
+  // apply; in `ask` (the default) on a TTY the user gets a y/N prompt, and on a
+  // non-TTY (CI/pipe) an un-pre-approved call FAILS CLOSED rather than running
+  // unattended. `--yes` or `permissionMode: skip` opt out.
+  const gate: ToolGate = async ({ name, args }) => {
+    const outcome = decideGate(name, ctx.cfg.permissionMode, ctx.cfg.autoApply, {
+      yes: ctx.flags.yes,
+      isTty: Boolean(process.stdin.isTTY),
+    });
+    if (outcome === "allow") return true;
+    if (outcome === "deny") {
+      process.stderr.write(
+        `✗ blocked ${name} — permission mode "${ctx.cfg.permissionMode}" needs confirmation but there is no TTY.\n` +
+          `  re-run with --yes, or set a less strict mode: aether config set permissionMode skip\n`,
+      );
+      return false;
+    }
+    const detail = String(args["command"] ?? args["path"] ?? args["message"] ?? "");
+    const shown = detail.length > 200 ? detail.slice(0, 197) + "…" : detail;
+    return ctx.confirm(`\n⚠ ${name}${shown ? ` ${shown}` : ""} — run it? [y/N] `);
+  };
+
   // Presentation fork — TTY (and not --json/--quiet) gets the live animated
   // status line; everything else (pipes, --json, --quiet, CI) gets the plain
   // HostRenderer. The animation layer is strictly downstream of the event data,
@@ -213,7 +238,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     sr.start();
     if (opts.resume) replaySession(opts.resume, (line) => sr.log(line));
     const anim = new AnimationController({
-      onFrame: (stage, art) => sr.setStage(stage, art),
+      onFrame: (_stage, art) => sr.setAnim(art),
       onProgress: (used, c) => sr.setProgress(used, c),
     });
     const hb = new HeartbeatIndicator({ onFrame: (g) => sr.setHeartbeat(g) });
@@ -221,6 +246,11 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     bindEventSource(source, sr, anim, { hb, heartbeatTimeoutMs: 5000 });
     let tick = 0;
     onEvent = async (ev: BrainEvent): Promise<void> => {
+      if (ev.type === "memory") {
+        log?.event(ev, nowIso());
+        sr.memoryEvent(ev);
+        return;
+      }
       log?.event(ev, nowIso());
       applyEventToStatus(sr, ev, tick++);
       const dp = editPreview(cwd, ev);
@@ -241,6 +271,9 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     onEvent = async (ev: BrainEvent): Promise<void> => {
       renderer.event(ev);
       log?.event(ev, nowIso());
+      if (ev.type === "memory") {
+        log?.event(ev, nowIso());
+      }
       const dp = editPreview(cwd, ev);
       if (dp) process.stdout.write(dp + "\n");
       captureDone(ev);
@@ -248,7 +281,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     };
   }
 
-  const code = await hostLoop(brain, exec, onEvent, taskCmd, onToolResult);
+  const code = await hostLoop(brain, exec, onEvent, taskCmd, onToolResult, gate);
   teardown();
 
   // ── Final verification gate: ground truth, never the brain's self-report ──
@@ -295,6 +328,7 @@ export async function hostLoop(
   onEvent: (ev: BrainEvent) => void | Promise<void>,
   task: TaskCommand,
   onToolResult?: (id: string, result: ToolResult) => void,
+  gate?: ToolGate,
 ): Promise<number> {
   let code = 0;
   try {
@@ -302,11 +336,16 @@ export async function hostLoop(
       await onEvent(ev);
       switch (ev.type) {
         case "tool_call": {
-          // The host owns execution + the path-guard; reply with the result.
+          // The host owns execution + the path-guard. A tool call is gated FIRST
+          // (permission mode); a denied call is never executed — the brain gets a
+          // synthetic refusal result so the loop continues without running it.
           // executeAsync delegates the 6 sync tools to execute() unchanged and
           // awaits the 2 async web tools (web_search/web_fetch) so they run on
           // this path too — otherwise execute() returns "[tool … is async]".
-          const result = await exec.executeAsync(ev.name, ev.args);
+          const approved = gate ? await gate({ name: ev.name, args: ev.args }) : true;
+          const result: ToolResult = approved
+            ? await exec.executeAsync(ev.name, ev.args)
+            : { output: `[denied: ${ev.name} not approved by user]`, exitCode: 1 };
           onToolResult?.(ev.id, result);
           brain.sendToolResult(ev.id, result);
           break;

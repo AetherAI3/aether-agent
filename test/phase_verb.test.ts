@@ -15,3 +15,13 @@ test("whimsical verb cycles with the tick", () => {
 test("every entry carries a kaomoji", () => {
   assert.ok(phaseVerb("execute").kao.length > 0);
 });
+test("memory-extract phase maps to Extracting memory + kaomoji", () => {
+  const v = phaseVerb("memory-extract");
+  assert.equal(v.verb, "Extracting memory");
+  assert.equal(v.kao, "(◕‿◕)✎");
+});
+test("compacting phase maps to Compacting context + kaomoji", () => {
+  const v = phaseVerb("compacting");
+  assert.equal(v.verb, "Compacting context");
+  assert.equal(v.kao, "(；・∀・)📦");
+});

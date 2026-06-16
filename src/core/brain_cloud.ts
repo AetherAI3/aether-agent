@@ -87,6 +87,57 @@ function mapFrame(f: StreamFrame): BrainEvent | null {
       return { type: "error", msg: f.msg };
     case "done":
       return null; // the pump emits its own terminal done after the loop
+    case "memory": {
+      const { type: _, ...rest } = f;
+      return { type: "memory", ...rest };
+    }
+    case "workflow_start":
+      return {
+        type: "workflow_start",
+        workflowId: f.workflow_id,
+        phases: f.phases,
+        totalAgents: f.total_agents,
+      };
+    case "phase_start":
+      return {
+        type: "phase_start",
+        phaseN: f.phase_n,
+        phaseType: f.phase_type,
+        agentCount: f.agent_count,
+      };
+    case "phase_done":
+      return {
+        type: "phase_done",
+        phaseN: f.phase_n,
+        artifactSummary: f.artifact_summary,
+      };
+    case "agent_spawn":
+      return {
+        type: "agent_spawn",
+        agentId: f.agent_id,
+        phaseN: f.phase_n,
+        brief: f.brief,
+      };
+    case "agent_progress":
+      return {
+        type: "agent_progress",
+        agentId: f.agent_id,
+        delta: f.delta,
+      };
+    case "agent_done":
+      return {
+        type: "agent_done",
+        agentId: f.agent_id,
+        phaseN: f.phase_n,
+        summary: f.summary,
+      };
+    case "workflow_done":
+      return {
+        type: "workflow_done",
+        synthesis: f.synthesis,
+        totalPhases: f.total_phases,
+        totalAgents: f.total_agents,
+      };
     default:
       return null; // open/ping/usage/custody/etc. — not part of the agent view
   }

@@ -1,4 +1,4 @@
-// tui_layout.ts — full-screen region layout for aether-code with a Claude-Code-
+// tui_layout.ts — full-screen region layout for aether-agent with a Claude-Code-
 // style pager (TS port of tui_layout.mjs). HEADER (logo+banner, fixed top) ·
 // TRANSCRIPT (own pager) · STATUS (heartbeat + UVT, live) · INPUT (pinned bottom).
 // Absolute-positioned repaint on alt-screen; prior terminal restored on exit.
@@ -7,9 +7,14 @@
 // mimics Claude Code's feel: follow-at-bottom, position-preserving when scrolled
 // up, "N new" hint, End=live, wheel/PgUp/PgDn). NON-TTY -> plain console.log, NO
 // ANSI — keeps the §8 emission logs / triage_log.py clean.
+//
+// Transcript lines are stored LOGICALLY; a wrapped-row view is derived for the
+// current width and rebuilt on resize, so cropping the window reflows content
+// instead of truncating it.
 
-import { stripAnsi } from "./theme.js";
 import { formatElapsed } from "./elapsed.js";
+import { sliceVisible, wrapVisible } from "./text.js";
+import { renderInputView } from "./input_render.js";
 
 const ESC = "\x1b[";
 const ALT_ON = ESC + "?1049h";
@@ -58,6 +63,9 @@ export interface TuiLayoutOptions {
   mouse?: boolean;
   /** Injected clock (ms) for the elapsed figure. Defaults to Date.now. */
   now?: () => number;
+  /** Terminal dimensions override (tests / embeds). Defaults to process.stdout. */
+  cols?: number;
+  rows?: number;
 }
 
 interface StatusParts {
@@ -69,6 +77,8 @@ interface StatusParts {
   uvtCap: number;
 }
 
+const INPUT_PROMPT = "@user] ";
+
 export class TuiLayout {
   tty: boolean;
   private readonly logo: string[];
@@ -76,18 +86,23 @@ export class TuiLayout {
   private readonly mode: LayoutMode;
   private readonly mouse: boolean;
   transcript: string[] = [];
-  offset = 0; // lines up from live bottom; 0 = following the latest
+  offset = 0; // display rows up from live bottom; 0 = following the latest
   following = true;
-  unseen = 0; // lines that arrived while scrolled up
+  unseen = 0; // rows that arrived while scrolled up
   private parts: StatusParts = { hb: "·", verb: "Working", kao: "", streamed: 0, uvtUsed: 0, uvtCap: 0 };
   private readonly now: () => number;
   private readonly startedMs: number;
   private input = "";
+  private inputCursor = 0;
   private cols: number;
   private rows: number;
   private readonly headerH: number;
   regions: Regions;
   private cleanupBound = false;
+  // Derived wrapped-row view of the transcript for the CURRENT width.
+  private wrapCache: string[] = [];
+  private wrapCols = -1;
+  private readonly onResizeBound = (): void => this.handleResize();
 
   constructor(opts: TuiLayoutOptions = {}) {
     this.tty = Boolean(process.stdout.isTTY) && process.env["AETHER_NO_TUI"] !== "1";
@@ -97,8 +112,8 @@ export class TuiLayout {
     this.mouse = opts.mouse ?? true;
     this.now = opts.now ?? (() => Date.now());
     this.startedMs = this.now();
-    this.cols = process.stdout.columns || 100;
-    this.rows = process.stdout.rows || 30;
+    this.cols = opts.cols ?? (process.stdout.columns || 100);
+    this.rows = opts.rows ?? (process.stdout.rows || 30);
     this.headerH = Math.max(this.logo.length, this.banner.length, 1);
     this.regions = computeRegions(this.rows, this.headerH);
   }
@@ -107,11 +122,12 @@ export class TuiLayout {
     if (!this.tty) return;
     process.stdout.write(ALT_ON + HIDE + ESC + "2J" + (this.mouse ? MOUSE_ON : ""));
     this.installCleanup();
-    process.stdout.on("resize", () => this.onResize());
+    process.stdout.on("resize", this.onResizeBound);
     this.renderAll();
   }
 
   unmount(): void {
+    process.stdout.removeListener("resize", this.onResizeBound);
     if (this.tty) process.stdout.write((this.mouse ? MOUSE_OFF : "") + SHOW + ALT_OFF);
   }
 
@@ -122,18 +138,29 @@ export class TuiLayout {
       return;
     }
     this.transcript.push(line);
+    const added = wrapVisible(line, this.cols);
+    if (this.wrapCols === this.cols) this.wrapCache.push(...added);
     if (this.following) {
       this.offset = 0; // stuck to bottom -> follow live
     } else {
-      this.offset += 1;
-      this.unseen += 1; // scrolled up -> HOLD position, count new
+      this.offset += added.length;
+      this.unseen += added.length; // scrolled up -> HOLD position, count new
     }
     this.renderTranscript();
     this.renderStatus();
   }
 
+  /** The transcript as display rows wrapped to the current width (cached). */
+  private displayRows(): string[] {
+    if (this.wrapCols !== this.cols) {
+      this.wrapCache = this.transcript.flatMap((l) => wrapVisible(l, this.cols));
+      this.wrapCols = this.cols;
+    }
+    return this.wrapCache;
+  }
+
   private get maxOffset(): number {
-    return Math.max(0, this.transcript.length - this.regions.transHeight);
+    return Math.max(0, this.displayRows().length - this.regions.transHeight);
   }
 
   scrollUp(n = 1): void {
@@ -205,12 +232,13 @@ export class TuiLayout {
     }
   }
 
-  /** Visible window (for tests + render): [startIndex, lines[]]. */
+  /** Visible window (for tests + render): [startIndex, rows[]] in display rows. */
   visibleWindow(): [number, string[]] {
+    const rows = this.displayRows();
     const h = this.regions.transHeight;
-    const end = this.transcript.length - this.offset;
+    const end = rows.length - this.offset;
     const start = Math.max(0, end - h);
-    return [start, this.transcript.slice(start, end)];
+    return [start, rows.slice(start, end)];
   }
 
   // ---- rendering ----
@@ -244,11 +272,14 @@ export class TuiLayout {
       this.mode === "api" ? `   UVT ${this.fmt(p.uvtUsed)}/${this.fmt(p.uvtCap)} ${this.bar(p.uvtUsed, p.uvtCap)}` : "";
     const scroll = this.following ? "" : `${DIM}  ▲ paused · ${this.unseen}↓ new · End=live${RST}`;
     const line = `${p.hb}  ${kao}${p.verb}… ${DIM}(${elapsed}${up})${RST}${uvt}${scroll}`;
-    process.stdout.write(at(this.regions.statusRow, 1) + CLR_LINE + this.fit(line, true));
+    process.stdout.write(at(this.regions.statusRow, 1) + CLR_LINE + this.fit(line));
   }
 
   private renderInput(): void {
-    process.stdout.write(at(this.regions.inputRow, 1) + CLR_LINE + this.fit(`@user] ${this.input}`) + SHOW);
+    const v = renderInputView(INPUT_PROMPT, this.input, this.inputCursor, this.cols);
+    process.stdout.write(
+      at(this.regions.inputRow, 1) + CLR_LINE + v.text + at(this.regions.inputRow, v.cursorCol) + SHOW,
+    );
   }
 
   setHeartbeat(g: string): void {
@@ -275,52 +306,29 @@ export class TuiLayout {
     if (this.tty) this.renderStatus();
   }
 
-  setInput(text: string): void {
+  setInput(text: string, cursor = text.length): void {
     this.input = text;
+    this.inputCursor = Math.max(0, Math.min(cursor, [...text].length));
     if (this.tty) this.renderInput();
   }
 
-  private onResize(): void {
-    this.cols = process.stdout.columns || this.cols;
-    this.rows = process.stdout.rows || this.rows;
+  /** Recompute layout for new dimensions and repaint. Public for tests; the
+   *  'resize' listener calls it with the live process.stdout figures. */
+  handleResize(cols?: number, rows?: number): void {
+    this.cols = cols ?? process.stdout.columns ?? this.cols;
+    this.rows = rows ?? process.stdout.rows ?? this.rows;
     this.regions = computeRegions(this.rows, this.headerH);
+    this.wrapCols = -1; // invalidate: re-wrap the transcript to the new width
     if (this.following) this.offset = 0;
     else this.offset = Math.min(this.offset, this.maxOffset);
+    if (!this.tty) return;
     process.stdout.write(ESC + "2J");
     this.renderAll();
   }
 
-  private fit(s: string, hasAnsi = false): string {
-    if (hasAnsi) return s; // status line owns its own width via the visible parts
-    return stripAnsi(s).length > this.cols ? this.sliceVisible(s, this.cols) : s;
-  }
-
-  /** Truncate to `max` VISIBLE columns, preserving ANSI escapes so a gradient
-   * header is never cut mid-escape (which would leak raw bytes / drop color). */
-  private sliceVisible(s: string, max: number): string {
-    if (!s.includes("\x1b")) return s.slice(0, max);
-    let out = "";
-    let vis = 0;
-    let i = 0;
-    while (i < s.length && vis < max) {
-      if (s[i] === "\x1b") {
-        const m = s.slice(i).match(/^\x1b\[[0-9;]*m/);
-        if (m) {
-          out += m[0];
-          i += m[0].length;
-          continue;
-        }
-        // Lone / non-SGR ESC byte: pass it through but don't count it as a
-        // visible column (it isn't one), so truncation stays accurate.
-        out += s[i];
-        i++;
-        continue;
-      }
-      out += s[i];
-      vis++;
-      i++;
-    }
-    return out + "\x1b[0m";
+  /** Truncate to the terminal width, ANSI- and wide-char-aware. */
+  private fit(s: string): string {
+    return sliceVisible(s, this.cols);
   }
 
   private fmt(n: number): string {
