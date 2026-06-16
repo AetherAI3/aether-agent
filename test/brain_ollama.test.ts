@@ -1,0 +1,130 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { OllamaBrain } from "../src/core/brain_ollama.js";
+import type { Brain, TaskCommand } from "../src/core/brain.js";
+import type { BrainEvent } from "../src/core/brain_protocol.js";
+import type { ChatMessage, ChatReply } from "../src/core/ollama.js";
+
+// A scripted fake of the ollama chat seam: the i-th call returns the i-th reply.
+// It records the messages it was handed so the test can assert the tool_result
+// was fed back to the model on the second turn.
+function fakeChat(replies: readonly ChatReply[]): {
+  chat: (messages: readonly ChatMessage[]) => Promise<ChatReply>;
+  calls: () => readonly (readonly ChatMessage[])[];
+} {
+  const seen: (readonly ChatMessage[])[] = [];
+  let i = 0;
+  return {
+    chat: async (messages: readonly ChatMessage[]): Promise<ChatReply> => {
+      seen.push(messages);
+      const r = replies[Math.min(i, replies.length - 1)];
+      i += 1;
+      return r ?? { role: "assistant", content: "" };
+    },
+    calls: () => seen,
+  };
+}
+
+const task: TaskCommand = { type: "task", text: "fix the bug", cwd: ".", poolGb: 5 };
+
+/** Drive a brain through the host loop, executing tool_calls with a stub. */
+async function driveBrain(
+  brain: Brain,
+  exec: (name: string, args: Record<string, unknown>) => { output: string; exitCode: number },
+): Promise<BrainEvent[]> {
+  const events: BrainEvent[] = [];
+  for await (const ev of brain.run(task)) {
+    events.push(ev);
+    if (ev.type === "tool_call") {
+      const r = exec(ev.name, ev.args);
+      brain.sendToolResult(ev.id, r);
+    }
+  }
+  brain.close();
+  return events;
+}
+
+test("OllamaBrain emits a tool_call, accepts sendToolResult, then a done", async () => {
+  // Turn 1: the model asks to read a file. Turn 2: it answers (no tool call).
+  const { chat, calls } = fakeChat([
+    {
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        { id: "c1", type: "function", function: { name: "read_file", arguments: '{"path":"a.ts"}' } },
+      ],
+    },
+    { role: "assistant", content: "all set — the bug is fixed." },
+  ]);
+  const brain = new OllamaBrain({ chat });
+
+  const executed: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const events = await driveBrain(brain, (name, args) => {
+    executed.push({ name, args });
+    return { output: "[exit 0]\nfile contents", exitCode: 0 };
+  });
+
+  const types = events.map((e) => e.type);
+  // Exactly one tool_call, ending in monologue then done.
+  assert.equal(types.filter((t) => t === "tool_call").length, 1, "one tool_call emitted");
+  assert.ok(types.includes("monologue"), "final answer surfaced as monologue");
+  assert.equal(types.at(-1), "done", "stream ends with done");
+
+  const call = events.find((e) => e.type === "tool_call");
+  assert.equal(call?.type === "tool_call" ? call.name : "", "read_file");
+  assert.equal(executed.length, 1);
+  assert.equal(executed[0]?.name, "read_file");
+
+  const done = events.find((e) => e.type === "done");
+  assert.equal(done?.type === "done" ? done.ok : false, true, "done.ok true on a clean finish");
+
+  // The tool_result must have been fed back to the model on the 2nd turn: the
+  // second chat call's message list includes a role:"tool" reply for c1.
+  const second = calls()[1] ?? [];
+  const toolMsg = second.find((m) => m.role === "tool");
+  assert.ok(toolMsg, "tool_result fed back into the conversation");
+  assert.equal(toolMsg?.tool_call_id, "c1");
+});
+
+test("OllamaBrain answers immediately when the model makes no tool call", async () => {
+  const { chat } = fakeChat([{ role: "assistant", content: "here is the answer." }]);
+  const brain = new OllamaBrain({ chat });
+  const events = await driveBrain(brain, () => ({ output: "", exitCode: 0 }));
+  const types = events.map((e) => e.type);
+  assert.equal(types.filter((t) => t === "tool_call").length, 0, "no tool_call");
+  assert.ok(types.includes("monologue"));
+  assert.equal(types.at(-1), "done");
+});
+
+test("OllamaBrain surfaces an error event when the chat seam throws", async () => {
+  const brain = new OllamaBrain({
+    chat: async () => {
+      throw new Error("ollama is down");
+    },
+  });
+  const events = await driveBrain(brain, () => ({ output: "", exitCode: 0 }));
+  const err = events.find((e) => e.type === "error");
+  assert.ok(err, "error event emitted on a chat failure");
+  assert.match(err?.type === "error" ? err.msg : "", /ollama is down/);
+  assert.equal(events.at(-1)?.type, "done", "still ends with a done so the host loop terminates");
+});
+
+test("OllamaBrain stops after maxTurns without a final answer", async () => {
+  // The model never stops calling tools — the loop must break, not hang.
+  const { chat } = fakeChat([
+    {
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        { id: "c1", type: "function", function: { name: "read_file", arguments: '{"path":"a"}' } },
+      ],
+    },
+  ]);
+  const brain = new OllamaBrain({ chat, maxTurns: 3 });
+  const events = await driveBrain(brain, () => ({ output: "[exit 0]\nx", exitCode: 0 }));
+  const toolCalls = events.filter((e) => e.type === "tool_call").length;
+  assert.ok(toolCalls <= 3, "capped at maxTurns tool calls");
+  const done = events.find((e) => e.type === "done");
+  assert.ok(done, "loop terminates with a done even on a runaway model");
+  assert.equal(done?.type === "done" ? done.reason : "", "max-turns");
+});

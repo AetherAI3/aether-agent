@@ -10,6 +10,7 @@ import {
   encodeCommand,
   parseEventLine,
   PROTOCOL_VERSION,
+  TOOLS,
   type BrainEvent,
 } from "../src/core/brain_protocol.js";
 import { ToolExecutor, capHeadTail } from "../src/core/tool_executor.js";
@@ -305,6 +306,31 @@ test("run_shell surfaces a non-zero exit code and captures stderr", () => {
 test("PROTOCOL_VERSION matches the shared fixture", () => {
   const fx = JSON.parse(readFileSync(FIXTURE, "utf8"));
   assert.equal(fx.protocol_version, PROTOCOL_VERSION);
+});
+
+test("PROTOCOL_VERSION is 3 (web tools landed; mirror of aether_agent.protocol)", () => {
+  assert.equal(PROTOCOL_VERSION, 3);
+});
+
+test("TOOLS is the canonical 8-tool set including the web tools", () => {
+  assert.deepEqual(
+    [...TOOLS],
+    [
+      "read_file",
+      "write_file",
+      "run_shell",
+      "run_tests",
+      "repo_search",
+      "git_commit",
+      "web_search",
+      "web_fetch",
+    ],
+  );
+});
+
+test("fixture tool list mirrors the canonical TOOLS array exactly", () => {
+  const fx = JSON.parse(readFileSync(FIXTURE, "utf8"));
+  assert.deepEqual(fx.tools, [...TOOLS], "fixture tools drift from brain_protocol.TOOLS");
 });
 
 test("every fixture event decodes to its declared type", () => {

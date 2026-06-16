@@ -27,11 +27,16 @@ const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : unde
 
 const HELP = `Aether Agent — an open-source coding agent for your terminal.
 
+Local-first: when you're signed in, turns run on the cloud brain (Aether API,
+UVT-metered, signed). When you're NOT signed in, turns run fully offline on a
+local Ollama brain — no account, no network. Override with AETHER_BACKEND or
+'aether config set backend auto|local|cloud' (default: auto).
+
 Usage:
-  aether                       Start an interactive coding REPL
-  aether "<prompt>"            One-shot coding turn
-  aether agent "<task>"         Autonomous coding agent (cloud brain, UVT-metered)
-  aether agent --local "<task>" Same agent, local Python/Ollama brain (offline)
+  aether                       Start an interactive coding REPL (local-first)
+  aether "<prompt>"            One-shot coding turn (cloud if authed, else local)
+  aether agent "<task>"         Autonomous coding agent (cloud when signed in)
+  aether agent --local "<task>" Force the local Python/Ollama brain (offline)
   aether resume [id]           Replay a local session (latest if no id)
   aether agent --resume <id>    Resume a paused coding session
   aether run <neo|kronus> "<task>"   Stream an orchestrator run
@@ -60,6 +65,7 @@ Usage:
   aether audit [limit]         Recent audit chain-of-custody trail
   aether receipt <order_id>    Export the proof package for an audit entry
   aether config [show|get <k>|set <k> <v>]
+  aether config set backend auto|local|cloud   Pick the brain (default: auto)
 
 Global flags:
   --model <id>   Force a model     --agent <id>   Force an orchestrator
@@ -84,6 +90,11 @@ Local model tiers (--model, via Ollama):
   gemma option      gemma3:4b          ~3.3GB · gemma3n:e4b for the efficient e4b
   depth             qwen3-coder:30b    needs ~24GB RAM/VRAM
   (NOTE: 'gemma4' is not a real Ollama tag. profiles set per-model sampling.)
+
+Agent tools (same set, local and cloud):
+  read_file · write_file · run_shell · run_tests · repo_search · git_commit
+  web_search   Search the web (DuckDuckGo, no key) for docs/answers mid-task
+  web_fetch    Read a web page as text (SSRF-guarded: no localhost/private IPs)
 `;
 
 async function main(argv: string[]): Promise<number> {

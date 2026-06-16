@@ -5,6 +5,9 @@
 
 export type PermissionMode = "ask" | "auto" | "skip";
 
+/** Brain selection: 'auto' = cloud when signed in, local Ollama when not. */
+export type BackendPref = "auto" | "local" | "cloud";
+
 export interface AetherConfig {
   /** the Aether API base URL. The only host the CLI talks to. */
   baseUrl: string;
@@ -16,6 +19,9 @@ export interface AetherConfig {
   autoApply: boolean;
   /** Anonymous usage telemetry opt-in. */
   telemetry: boolean;
+  /** Which brain runs a turn. 'auto' is local-first: cloud when authed, else
+   * local Ollama. Overridden per-process by the AETHER_BACKEND env var. */
+  backend: BackendPref;
 }
 
 // Wire DTO from GET /models (snake_case mirrors the server catalog). A single

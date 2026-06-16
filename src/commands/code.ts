@@ -30,6 +30,7 @@ import { loadSession, replayLines } from "../core/session_resume.js";
 import { resumeHint } from "./resume.js";
 import { createWorktree, mergeHint, type Worktree } from "../core/worktree.js";
 import { parseRepoSpec, ensureLocalClone, prCreateHint, type RepoSpec } from "../core/repo.js";
+import { chooseBackend } from "../core/backend.js";
 import { decideGate } from "../core/autonomy.js";
 
 /** Approve (or refuse) one brain-emitted tool call before the host executes it. */
@@ -149,9 +150,18 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   }
   const cwd = worktree ? worktree.dir : ctx.flags.cwd;
   const poolGb = opts.pool > 0 ? opts.pool : 5;
-  const brainKind: "local" | "cloud" = opts.local ? "local" : "cloud";
+  // --local forces the local brain. Otherwise honor the backend preference
+  // (AETHER_BACKEND env > config.backend > 'auto'); 'auto' is local-first, so an
+  // unauthed user gets the local brain and a signed-in user keeps the cloud default.
+  let goLocal = opts.local;
+  if (!opts.local) {
+    const pref = (process.env["AETHER_BACKEND"] || ctx.cfg.backend || "auto").trim();
+    const authed = Boolean(await ctx.tokens.get());
+    goLocal = chooseBackend(pref, authed) === "local";
+  }
+  const brainKind: "local" | "cloud" = goLocal ? "local" : "cloud";
 
-  const brain: Brain = opts.local ? new LocalBrain() : new CloudBrain(ctx.api);
+  const brain: Brain = goLocal ? new LocalBrain() : new CloudBrain(ctx.api);
   const exec = new ToolExecutor(cwd, opts.testCmd);
   const log = opts.noLog
     ? null
@@ -329,9 +339,12 @@ export async function hostLoop(
           // The host owns execution + the path-guard. A tool call is gated FIRST
           // (permission mode); a denied call is never executed — the brain gets a
           // synthetic refusal result so the loop continues without running it.
+          // executeAsync delegates the 6 sync tools to execute() unchanged and
+          // awaits the 2 async web tools (web_search/web_fetch) so they run on
+          // this path too — otherwise execute() returns "[tool … is async]".
           const approved = gate ? await gate({ name: ev.name, args: ev.args }) : true;
           const result: ToolResult = approved
-            ? exec.execute(ev.name, ev.args)
+            ? await exec.executeAsync(ev.name, ev.args)
             : { output: `[denied: ${ev.name} not approved by user]`, exitCode: 1 };
           onToolResult?.(ev.id, result);
           brain.sendToolResult(ev.id, result);

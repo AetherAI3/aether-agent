@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
 import type { ToolName } from "./brain_protocol.js";
+import { webFetch, webSearch } from "./web.js";
 
 const MAX_OUTPUT = 8000;
 const DEFAULT_TEST_CMD = "pytest -q";
@@ -72,7 +73,12 @@ export class ToolExecutor {
     return { output: `[exit ${code}]\n${body}`, exitCode: code };
   }
 
-  /** Dispatch one tool call. Never throws — guard/IO errors become output. */
+  /**
+   * Dispatch one SYNC tool call (the 6 file/shell tools). Never throws —
+   * guard/IO errors become output. The two web tools are async (network +
+   * SSRF resolve) and live on executeAsync; called here they return a clear
+   * pointer rather than silently no-op'ing.
+   */
   execute(name: string, args: Record<string, unknown>): ToolResult {
     try {
       switch (name as ToolName) {
@@ -88,6 +94,9 @@ export class ToolExecutor {
           return this.repoSearch(String(args["query"] ?? ""));
         case "git_commit":
           return this.gitCommit(String(args["message"] ?? ""));
+        case "web_search":
+        case "web_fetch":
+          return { output: `[tool ${name} is async — call executeAsync]`, exitCode: 1 };
         default:
           return { output: `[unknown tool: ${name}]`, exitCode: 1 };
       }
@@ -95,6 +104,29 @@ export class ToolExecutor {
       const msg = err instanceof Error ? err.message : String(err);
       return { output: `[tool ${name} error: ${msg}]`, exitCode: 1 };
     }
+  }
+
+  /**
+   * Dispatch one tool call, awaiting the async web tools and delegating the 6
+   * sync tools to execute(). The host loop calls this so file/shell stay sync
+   * (identical behavior) while web_search/web_fetch get their network path.
+   * Web tools never throw — they return a bracketed string, exit 0 (advisory
+   * output the brain reads as ordinary tool output).
+   */
+  async executeAsync(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+    if (name === "web_search") {
+      const limit = Number(args["limit"]);
+      const text = await webSearch(
+        String(args["query"] ?? ""),
+        Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 5,
+      );
+      return { output: capHeadTail(text, MAX_OUTPUT), exitCode: 0 };
+    }
+    if (name === "web_fetch") {
+      const text = await webFetch(String(args["url"] ?? ""), MAX_OUTPUT);
+      return { output: capHeadTail(text, MAX_OUTPUT), exitCode: 0 };
+    }
+    return this.execute(name, args);
   }
 
   private readFile(path: string): ToolResult {
