@@ -54,6 +54,23 @@ export function defaultTokenStore(): TokenStore {
 }
 
 /**
+ * Token store for a running CLI process, choosing the source by environment.
+ *
+ * An injected `AETHER_TOKEN` — how the desktop app (and the web server) embed a
+ * user's EXISTING session into the spawned CLI — WINS over the on-disk file
+ * store, so a user already signed into AetherCloud who opens a terminal is
+ * authenticated as that same account and is NEVER asked to re-run
+ * `aether auth login`. With no env token (a standalone CLI user), it falls back
+ * to the file store, so the normal login flow is unaffected. An empty/whitespace
+ * value counts as unset. Mirrors AetherClient's embedded-token resolution so the
+ * interactive REPL and the universal chat client agree on auth.
+ */
+export function tokenStoreFromEnv(env: NodeJS.ProcessEnv = process.env): TokenStore {
+  const injected = (env["AETHER_TOKEN"] ?? "").trim();
+  return injected ? new StaticTokenStore(injected) : defaultTokenStore();
+}
+
+/**
  * In-memory token store for embedded/headless use — a parent process (desktop,
  * web server) injects the user's session_token directly (e.g. AETHER_TOKEN)
  * instead of reading the keychain/file. This is how surfaces route through the

@@ -6,7 +6,7 @@
 import { parseArgs } from "node:util";
 import { createInterface } from "node:readline";
 import { loadConfig } from "./core/config.js";
-import { defaultTokenStore } from "./core/auth.js";
+import { tokenStoreFromEnv } from "./core/auth.js";
 import { ApiClient } from "./core/transport.js";
 import type { AppContext, GlobalFlags } from "./core/context.js";
 import { cmdChat } from "./commands/chat.js";
@@ -132,7 +132,9 @@ async function main(argv: string[]): Promise<number> {
   }
 
   const cfg = loadConfig();
-  const tokens = defaultTokenStore();
+  // Embedded launch (desktop/web sets AETHER_TOKEN) authenticates as that session
+  // with no re-login; standalone CLI use falls back to the on-disk token store.
+  const tokens = tokenStoreFromEnv();
   const api = new ApiClient(cfg.baseUrl, tokens);
   const flags: GlobalFlags = {
     model: typeof values["model"] === "string" ? values["model"] : undefined,
