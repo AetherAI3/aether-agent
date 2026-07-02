@@ -3,6 +3,7 @@
 // Upload/download deferred (multipart + raw-binary plumbing needed).
 
 import type { AppContext } from "../core/context.js";
+import { fail as coreFail } from "../core/errors.js";
 import {
   getVaultList, browseVault,
   getSpacesUsage, getSpacesContent, deleteSpacesFile,
@@ -40,11 +41,6 @@ export async function cmdVault(ctx: AppContext, argv: string[]): Promise<number>
       printVaultHelp();
       return 2;
   }
-}
-
-function notYet(feature: string): Promise<number> {
-  process.stderr.write(`${feature} — coming soon (multipart + raw-binary plumbing needed).\n`);
-  return Promise.resolve(1);
 }
 
 function printVaultHelp(): void {
@@ -278,7 +274,5 @@ function renderSearchResults(r: VaultSearchResponse, query: string): void {
 }
 
 function fail(err: unknown): number {
-  const msg = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`✗ ${msg}\n  (are you logged in? run: aether auth login)\n`);
-  return 1;
+  return coreFail(err, "are you logged in? run: aether auth login");
 }
