@@ -36,6 +36,14 @@ export class StreamUnavailableError extends Error {
   }
 }
 
+/** Streaming response started or continued too slowly for an interactive turn. */
+export class StreamTimeoutError extends Error {
+  constructor(public timeoutMs: number) {
+    super(`stream timed out after ${Math.round(timeoutMs / 1000)}s with no data`);
+    this.name = "StreamTimeoutError";
+  }
+}
+
 /**
  * Refused to send the session token because the base URL is not a secure
  * transport (non-https to a non-loopback host). Prevents a cleartext credential
