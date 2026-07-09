@@ -30,6 +30,9 @@ export class StatusRenderer {
   private art = "";
   private used = 0;
   private cap = 0;
+  private tasks = ""; // pre-styled multi-task counter (e.g. "3/7"); "" hides it
+  private startedAt = 0; // wall-clock start of the run (thinking timer)
+  private beats = 0; // heartbeat pulses so far (the live "tracking each beat")
   private cleanupBound = false;
 
   constructor(opts: StatusRendererOptions = {}) {
@@ -41,6 +44,7 @@ export class StatusRenderer {
   }
 
   start(): void {
+    this.startedAt = Date.now(); // begin the thinking timer (even off-TTY: harmless)
     if (!this.tty) return;
     process.stdout.write(HIDE);
     this.installCleanup();
@@ -61,6 +65,11 @@ export class StatusRenderer {
     this.hb = g;
     this.repaint();
   }
+  /** Update the live heartbeat count (drives the thinking timer's ♥ counter). */
+  setBeats(n: number): void {
+    this.beats = n;
+    this.repaint();
+  }
   setStage(stage: string, art: string): void {
     this.stage = stage;
     this.art = art;
@@ -69,6 +78,11 @@ export class StatusRenderer {
   setProgress(used: number, cap: number): void {
     this.used = used;
     this.cap = cap;
+    this.repaint();
+  }
+  /** A compact, pre-styled multi-task counter pinned alongside the stage. */
+  setTasks(summary: string): void {
+    this.tasks = summary;
     this.repaint();
   }
 
@@ -87,13 +101,23 @@ export class StatusRenderer {
     const hb = theme.cyan(this.hb);
     const stage = this.stage ? theme.bold("* " + this.stage) : "";
     const art = theme.iceBlue(this.art);
+    const tasksSeg = this.tasks ? "  " + this.tasks : ""; // pre-styled counter
+    const timerSeg = this.startedAt ? "  " + theme.dim(this.timer()) : "";
     const fill =
       this.mode === "api" && this.cap > 0
         ? `  ${humanTokens(this.used)}/${humanTokens(this.cap)} ${this.bar()}`
         : this.cap > 0
           ? `  ${this.bar()}`
           : "";
-    return `${hb}  ${stage} ${art}${theme.dim(fill)}`;
+    return `${hb}  ${stage} ${art}${tasksSeg}${timerSeg}${theme.dim(fill)}`;
+  }
+
+  /** The thinking timer: elapsed wall-clock + the running heartbeat count. Loops
+   * (repaints) on every beat, so while the agent thinks it visibly ticks. */
+  private timer(): string {
+    const secs = Math.max(0, Math.floor((Date.now() - this.startedAt) / 1000));
+    const t = secs >= 60 ? `${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, "0")}s` : `${secs}s`;
+    return `⏱ ${t} ♥${this.beats}`;
   }
 
   private bar(width = 12): string {

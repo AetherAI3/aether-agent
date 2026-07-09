@@ -5,7 +5,8 @@
 // animation. Stall (watchdog) -> hollow glyph; resume on the next heartbeat.
 
 export interface HeartbeatOptions {
-  onFrame?: (glyph: string) => void;
+  // Second arg is the running beat count — the thinking timer tracks each beat.
+  onFrame?: (glyph: string, beats: number) => void;
   frameMs?: number;
 }
 
@@ -16,20 +17,27 @@ export class HeartbeatIndicator {
   private readonly stallGlyph = "○"; // hollow — no heartbeats arriving
   private readonly frameMs: number;
   private idx = -1;
+  private beats = 0; // running pulse count — the "track each heartbeat" counter
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stalled = false;
-  private readonly onFrame: (glyph: string) => void;
+  private readonly onFrame: (glyph: string, beats: number) => void;
 
   constructor(opts: HeartbeatOptions = {}) {
     this.frameMs = opts.frameMs ?? 35;
-    this.onFrame = opts.onFrame ?? (() => {});
+    this.onFrame = opts.onFrame ?? ((): void => {});
   }
 
   /** Trigger one beat. Called on each real heartbeat event. */
   beat(): void {
     this.stalled = false;
+    this.beats += 1;
     this.idx = 0;
     this.step();
+  }
+
+  /** How many beats have pulsed so far (the thinking timer's heartbeat count). */
+  count(): number {
+    return this.beats;
   }
 
   /** Watchdog timeout: show hollow, stop pulsing (honest: connection is silent). */
@@ -37,7 +45,7 @@ export class HeartbeatIndicator {
     this.stalled = true;
     this.idx = -1;
     this.clear();
-    this.onFrame(this.glyph());
+    this.onFrame(this.glyph(), this.beats);
   }
 
   glyph(): string {
@@ -54,10 +62,10 @@ export class HeartbeatIndicator {
     this.clear();
     if (this.idx < 0 || this.idx >= this.envelope.length) {
       this.idx = -1;
-      this.onFrame(this.glyph());
+      this.onFrame(this.glyph(), this.beats);
       return;
     }
-    this.onFrame(this.glyph());
+    this.onFrame(this.glyph(), this.beats);
     this.idx++;
     this.timer = setTimeout(() => this.step(), this.frameMs);
   }

@@ -53,6 +53,19 @@ export class HostRenderer {
     }
   }
 
+  /**
+   * Write pre-styled transcript lines (e.g. a rendered diff) as permanent
+   * output. No-op in --json mode — the diff is presentation, never machine data,
+   * so log/JSON consumers see only the raw tool_call. Clears any live status bar
+   * first so the diff doesn't smear over it.
+   */
+  writeLines(lines: string[]): void {
+    if (this.opts.json || lines.length === 0) return;
+    this.header();
+    this.breakBar();
+    for (const line of lines) this.out.write(line + "\n");
+  }
+
   event(ev: BrainEvent): void {
     if (this.opts.json) {
       this.out.write(JSON.stringify(ev) + "\n");

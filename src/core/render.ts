@@ -11,6 +11,7 @@
 import type { Writable } from "node:stream";
 import type { StreamFrame } from "./stream.js";
 import { header, actionLine } from "../ui/agent.js";
+import { TaskLedger } from "../ui/ledger.js";
 
 export interface RenderOptions {
   json: boolean;
@@ -25,6 +26,10 @@ export class Renderer {
   private agentHeader = false;
   private tasksStarted = 0;
   private tasksDone = 0;
+  // Live checklist of orchestrator tasks — concurrent (peers don't auto-complete
+  // each other), recapped as a ✓/✗ panel at project completion.
+  private readonly ledger = new TaskLedger();
+  private readonly taskLedgerLabels = new Map<string, string>();
 
   constructor(private readonly opts: RenderOptions) {
     this.out = opts.out ?? process.stdout;
@@ -34,6 +39,12 @@ export class Renderer {
   /** Project completion fraction so far (done / started). */
   private projFrac(): number {
     return this.tasksStarted > 0 ? this.tasksDone / this.tasksStarted : 0;
+  }
+
+  /** Stable ledger label for a task id (falls back to `task <id>`). */
+  private labelFor(taskId?: string): string {
+    if (taskId && this.taskLedgerLabels.has(taskId)) return this.taskLedgerLabels.get(taskId)!;
+    return taskId ? `task ${taskId}` : "task";
   }
 
   private ensureHeader(): void {
@@ -71,6 +82,9 @@ export class Renderer {
         this.ensureHeader();
         this.tasksStarted += 1;
         const label = f.label ?? `task ${f.taskId ?? ""}`;
+        const ledgerLabel = f.taskId ? `${label} (${f.taskId})` : label;
+        if (f.taskId) this.taskLedgerLabels.set(f.taskId, ledgerLabel);
+        this.ledger.setActive(ledgerLabel, false); // peers stay active - these run concurrently
         this.out.write("\n" + actionLine(label, "active", f.taskId ?? "", this.projFrac()) + "\n");
         break;
       }
@@ -80,16 +94,20 @@ export class Renderer {
         break;
       case "task_done":
         this.tasksDone += 1;
+        this.ledger.setState(this.labelFor(f.taskId), "done");
         this.out.write("\n" + actionLine(`${f.taskId ?? "task"} done`, "logging", "", this.projFrac()) + "\n");
         break;
       case "task_failed":
+        this.ledger.setState(this.labelFor(f.taskId), "failed");
         this.err.write("\n" + actionLine(`${f.taskId ?? "task"} failed`, "error", f.msg ?? "", this.projFrac()) + "\n");
         break;
       case "task_blocked":
         this.err.write("\n" + actionLine(`${f.taskId ?? "task"} blocked`, "idle", f.msg ?? "", this.projFrac()) + "\n");
         break;
       case "project_done":
+        this.ledger.finishAll();
         this.out.write("\n" + actionLine("project complete", "active", "", 1) + "\n");
+        for (const line of this.ledger.panel()) this.out.write(line + "\n");
         break;
       case "custody": {
         // Persistence happens in the chat loop; here we only confirm receipt.

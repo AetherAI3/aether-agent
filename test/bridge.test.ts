@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -127,6 +127,43 @@ test("ToolExecutor refuses a path escaping the workspace", () => {
   }
 });
 
+test("repo_search finds literal matches recursively without external grep", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aether-search-"));
+  try {
+    mkdirSync(join(dir, "sub"));
+    mkdirSync(join(dir, "node_modules"));
+    writeFileSync(join(dir, "a.txt"), "needle one\nnope\nneedle two\n", "utf8");
+    writeFileSync(join(dir, "sub", "b.txt"), "nested needle\n", "utf8");
+    writeFileSync(join(dir, "node_modules", "ignored.txt"), "needle ignored\n", "utf8");
+    writeFileSync(join(dir, "binary.bin"), Buffer.from([0, 110, 101, 101, 100, 108, 101]));
+
+    const r = new ToolExecutor(dir).execute("repo_search", { query: "needle" });
+
+    assert.equal(r.exitCode, 0);
+    assert.match(r.output, /^\[exit 0\]\n/);
+    assert.match(r.output, /\.\/a\.txt:1:needle one/);
+    assert.match(r.output, /\.\/a\.txt:3:needle two/);
+    assert.match(r.output, /\.\/sub\/b\.txt:1:nested needle/);
+    assert.doesNotMatch(r.output, /ignored/);
+    assert.doesNotMatch(r.output, /binary\.bin/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("repo_search caps matches at 40 hits", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aether-search-cap-"));
+  try {
+    writeFileSync(join(dir, "many.txt"), Array.from({ length: 50 }, (_, i) => `needle ${i}`).join("\n"), "utf8");
+    const r = new ToolExecutor(dir).execute("repo_search", { query: "needle" });
+    const hits = r.output.split(/\r?\n/).filter((line) => line.includes("needle "));
+    assert.equal(hits.length, 40);
+    assert.match(hits[0]!, /many\.txt:1:needle 0/);
+    assert.match(hits[39]!, /many\.txt:40:needle 39/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 test("capHeadTail keeps the END (pytest summary) when output is over the cap", () => {
   // simulate pytest: tracebacks first, the count summary LAST
   const big = "TRACEBACK\n".repeat(2000) + "\n23 failed, 1 passed in 1.2s";
@@ -266,12 +303,16 @@ test("path-guard rejects traversal, absolute, and symlink escapes", () => {
 });
 
 // --- probe 3: shell hardening (non-zero exit + stderr reach the brain) ------
-test("run_shell surfaces a non-zero exit code and captures stderr", () => {
-  const ex = new ToolExecutor(mkdtempSync(join(tmpdir(), "aether-sh-")));
-  const r = ex.execute("run_shell", {
-    command: `node -e "process.stderr.write('boom'); process.exit(3)"`,
-  });
-  assert.equal(r.exitCode, 3);
+test("run_shell surfaces a non-zero exit code and captures stderr", (t) => {
+  const ex = new ToolExecutor(process.cwd());
+  const command =
+    process.platform === "win32" ? 'cmd.exe /d /s /c "echo boom 1>&2 & exit /b 3"' : "printf boom >&2; exit 3";
+  const r = ex.execute("run_shell", { command });
+  if (r.output.includes("[spawn error EPERM:")) {
+    t.skip("sandbox blocks shell process spawn");
+    return;
+  }
+  assert.equal(r.exitCode, 3, r.output);
   assert.match(r.output, /^\[exit 3\]/);
   assert.match(r.output, /boom/);
 });

@@ -7,7 +7,6 @@
 // event and executes every tool_call locally, then replies. That is why local
 // and cloud are indistinguishable UX.
 
-import { createInterface } from "node:readline";
 import type { AppContext } from "../core/context.js";
 import type { Brain, TaskCommand } from "../core/brain.js";
 import type { BrainEvent } from "../core/brain_protocol.js";
@@ -15,12 +14,25 @@ import type { ToolResult } from "../core/tool_executor.js";
 import { LocalBrain } from "../core/brain_local.js";
 import { CloudBrain } from "../core/brain_cloud.js";
 import { ToolExecutor } from "../core/tool_executor.js";
+import { stdioPrompt } from "../ui/interact.js";
+import { defaultRunner } from "../core/worktree.js";
 import { HostRenderer } from "../ui/host_render.js";
 import { SessionLog } from "../core/session_log.js";
 import { StatusRenderer } from "../ui/status_renderer.js";
 import { AnimationController } from "../ui/animations.js";
 import { HeartbeatIndicator } from "../ui/heartbeat.js";
 import { LocalAgentSource, bindEventSource } from "../core/agent_events.js";
+import { TaskLedger } from "../ui/ledger.js";
+import {
+  CODE_STAGES,
+  answerAgentQuestionIfPresent,
+  applyToLedger,
+  prepareWorkspace,
+  stageGate,
+  writeDiffLines,
+} from "./code_support.js";
+
+export { prepareWorkspace } from "./code_support.js";
 
 export interface CodeOpts {
   /** Use the local Python/Ollama brain instead of the cloud API. */
@@ -62,7 +74,21 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     );
     return 2;
   }
-  const cwd = ctx.flags.cwd;
+  // One interaction channel for the whole run: the repo gate, friendly stage
+  // pauses, and agent questions all speak through it (stderr-backed, so piped
+  // stdout stays clean; auto-answers in non-TTY / --yes).
+  const io = stdioPrompt();
+
+  // ── 2.0 repo gate ──────────────────────────────────────────────────────
+  // Before any brain touches your tree, confirm "are you working in this repo?"
+  // (identical wording in predator-cli). When `gh` is authenticated and this is
+  // a git repo, run inside a REAL isolated worktree on a fresh aether/<slug>
+  // branch; otherwise it's confirm-only and we run in place. A non-TTY run
+  // without --yes proceeds in place with zero prompts/side effects, so pipes,
+  // CI, and tests never hang.
+  const ws = await prepareWorkspace(ctx, task, io, defaultRunner());
+  if (!ws.proceed) return 0;
+  const cwd = ws.cwd;
   const poolGb = opts.pool > 0 ? opts.pool : 5;
   const brainKind: "local" | "cloud" = opts.local ? "local" : "cloud";
 
@@ -92,6 +118,13 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   const animated =
     !ctx.flags.json && !opts.quiet && Boolean(process.stdout.isTTY) && process.env["AETHER_NO_ANIM"] !== "1";
 
+  // Multi-task ledger over the reasoning pipeline — drives the pinned n/7 counter
+  // (animated) and the end-of-run checklist recap (✓ down the pipeline, ✗ where
+  // it broke) on both paths. Seeded with the fixed stages so progress is forward
+  // looking from the first frame.
+  const ledger = new TaskLedger(CODE_STAGES);
+  const cols = process.stdout.columns && process.stdout.columns > 0 ? process.stdout.columns : 80;
+
   let onEvent: (ev: BrainEvent) => void | Promise<void>;
   let teardown = (): void => {};
 
@@ -102,15 +135,42 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
       onFrame: (stage, art) => sr.setStage(stage, art),
       onProgress: (used, c) => sr.setProgress(used, c),
     });
-    const hb = new HeartbeatIndicator({ onFrame: (g) => sr.setHeartbeat(g) });
+    const hb = new HeartbeatIndicator({
+      onFrame: (g, beats) => {
+        sr.setHeartbeat(g);
+        sr.setBeats(beats); // feed the thinking timer's live heartbeat count
+      },
+    });
     const source = new LocalAgentSource();
     bindEventSource(source, sr, anim, { hb, heartbeatTimeoutMs: 5000 });
     onEvent = async (ev: BrainEvent): Promise<void> => {
       log?.event(ev, nowIso());
-      source.feedBrain(ev); // adapter -> animation/status (presentation only)
-      if (interactive && ev.type === "stage") await stageGate(brain, ev.name);
+      applyToLedger(ledger, ev);
+      // Intercept the whole-file write to render a live green/red diff into
+      // scrollback — the old file is still on disk because hostLoop runs onEvent
+      // BEFORE exec.execute. Skip feedBrain for it so we don't ALSO print the
+      // "  : write_file …" line; the animated kaomoji status line keeps pulsing
+      // below, so the diff and the live state stay in sync.
+      const diff =
+        ev.type === "tool_call" && ev.name === "write_file" ? writeDiffLines(exec, ev.args, true) : null;
+      if (diff && diff.length) {
+        for (const line of diff) sr.log(line);
+      } else {
+        source.feedBrain(ev); // adapter -> animation/status (presentation only)
+      }
+      // Refresh the pinned multi-step counter only on stage changes — never after
+      // a terminal event (feedBrain's done case already calls sr.end()).
+      if (ev.type === "stage") sr.setTasks(ledger.progress());
+      if (interactive && ev.type === "stage") await stageGate(brain, io, ev.name);
+      if (interactive && ev.type === "monologue") await answerAgentQuestionIfPresent(brain, io, ev.text);
     };
     teardown = (): void => {
+      // Final multi-step recap into scrollback, then drop the pinned line.
+      const recap = ledger.panel(cols);
+      if (recap.length) {
+        sr.log("");
+        for (const line of recap) sr.log(line);
+      }
       source.close();
       anim.stop();
       hb.stop();
@@ -119,9 +179,21 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   } else {
     const renderer = new HostRenderer({ poolGb, quiet: opts.quiet, json: ctx.flags.json });
     onEvent = async (ev: BrainEvent): Promise<void> => {
-      renderer.event(ev);
+      applyToLedger(ledger, ev);
+      // Same diff interception for the non-animated path (pipes / NO_ANIM /
+      // --quiet). Suppressed under --json so machine consumers still receive the
+      // raw tool_call event, never the rendered diff.
+      const diff =
+        !ctx.flags.json && ev.type === "tool_call" && ev.name === "write_file"
+          ? writeDiffLines(exec, ev.args, false)
+          : null;
+      if (diff && diff.length) renderer.writeLines(diff);
+      else renderer.event(ev);
+      // End-of-run checklist recap (writeLines is a no-op under --json).
+      if (ev.type === "done") renderer.writeLines(ledger.panel(cols));
       log?.event(ev, nowIso());
-      if (interactive && ev.type === "stage") await stageGate(brain, ev.name);
+      if (interactive && ev.type === "stage") await stageGate(brain, io, ev.name);
+      if (interactive && ev.type === "monologue") await answerAgentQuestionIfPresent(brain, io, ev.text);
     };
   }
 
@@ -149,18 +221,6 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   return finalStatus === "incomplete" ? 1 : code;
 }
 
-/** Pause at a stage boundary; an entered line becomes a /steer, blank resumes. */
-async function stageGate(brain: Brain, stage: string): Promise<void> {
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  try {
-    const note = await new Promise<string>((res) =>
-      rl.question(`\n⏸ ${stage} — [enter] continue, or type a steer: `, res),
-    );
-    if (note.trim()) brain.control("steer", note.trim());
-  } finally {
-    rl.close();
-  }
-}
 
 /**
  * The host loop — the bridge seam, extracted so it is unit-testable with a fake

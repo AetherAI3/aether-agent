@@ -7,17 +7,34 @@
 // regardless of which side originally ran it.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { dirname, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { dirname, relative, resolve, sep } from "node:path";
 import type { ToolName } from "./brain_protocol.js";
 
 const MAX_OUTPUT = 8000;
 const DEFAULT_TEST_CMD = "pytest -q";
+const SEARCH_MAX_HITS = 40;
+const SEARCH_SKIP_DIRS = new Set([".git", "node_modules", "dist"]);
 
 export interface ToolResult {
   output: string;
   exitCode: number;
 }
+
+/**
+ * A pre-write read of a file, for rendering the live diff. `text` is null when
+ * the content is unsuitable to diff (binary or oversized); `reason` says which.
+ * Path-guarded by the same allowlist as every other tool — a snapshot can never
+ * read outside the workspace.
+ */
+export interface FileSnapshot {
+  existed: boolean;
+  text: string | null;
+  reason?: "binary" | "too-big";
+}
+
+// Files larger than this are not diffed inline (the transcript would drown).
+const SNAPSHOT_MAX_BYTES = 1024 * 1024;
 
 export class ToolExecutor {
   private readonly root: string;
@@ -57,15 +74,22 @@ export class ToolExecutor {
 
   /** Run a shell command in the workspace; capture combined output, capped. */
   private run(command: string, timeoutMs = 900_000): ToolResult {
+    const shell =
+      process.platform === "win32" ? (process.env["ComSpec"] ?? "C:\\Windows\\System32\\cmd.exe") : true;
     const r = spawnSync(command, {
-      shell: true,
+      shell,
       cwd: this.root,
       encoding: "utf8",
       timeout: timeoutMs,
       maxBuffer: 64 * 1024 * 1024,
     });
-    if (r.error && (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
-      return { output: `[timeout after ${Math.round(timeoutMs / 1000)}s]`, exitCode: 124 };
+    if (r.error) {
+      const err = r.error as NodeJS.ErrnoException;
+      if (err.code === "ETIMEDOUT") {
+        return { output: `[timeout after ${Math.round(timeoutMs / 1000)}s]`, exitCode: 124 };
+      }
+      const code = err.code === "ENOENT" ? 127 : 1;
+      return { output: `[spawn error ${err.code ?? "UNKNOWN"}: ${err.message}]`, exitCode: code };
     }
     const code = r.status ?? 1;
     const body = capHeadTail((r.stdout ?? "") + (r.stderr ?? ""), MAX_OUTPUT);
@@ -112,10 +136,65 @@ export class ToolExecutor {
     return { output: `[wrote ${path} · ${Buffer.byteLength(content)} bytes]`, exitCode: 0 };
   }
 
+  /**
+   * Read a file for diffing BEFORE it is overwritten. Same path-guard as every
+   * tool. Returns existed=false for a new file (so the host can render `(new)`),
+   * and text=null with a reason for binary / oversized content (skip the diff,
+   * don't drown the transcript). Never throws — a guard failure reads as a
+   * non-existent file so the write still proceeds and surfaces the real error.
+   */
+  snapshot(path: string): FileSnapshot {
+    let abs: string;
+    try {
+      abs = this.safe(path);
+    } catch {
+      return { existed: false, text: null };
+    }
+    if (!existsSync(abs) || !statSync(abs).isFile()) {
+      return { existed: false, text: null };
+    }
+    if (statSync(abs).size > SNAPSHOT_MAX_BYTES) {
+      return { existed: true, text: null, reason: "too-big" };
+    }
+    const buf = readFileSync(abs);
+    if (buf.includes(0)) {
+      return { existed: true, text: null, reason: "binary" };
+    }
+    return { existed: true, text: buf.toString("utf8") };
+  }
+
   private repoSearch(query: string): ToolResult {
-    // grep across the tree (ripgrep-free for portability); cap to 40 hits.
-    const q = JSON.stringify(query);
-    return this.run(`grep -rIn -- ${q} . | head -40`);
+    if (!query) return { output: "[exit 0]\n", exitCode: 0 };
+
+    const hits: string[] = [];
+    const visit = (dir: string): void => {
+      if (hits.length >= SEARCH_MAX_HITS) return;
+      for (const ent of readdirSync(dir, { withFileTypes: true })) {
+        if (hits.length >= SEARCH_MAX_HITS) return;
+        if (ent.isSymbolicLink()) continue;
+        if (ent.isDirectory()) {
+          if (SEARCH_SKIP_DIRS.has(ent.name)) continue;
+          const child = resolve(dir, ent.name);
+          const real = realpathSync(child);
+          if (real === this.root || real.startsWith(this.root + sep)) visit(child);
+          continue;
+        }
+        if (!ent.isFile()) continue;
+
+        const file = resolve(dir, ent.name);
+        const buf = readFileSync(file);
+        if (buf.includes(0)) continue;
+        const rel = "./" + relative(this.root, file).split(sep).join("/");
+        const lines = buf.toString("utf8").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+        for (let i = 0; i < lines.length && hits.length < SEARCH_MAX_HITS; i++) {
+          const line = lines[i]!;
+          if (line.includes(query)) hits.push(`${rel}:${i + 1}:${line}`);
+        }
+      }
+    };
+
+    visit(this.root);
+    return { output: `[exit 0]\n${capHeadTail(hits.join("\n"), MAX_OUTPUT)}`, exitCode: 0 };
   }
 
   private gitCommit(message: string): ToolResult {

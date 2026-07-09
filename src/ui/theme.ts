@@ -16,6 +16,9 @@ export const theme = {
   iceBlue: wrap("38;5;117"),
   dim: wrap("90"), // dim grey
   muted: wrap("38;5;240"), // muted grey (the prompt underline)
+  green: wrap("38;5;78"), // diff added (+)
+  red: wrap("38;5;203"), // diff removed (−)
+  yellow: wrap("38;5;221"), // diff meta / truncation notes
 };
 
 /** Strip ANSI escapes — for width math + tests. */
