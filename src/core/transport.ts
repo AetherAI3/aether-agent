@@ -3,7 +3,7 @@
 //
 // Paths are constants so they change in one place.
 
-import { HttpError, InsecureTransportError, StreamUnavailableError } from "./errors.js";
+import { HttpError, InsecureTransportError, StreamTimeoutError, StreamUnavailableError } from "./errors.js";
 import type { TokenStore } from "./auth.js";
 
 /**
@@ -85,6 +85,14 @@ export const PROJECT_FROM_WORKFLOW_BRAINSTORM_PATH = "/project/from-workflow/bra
 export const PROJECT_FROM_WORKFLOW_PLAN_PATH = "/project/from-workflow/plan";
 export const PROJECT_FROM_WORKFLOW_FINALIZE_PATH = "/project/from-workflow/finalize";
 
+export const DEFAULT_STREAM_TIMEOUT_MS = 120_000;
+
+export interface StreamOptions {
+  signal?: AbortSignal;
+  /** Timeout for opening the stream and for each quiet interval between chunks. */
+  timeoutMs?: number;
+}
+
 export class ApiClient {
   constructor(
     private readonly baseUrl: string,
@@ -105,34 +113,65 @@ export class ApiClient {
   }
 
   /** POST a coding envelope, return the raw SSE byte stream for decodeSse().
-   *  `signal` aborts both the connection and the in-flight body (Ctrl+C on a
-   *  turn) — without it a stalled stream is unkillable short of exiting. */
-  async stream(path: string, body: unknown, signal?: AbortSignal): Promise<AsyncIterable<Uint8Array>> {
-    const res = await fetch(this.url(path), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-        ...(await this.authHeaders()),
-      },
-      body: JSON.stringify(body),
-      ...(signal ? { signal } : {}),
-    });
-    if (!res.ok) throw await toHttpError(res);
-    // Fail-soft: server returns plain JSON `{"stream": false}` instead of an
-    // SSE body when it can't/shouldn't stream → caller falls back to /agent/chat.
-    const ct = res.headers.get("content-type") ?? "";
-    if (ct.startsWith("application/json")) {
-      let body: unknown;
-      try {
-        body = await res.json();
-      } catch {
-        body = undefined;
+   *  The optional signal aborts Ctrl+C turns; the timeout catches a quiet
+   *  connection so a stalled SSE body cannot hang the terminal forever. */
+  async stream(
+    path: string,
+    body: unknown,
+    signalOrOptions?: AbortSignal | StreamOptions,
+  ): Promise<AsyncIterable<Uint8Array>> {
+    const opts = normalizeStreamOptions(signalOrOptions);
+    const timeoutMs = normalizeTimeoutMs(opts.timeoutMs ?? defaultStreamTimeoutMs());
+    const abort = createAbortBridge(opts.signal);
+    const timeout = (): StreamTimeoutError => {
+      const err = new StreamTimeoutError(timeoutMs);
+      if (!abort.controller.signal.aborted) abort.controller.abort(err);
+      return err;
+    };
+    try {
+      const res = await awaitWithGuards(
+        fetch(this.url(path), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+            ...(await this.authHeaders()),
+          },
+          body: JSON.stringify(body),
+          signal: abort.controller.signal,
+        }),
+        timeoutMs,
+        abort.controller.signal,
+        timeout,
+      );
+      if (!res.ok) throw await toHttpError(res);
+      // Fail-soft: server returns plain JSON `{"stream": false}` instead of an
+      // SSE body when it can't/shouldn't stream -> caller falls back to /agent/chat.
+      const ct = res.headers.get("content-type") ?? "";
+      if (ct.startsWith("application/json")) {
+        let body: unknown;
+        try {
+          body = await res.json();
+        } catch {
+          body = undefined;
+        }
+        throw new StreamUnavailableError(body);
       }
-      throw new StreamUnavailableError(body);
+      if (!res.body) throw new HttpError(res.status, "empty stream body");
+      return withIdleTimeout(
+        res.body as unknown as AsyncIterable<Uint8Array>,
+        timeoutMs,
+        abort.controller.signal,
+        timeout,
+        abort.cleanup,
+      );
+    } catch (err) {
+      abort.cleanup();
+      if (abort.controller.signal.reason instanceof StreamTimeoutError) {
+        throw abort.controller.signal.reason;
+      }
+      throw err;
     }
-    if (!res.body) throw new HttpError(res.status, "empty stream body");
-    return res.body as unknown as AsyncIterable<Uint8Array>;
   }
 
   async postJson<T>(path: string, body: unknown): Promise<T> {
@@ -184,4 +223,102 @@ async function toHttpError(res: Response): Promise<HttpError> {
       ? String((body as Record<string, unknown>)["message"])
       : `HTTP ${res.status}`;
   return new HttpError(res.status, msg, body);
+}
+function normalizeStreamOptions(signalOrOptions?: AbortSignal | StreamOptions): StreamOptions {
+  if (!signalOrOptions) return {};
+  if ("aborted" in signalOrOptions && "addEventListener" in signalOrOptions) {
+    return { signal: signalOrOptions };
+  }
+  return signalOrOptions;
+}
+
+function defaultStreamTimeoutMs(): number {
+  const raw = process.env["AETHER_STREAM_TIMEOUT_MS"];
+  if (raw == null || raw.trim() === "") return DEFAULT_STREAM_TIMEOUT_MS;
+  const parsed = Number(raw);
+  return normalizeTimeoutMs(parsed) || DEFAULT_STREAM_TIMEOUT_MS;
+}
+
+function normalizeTimeoutMs(ms: number): number {
+  return Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : 0;
+}
+
+function createAbortBridge(upstream?: AbortSignal): { controller: AbortController; cleanup: () => void } {
+  const controller = new AbortController();
+  if (!upstream) return { controller, cleanup: () => {} };
+  const onAbort = (): void => controller.abort(abortReason(upstream));
+  if (upstream.aborted) onAbort();
+  else upstream.addEventListener("abort", onAbort, { once: true });
+  return {
+    controller,
+    cleanup: () => upstream.removeEventListener("abort", onAbort),
+  };
+}
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? abortError();
+}
+
+function abortError(): Error {
+  const err = new Error("The operation was aborted");
+  err.name = "AbortError";
+  return err;
+}
+
+async function awaitWithGuards<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  signal: AbortSignal,
+  onTimeout: () => StreamTimeoutError,
+): Promise<T> {
+  if (signal.aborted) throw abortReason(signal);
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  let abortHandler: (() => void) | null = null;
+  try {
+    const guards: Promise<T>[] = [promise];
+    if (timeoutMs > 0) {
+      guards.push(new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => reject(onTimeout()), timeoutMs);
+        unrefTimer(timeout);
+      }));
+    }
+    guards.push(new Promise<T>((_, reject) => {
+      abortHandler = () => reject(abortReason(signal));
+      signal.addEventListener("abort", abortHandler, { once: true });
+    }));
+    return await Promise.race(guards);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (abortHandler) signal.removeEventListener("abort", abortHandler);
+  }
+}
+
+function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
+  if (typeof timer === "object" && "unref" in timer && typeof timer.unref === "function") {
+    timer.unref();
+  }
+}
+
+async function* withIdleTimeout(
+  stream: AsyncIterable<Uint8Array>,
+  timeoutMs: number,
+  signal: AbortSignal,
+  onTimeout: () => StreamTimeoutError,
+  cleanup: () => void,
+): AsyncIterable<Uint8Array> {
+  const iterator = stream[Symbol.asyncIterator]();
+  try {
+    while (true) {
+      const next = await awaitWithGuards(iterator.next(), timeoutMs, signal, onTimeout);
+      if (next.done) return;
+      yield next.value;
+    }
+  } finally {
+    cleanup();
+    try {
+      void iterator.return?.();
+    } catch {
+      /* best-effort cancellation */
+    }
+  }
 }

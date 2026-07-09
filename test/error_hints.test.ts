@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { hintFor, isAbortError } from "../src/core/error_hints.js";
-import { HttpError, InsecureTransportError } from "../src/core/errors.js";
+import { HttpError, InsecureTransportError, StreamTimeoutError } from "../src/core/errors.js";
 
 test("HTTP statuses map to actionable hints", () => {
   assert.match(hintFor(new HttpError(401, "HTTP 401"))!, /aether auth login/);
@@ -18,6 +18,11 @@ test("network failures point at connectivity", () => {
 
 test("insecure transport points at the base URL", () => {
   assert.match(hintFor(new InsecureTransportError("http://evil"))!, /https/);
+});
+
+test("stream timeouts point at connectivity", () => {
+  assert.match(hintFor(new StreamTimeoutError(120_000))!, /stream went quiet/);
+  assert.match(hintFor(new StreamTimeoutError(120_000))!, /\/doctor/);
 });
 
 test("aborts are silent (already user-initiated) and detected", () => {

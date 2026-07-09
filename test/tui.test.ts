@@ -61,7 +61,10 @@ test("heartbeat: one beat reaches the peak then returns to rest", async () => {
   const seen: string[] = [];
   const hb = new HeartbeatIndicator({ onFrame: (g) => seen.push(g), frameMs: 1 });
   hb.beat();
-  await delay(40);
+  const deadline = Date.now() + 200;
+  while (Date.now() < deadline && !(seen.includes("◉") && hb.glyph() === "·")) {
+    await delay(5);
+  }
   assert.ok(seen.includes("◉"), "beat reaches the peak glyph");
   assert.equal(hb.glyph(), "·", "rests between beats");
 });
