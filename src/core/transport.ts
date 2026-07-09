@@ -89,7 +89,7 @@ export const DEFAULT_STREAM_TIMEOUT_MS = 120_000;
 
 export interface StreamOptions {
   signal?: AbortSignal;
-  /** Timeout for opening the stream and for each quiet interval between chunks. */
+  /** Timeout for opening the stream and for each quiet interval between chunks. 0 disables it. */
   timeoutMs?: number;
 }
 
@@ -113,23 +113,31 @@ export class ApiClient {
   }
 
   /** POST a coding envelope, return the raw SSE byte stream for decodeSse().
-   *  The optional signal aborts Ctrl+C turns; the timeout catches a quiet
-   *  connection so a stalled SSE body cannot hang the terminal forever. */
+   *  `signal` aborts a Ctrl+C turn; `timeoutMs` (default 120s, override via
+   *  AETHER_STREAM_TIMEOUT_MS or the options form, 0 disables) catches a quiet
+   *  connection so a stalled SSE body cannot hang the terminal forever.
+   *  Timeout and user-abort are raced as two independent promises (see
+   *  raceAgainst) so a timeout can never be mistaken for the user's own
+   *  Ctrl+C, or vice versa, no matter which fires first. */
   async stream(
     path: string,
     body: unknown,
     signalOrOptions?: AbortSignal | StreamOptions,
   ): Promise<AsyncIterable<Uint8Array>> {
-    const opts = normalizeStreamOptions(signalOrOptions);
-    const timeoutMs = normalizeTimeoutMs(opts.timeoutMs ?? defaultStreamTimeoutMs());
-    const abort = createAbortBridge(opts.signal);
-    const timeout = (): StreamTimeoutError => {
-      const err = new StreamTimeoutError(timeoutMs);
-      if (!abort.controller.signal.aborted) abort.controller.abort(err);
-      return err;
-    };
+    const { signal, timeoutMs } = normalizeStreamOptions(signalOrOptions);
+    // `net` only tells fetch()/the body reader to release the socket on timeout
+    // or abort — it is never inspected to pick the error the caller sees. That
+    // classification comes solely from raceAgainst racing the caller's own
+    // `signal` against an independent timer, so the two can't collide.
+    const net = new AbortController();
+    const releaseNet = (): void => net.abort();
+    if (signal) {
+      if (signal.aborted) releaseNet();
+      else signal.addEventListener("abort", releaseNet, { once: true });
+    }
+    const cleanup = (): void => signal?.removeEventListener("abort", releaseNet);
     try {
-      const res = await awaitWithGuards(
+      const res = await raceAgainst(
         fetch(this.url(path), {
           method: "POST",
           headers: {
@@ -138,11 +146,10 @@ export class ApiClient {
             ...(await this.authHeaders()),
           },
           body: JSON.stringify(body),
-          signal: abort.controller.signal,
+          signal: net.signal,
         }),
+        signal,
         timeoutMs,
-        abort.controller.signal,
-        timeout,
       );
       if (!res.ok) throw await toHttpError(res);
       // Fail-soft: server returns plain JSON `{"stream": false}` instead of an
@@ -160,16 +167,14 @@ export class ApiClient {
       if (!res.body) throw new HttpError(res.status, "empty stream body");
       return withIdleTimeout(
         res.body as unknown as AsyncIterable<Uint8Array>,
+        signal,
         timeoutMs,
-        abort.controller.signal,
-        timeout,
-        abort.cleanup,
+        releaseNet,
+        cleanup,
       );
     } catch (err) {
-      abort.cleanup();
-      if (abort.controller.signal.reason instanceof StreamTimeoutError) {
-        throw abort.controller.signal.reason;
-      }
+      releaseNet();
+      cleanup();
       throw err;
     }
   }
@@ -224,18 +229,27 @@ async function toHttpError(res: Response): Promise<HttpError> {
       : `HTTP ${res.status}`;
   return new HttpError(res.status, msg, body);
 }
-function normalizeStreamOptions(signalOrOptions?: AbortSignal | StreamOptions): StreamOptions {
-  if (!signalOrOptions) return {};
-  if ("aborted" in signalOrOptions && "addEventListener" in signalOrOptions) {
-    return { signal: signalOrOptions };
-  }
-  return signalOrOptions;
+function normalizeStreamOptions(signalOrOptions?: AbortSignal | StreamOptions): {
+  signal?: AbortSignal;
+  timeoutMs: number;
+} {
+  const isSignal =
+    !!signalOrOptions && "aborted" in signalOrOptions && "addEventListener" in signalOrOptions;
+  const opts: StreamOptions = isSignal
+    ? { signal: signalOrOptions as AbortSignal }
+    : ((signalOrOptions as StreamOptions | undefined) ?? {});
+  return { signal: opts.signal, timeoutMs: normalizeTimeoutMs(opts.timeoutMs ?? defaultStreamTimeoutMs()) };
 }
 
-function defaultStreamTimeoutMs(): number {
+/** Exported so tests can pin AETHER_STREAM_TIMEOUT_MS parsing without a live stream. */
+export function defaultStreamTimeoutMs(): number {
   const raw = process.env["AETHER_STREAM_TIMEOUT_MS"];
   if (raw == null || raw.trim() === "") return DEFAULT_STREAM_TIMEOUT_MS;
   const parsed = Number(raw);
+  // 0 is a valid "disabled" value (see normalizeTimeoutMs) — only fall back to
+  // the default when the env var is missing or genuinely invalid, never
+  // silently discard an explicit 0.
+  if (parsed === 0) return 0;
   return normalizeTimeoutMs(parsed) || DEFAULT_STREAM_TIMEOUT_MS;
 }
 
@@ -243,82 +257,62 @@ function normalizeTimeoutMs(ms: number): number {
   return Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : 0;
 }
 
-function createAbortBridge(upstream?: AbortSignal): { controller: AbortController; cleanup: () => void } {
-  const controller = new AbortController();
-  if (!upstream) return { controller, cleanup: () => {} };
-  const onAbort = (): void => controller.abort(abortReason(upstream));
-  if (upstream.aborted) onAbort();
-  else upstream.addEventListener("abort", onAbort, { once: true });
-  return {
-    controller,
-    cleanup: () => upstream.removeEventListener("abort", onAbort),
-  };
-}
-
-function abortReason(signal: AbortSignal): unknown {
-  return signal.reason ?? abortError();
-}
-
-function abortError(): Error {
-  const err = new Error("The operation was aborted");
-  err.name = "AbortError";
-  return err;
-}
-
-async function awaitWithGuards<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  signal: AbortSignal,
-  onTimeout: () => StreamTimeoutError,
-): Promise<T> {
-  if (signal.aborted) throw abortReason(signal);
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-  let abortHandler: (() => void) | null = null;
-  try {
-    const guards: Promise<T>[] = [promise];
-    if (timeoutMs > 0) {
-      guards.push(new Promise<T>((_, reject) => {
-        timeout = setTimeout(() => reject(onTimeout()), timeoutMs);
-        unrefTimer(timeout);
-      }));
-    }
-    guards.push(new Promise<T>((_, reject) => {
-      abortHandler = () => reject(abortReason(signal));
-      signal.addEventListener("abort", abortHandler, { once: true });
-    }));
-    return await Promise.race(guards);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-    if (abortHandler) signal.removeEventListener("abort", abortHandler);
+/** Races `promise` against the caller's own abort and an independent timeout
+ *  timer. Each loses its race with its own error (the caller's real
+ *  AbortError, or a fresh StreamTimeoutError) — there's no shared mutable
+ *  "reason" field for the two to race over, so neither can be mistaken for
+ *  the other regardless of which fires first. */
+function raceAgainst<T>(promise: Promise<T>, signal: AbortSignal | undefined, timeoutMs: number): Promise<T> {
+  if (signal?.aborted) return Promise.reject(abortError(signal));
+  const racers: Promise<T>[] = [promise];
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  if (timeoutMs > 0) {
+    racers.push(
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new StreamTimeoutError(timeoutMs)), timeoutMs);
+        timer.unref?.();
+      }),
+    );
   }
+  let onAbort: (() => void) | undefined;
+  if (signal) {
+    racers.push(
+      new Promise<T>((_, reject) => {
+        onAbort = () => reject(abortError(signal));
+        signal.addEventListener("abort", onAbort, { once: true });
+      }),
+    );
+  }
+  return Promise.race(racers).finally(() => {
+    if (timer) clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
+  });
 }
 
-function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
-  if (typeof timer === "object" && "unref" in timer && typeof timer.unref === "function") {
-    timer.unref();
-  }
+function abortError(signal: AbortSignal): unknown {
+  return signal.reason ?? Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
 }
 
 async function* withIdleTimeout(
   stream: AsyncIterable<Uint8Array>,
+  signal: AbortSignal | undefined,
   timeoutMs: number,
-  signal: AbortSignal,
-  onTimeout: () => StreamTimeoutError,
+  releaseNet: () => void,
   cleanup: () => void,
 ): AsyncIterable<Uint8Array> {
   const iterator = stream[Symbol.asyncIterator]();
   try {
     while (true) {
-      const next = await awaitWithGuards(iterator.next(), timeoutMs, signal, onTimeout);
+      const next = await raceAgainst(iterator.next(), signal, timeoutMs);
       if (next.done) return;
       yield next.value;
     }
   } finally {
+    releaseNet();
     cleanup();
-    try {
-      void iterator.return?.();
-    } catch {
-      /* best-effort cancellation */
-    }
+    // iterator.return() can reject (e.g. the body was already aborted) — always
+    // attach a handler so a rejecting cleanup can never surface as an unhandled
+    // promise rejection (which the REPL's global handler turns into a crash).
+    iterator.return?.()?.catch(() => {});
   }
 }

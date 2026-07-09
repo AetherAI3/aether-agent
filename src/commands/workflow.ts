@@ -3,6 +3,7 @@
 
 import type { AppContext } from "../core/context.js";
 import { fail as coreFail } from "../core/errors.js";
+import { hintFor } from "../core/error_hints.js";
 import { buildChatRequest } from "../core/envelope.js";
 import { CHAT_STREAM_PATH } from "../core/transport.js";
 import { decodeSse } from "../core/stream.js";
@@ -101,9 +102,8 @@ async function workflowNew(ctx: AppContext, description: string): Promise<number
       }
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`\n✗ ${msg}\n`);
-    return 1;
+    process.stdout.write("\n");
+    return coreFail(err, hintFor(err) ?? undefined);
   }
 
   if (draft) {

@@ -11,6 +11,10 @@ export type { StreamFrame } from "./core/stream.js";
 export { buildChatRequest } from "./core/envelope.js";
 export type { ChatWireRequest } from "./core/envelope.js";
 export type { CatalogItem, CatalogResponse } from "./types.js";
+// chatStream() can throw StreamTimeoutError (a quiet connection); hintFor() maps it
+// (and other thrown errors) to the same recovery hint the terminal CLI shows.
+export { StreamTimeoutError } from "./core/errors.js";
+export { hintFor } from "./core/error_hints.js";
 
 // ---- Embed surface: render the real agent terminal into a host (desktop/web) ----
 export { createTerminalSession } from "./ui/terminal_session.js";

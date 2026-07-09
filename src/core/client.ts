@@ -58,6 +58,11 @@ export class AetherClient {
    * The universal chat route. Yields typed SSE frames (delta/usage/done/...).
    * Fail-soft: if the server can't stream, falls back to the non-streaming
    * endpoint and yields a synthetic delta + done so consumers stay uniform.
+   *
+   * Can throw (not fail-soft): HttpError, InsecureTransportError, or
+   * StreamTimeoutError when the connection goes quiet. Import StreamTimeoutError
+   * and hintFor from "@aether/cli" to detect it and get the same recovery hint
+   * the terminal CLI shows.
    */
   async *chatStream(prompt: string, opts: ChatOptions = {}): AsyncGenerator<StreamFrame> {
     const req = buildChatRequest({
