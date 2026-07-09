@@ -7,17 +7,26 @@
 // regardless of which side originally ran it.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { dirname, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { dirname, relative, resolve, sep } from "node:path";
 import type { ToolName } from "./brain_protocol.js";
 import { webFetch, webSearch } from "./web.js";
 
 const MAX_OUTPUT = 8000;
 const DEFAULT_TEST_CMD = "pytest -q";
+const SNAPSHOT_MAX_BYTES = 1024 * 1024;
+const SEARCH_MAX_HITS = 40;
+const SEARCH_SKIP_DIRS = new Set([".git", "node_modules", "dist"]);
 
 export interface ToolResult {
   output: string;
   exitCode: number;
+}
+
+export interface FileSnapshot {
+  existed: boolean;
+  text: string | null;
+  reason?: "binary" | "too-big" | "unsafe";
 }
 
 export class ToolExecutor {
@@ -65,8 +74,13 @@ export class ToolExecutor {
       timeout: timeoutMs,
       maxBuffer: 64 * 1024 * 1024,
     });
-    if (r.error && (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
-      return { output: `[timeout after ${Math.round(timeoutMs / 1000)}s]`, exitCode: 124 };
+    if (r.error) {
+      const err = r.error as NodeJS.ErrnoException;
+      if (err.code === "ETIMEDOUT") {
+        return { output: `[timeout after ${Math.round(timeoutMs / 1000)}s]`, exitCode: 124 };
+      }
+      const code = err.code === "ENOENT" ? 127 : 1;
+      return { output: `[spawn error ${err.code ?? "UNKNOWN"}: ${err.message}]`, exitCode: code };
     }
     const code = r.status ?? 1;
     const body = capHeadTail((r.stdout ?? "") + (r.stderr ?? ""), MAX_OUTPUT);
@@ -144,10 +158,52 @@ export class ToolExecutor {
     return { output: `[wrote ${path} · ${Buffer.byteLength(content)} bytes]`, exitCode: 0 };
   }
 
+  snapshot(path: string): FileSnapshot {
+    let abs: string;
+    try {
+      abs = this.safe(path);
+    } catch {
+      return { existed: false, text: null, reason: "unsafe" };
+    }
+    if (!existsSync(abs) || !statSync(abs).isFile()) return { existed: false, text: null };
+    if (statSync(abs).size > SNAPSHOT_MAX_BYTES) return { existed: true, text: null, reason: "too-big" };
+    const buf = readFileSync(abs);
+    if (buf.includes(0)) return { existed: true, text: null, reason: "binary" };
+    return { existed: true, text: buf.toString("utf8") };
+  }
+
   private repoSearch(query: string): ToolResult {
-    // grep across the tree (ripgrep-free for portability); cap to 40 hits.
-    const q = JSON.stringify(query);
-    return this.run(`grep -rIn -- ${q} . | head -40`);
+    if (!query) return { output: "[exit 0]\n", exitCode: 0 };
+
+    const hits: string[] = [];
+    const visit = (dir: string): void => {
+      if (hits.length >= SEARCH_MAX_HITS) return;
+      for (const ent of readdirSync(dir, { withFileTypes: true })) {
+        if (hits.length >= SEARCH_MAX_HITS) return;
+        if (ent.isSymbolicLink()) continue;
+        if (ent.isDirectory()) {
+          if (SEARCH_SKIP_DIRS.has(ent.name)) continue;
+          const child = resolve(dir, ent.name);
+          const real = realpathSync(child);
+          if (real === this.root || real.startsWith(this.root + sep)) visit(child);
+          continue;
+        }
+        if (!ent.isFile()) continue;
+
+        const file = resolve(dir, ent.name);
+        const buf = readFileSync(file);
+        if (buf.includes(0)) continue;
+        const rel = "./" + relative(this.root, file).split(sep).join("/");
+        const lines = buf.toString("utf8").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+        for (let i = 0; i < lines.length && hits.length < SEARCH_MAX_HITS; i++) {
+          const line = lines[i]!;
+          if (line.includes(query)) hits.push(`${rel}:${i + 1}:${line}`);
+        }
+      }
+    };
+
+    visit(this.root);
+    return { output: `[exit 0]\n${capHeadTail(hits.join("\n"), MAX_OUTPUT)}`, exitCode: 0 };
   }
 
   private gitCommit(message: string): ToolResult {
