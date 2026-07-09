@@ -237,6 +237,7 @@ Requires an active orchestrator — switch with `/agent neo` or `/agent kronus` 
 | `AETHER_LOGIN_URL` | `https://aethersystems.net/platform` | Page `aether auth login` opens. |
 | `AETHER_TOKEN` | *(unset)* | Inject a session token (CI / headless / embedding). |
 | `AETHER_CONFIG_DIR` | `~/.config/aether` | Config + token directory. |
+| `AETHER_STREAM_TIMEOUT_MS` | `120000` | Stream open/idle timeout (ms). `0` disables it. |
 
 See [`.env.example`](.env.example).
 
