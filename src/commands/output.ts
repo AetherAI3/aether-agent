@@ -5,6 +5,7 @@
 import type { AppContext } from "../core/context.js";
 import { listOutput, findOutput, openOutput, clearOutput } from "../core/vision.js";
 import { theme } from "../ui/theme.js";
+import { fail } from "../core/errors.js";
 
 export async function cmdOutput(ctx: AppContext, argv: string[]): Promise<number> {
   const sub = (argv[0] ?? "").toLowerCase();
@@ -50,8 +51,3 @@ async function outputClean(): Promise<number> {
   return 0;
 }
 
-function fail(err: unknown): number {
-  const msg = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`✗ ${msg}\n`);
-  return 1;
-}

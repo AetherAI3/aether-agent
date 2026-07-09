@@ -6,7 +6,7 @@ import {
   PROJECT_FROM_WORKFLOW_ASSESS_PATH, PROJECT_FROM_WORKFLOW_BRAINSTORM_PATH,
   PROJECT_FROM_WORKFLOW_PLAN_PATH, PROJECT_FROM_WORKFLOW_FINALIZE_PATH,
 } from "./transport.js";
-import { listSpaces, getSpacesContent, deleteSpacesFile, uploadFile, downloadFile, type VaultSpacesFile } from "./vault.js";
+import { listSpaces, getSpacesContent, deleteSpacesFile, uploadFile, downloadFile } from "./vault.js";
 
 // ── Types ───────────────────────────────────────
 

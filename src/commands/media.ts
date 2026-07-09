@@ -7,10 +7,11 @@
 import type { AppContext } from "../core/context.js";
 import type { CatalogResponse } from "../types.js";
 import { MODELS_PATH } from "../core/transport.js";
+import { fail as coreFail } from "../core/errors.js";
 import {
-  filterMediaModels, resolveModelKey, autoRouteModel, mediaKind,
+  filterMediaModels, resolveModelKey, autoRouteModel,
   buildMediaPrompt, dispatchGeneration, downloadMediaFile,
-  ensureOutputDir, recordOutput, listOutput, findOutput, openOutput, clearOutput,
+  ensureOutputDir, recordOutput, openOutput,
   IMAGE_SHORTCUTS, VIDEO_SHORTCUTS,
   type MediaKind, type MediaModel, type GenFlags, type GenResult,
 } from "../core/vision.js";
@@ -235,7 +236,5 @@ function printMediaHelp(kind: MediaKind): void {
 }
 
 function fail(err: unknown): number {
-  const msg = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`✗ ${msg}\n  (are you logged in? run: aether auth login)\n`);
-  return 1;
+  return coreFail(err, "are you logged in? run: aether auth login");
 }

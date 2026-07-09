@@ -8,6 +8,7 @@
 
 import type { AppContext } from "../core/context.js";
 import { openBrowser } from "../core/browser.js";
+import { fail as coreFail, errorMessage } from "../core/errors.js";
 import {
   getGithubStatus,
   startGithubConnect,
@@ -63,8 +64,7 @@ async function githubStatus(ctx: AppContext): Promise<number> {
     process.stdout.write(renderStatus(s));
     return s.connected ? 0 : 1;
   } catch (err) {
-    process.stderr.write(`✗ ${errMsg(err)}\n  (are you logged in? run: aether auth login)\n`);
-    return 1;
+    return coreFail(err, "are you logged in? run: aether auth login");
   }
 }
 
@@ -73,7 +73,7 @@ async function githubConnect(ctx: AppContext, opts: GithubOpts): Promise<number>
   try {
     installUrl = await startGithubConnect(ctx.api);
   } catch (err) {
-    process.stderr.write(`✗ could not start GitHub connect: ${errMsg(err)}\n`);
+    process.stderr.write(`✗ could not start GitHub connect: ${errorMessage(err)}\n`);
     return 1;
   }
   process.stdout.write(`\nTo link GitHub, open:\n  ${installUrl}\n\n`);
@@ -85,8 +85,7 @@ async function githubConnect(ctx: AppContext, opts: GithubOpts): Promise<number>
     process.stdout.write(`✓ GitHub linked${s.login ? ` (${s.login})` : ""}.\n`);
     return 0;
   } catch (err) {
-    process.stderr.write(`✗ ${errMsg(err)}\n`);
-    return 1;
+    return coreFail(err);
   }
 }
 
@@ -96,11 +95,6 @@ async function githubDisconnect(ctx: AppContext): Promise<number> {
     process.stdout.write("GitHub unlinked.\n");
     return 0;
   } catch (err) {
-    process.stderr.write(`✗ ${errMsg(err)}\n`);
-    return 1;
+    return coreFail(err);
   }
-}
-
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

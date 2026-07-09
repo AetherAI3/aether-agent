@@ -2,6 +2,7 @@
 // Follows the exact pattern of aether vault and aether github
 
 import type { AppContext } from "../core/context.js";
+import { fail as coreFail } from "../core/errors.js";
 import { buildChatRequest } from "../core/envelope.js";
 import { CHAT_STREAM_PATH } from "../core/transport.js";
 import { decodeSse } from "../core/stream.js";
@@ -11,8 +12,7 @@ import {
   listWorkflows, getWorkflow, deleteWorkflow, saveWorkflow, exportWorkflow,
   assessWorkflow, brainstormWorkflow, planWorkflow, finalizeWorkflow,
   formatWorkflowSummary, formatWorkflowDetail,
-  type Workflow, type TemplateInfo,
-  type WorkflowAssessResponse, type WorkflowBrainstormResponse,
+  type Workflow, type WorkflowBrainstormResponse,
 } from "../core/workflow.js";
 
 export async function cmdWorkflow(ctx: AppContext, argv: string[]): Promise<number> {
@@ -39,11 +39,6 @@ export async function cmdWorkflow(ctx: AppContext, argv: string[]): Promise<numb
       printWorkflowHelp();
       return 2;
   }
-}
-
-function notYet(feature: string): Promise<number> {
-  process.stderr.write(`${feature} — coming soon (multipart upload/download plumbing needed).\n`);
-  return Promise.resolve(1);
 }
 
 function printWorkflowHelp(): void {
@@ -384,7 +379,5 @@ async function workflowStatus(ctx: AppContext): Promise<number> {
 // ── Helpers ──────────────────────────────────────
 
 function fail(err: unknown): number {
-  const msg = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`✗ ${msg}\n  (are you logged in? run: aether auth login)\n`);
-  return 1;
+  return coreFail(err, "are you logged in? run: aether auth login");
 }

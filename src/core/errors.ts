@@ -1,5 +1,21 @@
 // Error taxonomy for the CLI.
 
+/** Unwrap any thrown value to a display message. */
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Standard command-handler failure path: print `✗ <message>` (with an
+ * optional parenthesized hint line, e.g. "are you logged in? run: ...")
+ * and return the conventional non-zero exit code.
+ */
+export function fail(err: unknown, hint?: string): number {
+  const msg = errorMessage(err);
+  process.stderr.write(`✗ ${msg}\n${hint ? `  (${hint})\n` : ""}`);
+  return 1;
+}
+
 /** Thrown by seams that are scaffolded but not yet wired to the the Aether API. */
 export class NotWiredError extends Error {
   constructor(what: string) {
