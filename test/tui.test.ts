@@ -61,9 +61,15 @@ test("heartbeat: one beat reaches the peak then returns to rest", async () => {
   const seen: string[] = [];
   const hb = new HeartbeatIndicator({ onFrame: (g) => seen.push(g), frameMs: 1 });
   hb.beat();
-  await delay(40);
-  assert.ok(seen.includes("◉"), "beat reaches the peak glyph");
-  assert.equal(hb.glyph(), "·", "rests between beats");
+  for (let i = 0; i < 80 && !seen.includes("\u25C9"); i++) {
+    await delay(1);
+  }
+  assert.ok(seen.includes("\u25C9"), "beat reaches the peak glyph");
+  for (let i = 0; i < 120 && hb.glyph() !== "\u00B7"; i++) {
+    await delay(1);
+  }
+  assert.equal(hb.glyph(), "\u00B7", "rests between beats");
+  hb.stop();
 });
 
 test("heartbeat: stall shows hollow; next beat clears it", () => {

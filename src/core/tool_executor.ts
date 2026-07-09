@@ -7,13 +7,15 @@
 // regardless of which side originally ran it.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { dirname, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { dirname, relative, resolve, sep } from "node:path";
 import type { ToolName } from "./brain_protocol.js";
 import { webFetch, webSearch } from "./web.js";
 
 const MAX_OUTPUT = 8000;
 const DEFAULT_TEST_CMD = "pytest -q";
+const SEARCH_MAX_HITS = 40;
+const SEARCH_SKIP_DIRS = new Set([".git", "node_modules", "dist"]);
 
 export interface ToolResult {
   output: string;
@@ -67,6 +69,11 @@ export class ToolExecutor {
     });
     if (r.error && (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
       return { output: `[timeout after ${Math.round(timeoutMs / 1000)}s]`, exitCode: 124 };
+    }
+    if (r.error) {
+      const err = r.error as NodeJS.ErrnoException;
+      const code = err.code ?? "UNKNOWN";
+      return { output: `[spawn error ${code}: ${err.message}]`, exitCode: code === "ENOENT" ? 127 : 1 };
     }
     const code = r.status ?? 1;
     const body = capHeadTail((r.stdout ?? "") + (r.stderr ?? ""), MAX_OUTPUT);
@@ -145,9 +152,37 @@ export class ToolExecutor {
   }
 
   private repoSearch(query: string): ToolResult {
-    // grep across the tree (ripgrep-free for portability); cap to 40 hits.
-    const q = JSON.stringify(query);
-    return this.run(`grep -rIn -- ${q} . | head -40`);
+    if (!query) return { output: "[exit 0]\n", exitCode: 0 };
+
+    const hits: string[] = [];
+    const visit = (dir: string): void => {
+      if (hits.length >= SEARCH_MAX_HITS) return;
+      for (const ent of readdirSync(dir, { withFileTypes: true })) {
+        if (hits.length >= SEARCH_MAX_HITS) return;
+        if (ent.isSymbolicLink()) continue;
+        if (ent.isDirectory()) {
+          if (SEARCH_SKIP_DIRS.has(ent.name)) continue;
+          const child = resolve(dir, ent.name);
+          const real = realpathSync(child);
+          if (real === this.root || real.startsWith(this.root + sep)) visit(child);
+          continue;
+        }
+        if (!ent.isFile()) continue;
+
+        const file = resolve(dir, ent.name);
+        const buf = readFileSync(file);
+        if (buf.includes(0)) continue;
+        const rel = "./" + relative(this.root, file).split(sep).join("/");
+        const lines = buf.toString("utf8").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+        for (let i = 0; i < lines.length && hits.length < SEARCH_MAX_HITS; i++) {
+          const line = lines[i]!;
+          if (line.includes(query)) hits.push(rel + ":" + (i + 1) + ":" + line);
+        }
+      }
+    };
+
+    visit(this.root);
+    return { output: "[exit 0]\n" + capHeadTail(hits.join("\n"), MAX_OUTPUT), exitCode: 0 };
   }
 
   private gitCommit(message: string): ToolResult {
