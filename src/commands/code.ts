@@ -8,8 +8,6 @@
 // and cloud are indistinguishable UX.
 
 import { createInterface } from "node:readline";
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import type { AppContext } from "../core/context.js";
 import type { Brain, TaskCommand } from "../core/brain.js";
 import type { BrainEvent } from "../core/brain_protocol.js";
@@ -78,16 +76,21 @@ export function applyEventToStatus(
   }
 }
 
-/** Colorized diff preview for a write_file edit, or null if not an edit. Reads
- * the on-disk file as the "before". */
-export function editPreview(cwd: string, ev: BrainEvent): string | null {
+/** Colorized diff preview for a write_file edit, or null if not an edit.
+ * Reads through ToolExecutor.snapshot() so preview reads share the same
+ * workspace guard as the eventual write. */
+export function editPreview(exec: ToolExecutor, ev: BrainEvent): string | null {
   if (ev.type !== "tool_call" || ev.name !== "write_file") return null;
   const path = String(ev.args["path"] ?? "");
   const next = String(ev.args["content"] ?? "");
   if (!path) return null;
-  const abs = resolve(cwd, path);
-  const prev = existsSync(abs) ? readFileSync(abs, "utf8") : "";
-  const ops = lineDiff(prev, next);
+  const before = exec.snapshot(path);
+  if (before.reason === "unsafe") return null;
+  if (before.existed && before.text === null) {
+    const kind = before.reason === "binary" ? "binary" : "large file";
+    return `  ✎ ${path}  (${kind}, wrote ${Buffer.byteLength(next)} b)`;
+  }
+  const ops = lineDiff(before.text ?? "", next);
   if (ops.length === 0) return null;
   return renderDiff(path, ops);
 }
@@ -253,7 +256,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
       }
       log?.event(ev, nowIso());
       applyEventToStatus(sr, ev, tick++);
-      const dp = editPreview(cwd, ev);
+      const dp = editPreview(exec, ev);
       if (dp) sr.log(dp);
       captureDone(ev);
       source.feedBrain(ev); // adapter -> animation/status (presentation only)
@@ -274,7 +277,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
       if (ev.type === "memory") {
         log?.event(ev, nowIso());
       }
-      const dp = editPreview(cwd, ev);
+      const dp = editPreview(exec, ev);
       if (dp) process.stdout.write(dp + "\n");
       captureDone(ev);
       if (interactive && ev.type === "stage") await stageGate(brain, ev.name);

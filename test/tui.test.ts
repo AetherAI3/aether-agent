@@ -59,12 +59,10 @@ test("setProgress forwards to onProgress", () => {
 // --- heartbeat -------------------------------------------------------------
 test("heartbeat: one beat reaches the peak then returns to rest", async () => {
   const seen: string[] = [];
-  const hb = new HeartbeatIndicator({ onFrame: (g) => seen.push(g), frameMs: 1 });
+  const frameMs = 5;
+  const hb = new HeartbeatIndicator({ onFrame: (g) => seen.push(g), frameMs });
   hb.beat();
-  const deadline = Date.now() + 200;
-  while (Date.now() < deadline && !(seen.includes("◉") && hb.glyph() === "·")) {
-    await delay(5);
-  }
+  await delay(frameMs * 24);
   assert.ok(seen.includes("◉"), "beat reaches the peak glyph");
   assert.equal(hb.glyph(), "·", "rests between beats");
 });
