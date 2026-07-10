@@ -17,8 +17,7 @@ import { cmdReceipt } from "./commands/receipt.js";
 import { cmdAudit } from "./commands/audit.js";
 import { cmdConfig } from "./commands/config.js";
 import { cmdCode } from "./commands/code.js";
-
-const VERSION = "0.1.0";
+import { VERSION } from "./version.js";
 
 /** Coerce a parsed flag value to string | undefined. */
 const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
