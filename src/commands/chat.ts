@@ -8,7 +8,7 @@ import { buildChatRequest } from "../core/envelope.js";
 import { CHAT_STREAM_PATH, CHAT_PATH } from "../core/transport.js";
 import { decodeSse } from "../core/stream.js";
 import { Renderer } from "../core/render.js";
-import { StreamUnavailableError, errorHint } from "../core/errors.js";
+import { StreamUnavailableError, errorHint, isAbortError } from "../core/errors.js";
 import { appendCustody } from "../core/custody.js";
 import { handleSlash } from "./slash.js";
 import { userInfo } from "node:os";
@@ -28,8 +28,10 @@ interface ChatJsonResponse {
   commitment_hash?: string;
 }
 
-/** Run a single coding turn end to end. Exported for `run.ts` (orchestrators). */
-export async function runTurn(ctx: AppContext, prompt: string): Promise<void> {
+/** Run a single coding turn end to end. Exported for `run.ts` (orchestrators).
+ * `signal` cancels the turn client-side (stream AND the fail-soft fallback) —
+ * orchestrator runs inherit cancelability through this same seam. */
+export async function runTurn(ctx: AppContext, prompt: string, signal?: AbortSignal): Promise<void> {
   const req = buildChatRequest({
     prompt,
     model: ctx.flags.model ?? ctx.cfg.defaultModel,
@@ -39,7 +41,7 @@ export async function runTurn(ctx: AppContext, prompt: string): Promise<void> {
   });
   const renderer = new Renderer({ json: ctx.flags.json, audit: ctx.flags.audit });
   try {
-    const stream = await ctx.api.stream(CHAT_STREAM_PATH, req);
+    const stream = await ctx.api.stream(CHAT_STREAM_PATH, req, signal);
     for await (const frame of decodeSse(stream)) {
       // The server signs each turn and returns it; persist the signed receipt
       // locally (best-effort, never breaks the chat).
@@ -49,7 +51,8 @@ export async function runTurn(ctx: AppContext, prompt: string): Promise<void> {
   } catch (err) {
     if (err instanceof StreamUnavailableError) {
       // Contract fail-soft: fall back to the non-streaming request/response.
-      const r = await ctx.api.postJson<ChatJsonResponse>(CHAT_PATH, req);
+      // Same signal — the fallback leg is cancelable too (arena AT-3d).
+      const r = await ctx.api.postJson<ChatJsonResponse>(CHAT_PATH, req, signal);
       process.stdout.write((r.response ?? "") + "\n");
       if (ctx.flags.audit && r.commitment_hash) {
         process.stderr.write(`  signed ✓ ${r.commitment_hash}\n`);
@@ -91,10 +94,15 @@ async function repl(ctx: AppContext): Promise<number> {
     removeHistoryDuplicates: true,
     completer: slashCompletions,
   });
-  // In terminal mode readline owns Ctrl+C (no process SIGINT is raised):
-  // leave with a goodbye instead of a hard kill. Exit code 130 mirrors the
-  // status_renderer/tui cleanup convention.
+  // In terminal mode readline owns Ctrl+C (no process SIGINT is raised).
+  // Mid-turn: cancel the in-flight turn, keep the session. Idle: leave with
+  // a goodbye at exit 130 (the status_renderer/tui cleanup convention).
+  let inflight: AbortController | null = null;
   rl.on("SIGINT", () => {
+    if (inflight) {
+      inflight.abort();
+      return;
+    }
     process.stderr.write(`\n${KAOMOJI.idle}  bye\n`);
     rl.close();
     process.exit(130);
@@ -126,10 +134,17 @@ async function repl(ctx: AppContext): Promise<number> {
       rl.prompt();
       continue;
     }
+    inflight = new AbortController();
     try {
-      await runTurn(ctx, t);
+      await runTurn(ctx, t, inflight.signal);
     } catch (err) {
-      printError(err, ctx.cfg.baseUrl);
+      if (isAbortError(err)) {
+        process.stderr.write("\n" + errTheme.dim("✗ canceled — turn discarded") + "\n");
+      } else {
+        printError(err, ctx.cfg.baseUrl);
+      }
+    } finally {
+      inflight = null;
     }
     process.stdout.write("\n");
     rl.prompt();

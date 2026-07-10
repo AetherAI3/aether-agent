@@ -47,8 +47,10 @@ export class ApiClient {
     return t ? { Authorization: `Bearer ${t}` } : {};
   }
 
-  /** POST a coding envelope, return the raw SSE byte stream for decodeSse(). */
-  async stream(path: string, body: unknown): Promise<AsyncIterable<Uint8Array>> {
+  /** POST a coding envelope, return the raw SSE byte stream for decodeSse().
+   * `signal` aborts the request AND the in-flight stream (Ctrl+C cancels the
+   * turn client-side; no wire change — the connection simply closes). */
+  async stream(path: string, body: unknown, signal?: AbortSignal): Promise<AsyncIterable<Uint8Array>> {
     const res = await fetch(this.url(path), {
       method: "POST",
       headers: {
@@ -57,6 +59,7 @@ export class ApiClient {
         ...(await this.authHeaders()),
       },
       body: JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     });
     if (!res.ok) throw await toHttpError(res);
     // Fail-soft: server returns plain JSON `{"stream": false}` instead of an
@@ -75,7 +78,7 @@ export class ApiClient {
     return res.body as unknown as AsyncIterable<Uint8Array>;
   }
 
-  async postJson<T>(path: string, body: unknown): Promise<T> {
+  async postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
     const res = await fetch(this.url(path), {
       method: "POST",
       headers: {
@@ -84,6 +87,7 @@ export class ApiClient {
         ...(await this.authHeaders()),
       },
       body: JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     });
     if (!res.ok) throw await toHttpError(res);
     return (await res.json()) as T;

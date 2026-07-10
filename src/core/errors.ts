@@ -45,6 +45,20 @@ const NETWORK_CODES = new Set([
 ]);
 
 /**
+ * True when `err` is the client-side cancellation of an in-flight turn
+ * (AbortController fired). Undici surfaces this two ways depending on where
+ * the stream was when it died: a DOMException named AbortError, or a
+ * TypeError whose `cause` is the AbortError. Pure — unit-testable.
+ */
+export function isAbortError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (err.name === "AbortError") return true;
+  const causeName = (err.cause as { name?: string } | undefined)?.name;
+  if (causeName === "AbortError") return true;
+  return /operation was aborted/i.test(err.message);
+}
+
+/**
  * One actionable next step for a failed turn, or null when there is nothing
  * better to say than the error itself. Pure — safe to unit test without a
  * network or a TTY. Consumed under the ✗ line as a dim hint.
