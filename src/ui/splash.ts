@@ -19,12 +19,13 @@ export interface SplashInfo {
 
 /** Plain status lines (no art) — exposed for testing the content. Every
  * slash token shown here must exist in the command registry (pinned by test):
- * the splash advertises only commands that actually run. */
+ * the splash advertises only commands that actually run. /effort earned its
+ * place back when it became a real command (the effort dial). */
 export function statusLines(info: SplashInfo): string[] {
   return [
     theme.bold(theme.cyan("AETHER CODE")),
     theme.dim(`v${info.version}`),
-    `[ ${theme.cyan("/model")} - ${info.model} ]  [ effort · ${info.effort} ]`,
+    `[ ${theme.cyan("/model")} - ${info.model} ]  [ ${theme.cyan("/effort")} ${info.effort} ]`,
     theme.dim("/help for commands · need to fix aether code? run /doctor"),
   ];
 }

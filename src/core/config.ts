@@ -12,6 +12,7 @@ export const DEFAULT_CONFIG: AetherConfig = {
   permissionMode: "ask",
   autoApply: false,
   telemetry: true,
+  defaultEffort: "",
 };
 
 export function configDir(): string {

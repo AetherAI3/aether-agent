@@ -16,6 +16,10 @@ export interface AetherConfig {
   autoApply: boolean;
   /** Anonymous usage telemetry opt-in. */
   telemetry: boolean;
+  /** Default effort tier (LOW|MED|MAX|ULTRA|CODEPRO, "" = server default).
+   * Shared with the AetherCloud backend: rides TaskCommand.effort into the
+   * cloud brain on every `aether code` run when --effort is not passed. */
+  defaultEffort: string;
 }
 
 // Wire DTO from GET /models (snake_case mirrors the server catalog). A single

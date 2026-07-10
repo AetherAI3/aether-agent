@@ -18,6 +18,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "agents", desc: "list orchestrators (Neo/Kronus)" },
   { name: "agent", args: "<n|id>", desc: "switch orchestrator" },
   { name: "tier", desc: "plan tier + default" },
+  { name: "effort", args: "[tier|1-5]", desc: "effort dial (LOW→CODEPRO, drives aether code)" },
   { name: "audit", args: "[n]", desc: "recent Aether audit trail" },
   { name: "doctor", desc: "diagnose your setup" },
   { name: "mcp", desc: "MCP servers (coming soon)" },

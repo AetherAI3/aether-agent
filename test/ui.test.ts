@@ -28,7 +28,7 @@ test("status column = the four spec lines", () => {
   assert.equal(s[0], "AETHER CODE");
   assert.equal(s[1], "v0.1.0");
   assert.ok(s[2]?.includes("/model") && s[2].includes("sonnet"));
-  assert.ok(s[2]?.includes("effort") && s[2].includes("high"));
+  assert.ok(s[2]?.includes("/effort") && s[2].includes("high"));
   assert.ok(s[3]?.includes("/help") && s[3].includes("/doctor"));
 });
 

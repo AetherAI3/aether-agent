@@ -10,6 +10,7 @@ import {
   slashCompletions,
 } from "../src/commands/slash_registry.js";
 import { handleSlash } from "../src/commands/slash.js";
+import { DEFAULT_CONFIG } from "../src/core/config.js";
 import type { AppContext } from "../src/core/context.js";
 
 class Capture extends Writable {
@@ -25,8 +26,8 @@ class Capture extends Writable {
   }
 }
 
-// help/default paths never touch ctx — a stub is safe here.
-const ctx = {} as unknown as AppContext;
+// help/default/effort-dial paths only read cfg — a cfg-only stub is safe here.
+const ctx = { cfg: { ...DEFAULT_CONFIG } } as unknown as AppContext;
 
 test("damerau counts the transposition typo as one edit", () => {
   assert.equal(damerau("auht", "auth"), 1);

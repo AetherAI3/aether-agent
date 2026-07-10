@@ -20,6 +20,8 @@ import { MODELS_PATH } from "../core/transport.js";
 import { fetchTrail } from "../core/audit.js";
 import { isApiToken } from "./auth.js";
 import { SLASH_COMMANDS, slashNames, nearest } from "./slash_registry.js";
+import { EFFORT_TIERS, normalizeEffort, renderEffortSlider, renderCodeProArt } from "../ui/effort.js";
+import { saveConfig } from "../core/config.js";
 
 export interface SlashResult {
   exit: boolean;
@@ -81,6 +83,9 @@ export async function handleSlash(
       break;
     case "tier":
       await showTier(ctx, out);
+      break;
+    case "effort":
+      setEffort(ctx, out, arg);
       break;
     case "audit":
       await showAudit(ctx, out, arg);
@@ -169,6 +174,28 @@ async function select(ctx: AppContext, out: Writable, arg: string, kind: Kind): 
     ctx.flags.agent = undefined;
     out.write(`model → ${item.label}\n`);
   }
+}
+
+/** `/effort` — show the dial; `/effort <tier|1-5>` — set it. The tier persists
+ * in the shared Aether config and rides TaskCommand.effort into the cloud
+ * brain on every `aether code` run (same backend as AetherCloud; no wire
+ * change). CODEPRO gets the full banner. */
+function setEffort(ctx: AppContext, out: Writable, arg: string): void {
+  if (!arg) {
+    for (const l of renderEffortSlider(ctx.cfg.defaultEffort)) out.write(l + "\n");
+    out.write(`set: /effort <${EFFORT_TIERS.join("|")}> (or 1-${EFFORT_TIERS.length})\n`);
+    return;
+  }
+  const tier = normalizeEffort(arg);
+  if (!tier) {
+    out.write(`no such effort tier: ${arg}  (${EFFORT_TIERS.join(", ")})\n`);
+    return;
+  }
+  ctx.cfg.defaultEffort = tier;
+  saveConfig(ctx.cfg);
+  if (tier === "CODEPRO") for (const l of renderCodeProArt()) out.write(l + "\n");
+  for (const l of renderEffortSlider(tier)) out.write(l + "\n");
+  out.write(`effort → ${tier}  (saved — drives your aether code runs)\n`);
 }
 
 async function showTier(ctx: AppContext, out: Writable): Promise<void> {

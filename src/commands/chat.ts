@@ -74,7 +74,11 @@ async function repl(ctx: AppContext): Promise<number> {
   const p = promptPrefix(username);
   const model = ctx.flags.model ?? ctx.cfg.defaultModel ?? "auto";
   process.stdout.write(
-    renderSplash({ version: VERSION, model: model || "auto", effort: "default" }) + "\n\n",
+    renderSplash({
+      version: VERSION,
+      model: model || "auto",
+      effort: ctx.cfg.defaultEffort || "default",
+    }) + "\n\n",
   );
   process.stdout.write("Type a prompt, or /help for commands. /exit to quit.\n\n");
   process.stdout.write(p);

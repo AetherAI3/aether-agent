@@ -103,7 +103,9 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     text: task,
     cwd,
     poolGb,
-    effort: opts.effort,
+    // --effort wins; otherwise the /effort dial saved in the Aether config
+    // (same backend: TaskCommand.effort reaches the cloud brain unchanged).
+    effort: opts.effort ?? (ctx.cfg.defaultEffort || undefined),
     model: ctx.flags.model,
     testCmd: opts.testCmd,
   };
