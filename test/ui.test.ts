@@ -6,6 +6,7 @@ import { statusLines } from "../src/ui/splash.js";
 import { promptPrefix } from "../src/ui/prompt.js";
 import { actionLine, subActionLine } from "../src/ui/agent.js";
 import { stripAnsi } from "../src/ui/theme.js";
+import { slashNames } from "../src/commands/slash_registry.js";
 
 test("progressBar fills/hashes by fraction with pct affixed right", () => {
   assert.equal(progressBar(0.5, 20), "|██████████##########| 50%");
@@ -27,8 +28,17 @@ test("status column = the four spec lines", () => {
   assert.equal(s[0], "AETHER CODE");
   assert.equal(s[1], "v0.1.0");
   assert.ok(s[2]?.includes("/model") && s[2].includes("sonnet"));
-  assert.ok(s[2]?.includes("/effort") && s[2].includes("high"));
-  assert.ok(s[3]?.includes("/mcp") && s[3].includes("/doctor"));
+  assert.ok(s[2]?.includes("effort") && s[2].includes("high"));
+  assert.ok(s[3]?.includes("/help") && s[3].includes("/doctor"));
+});
+
+test("splash advertises only commands that exist in the registry", () => {
+  const s = statusLines({ version: "0.1.0", model: "auto", effort: "default" }).map(stripAnsi);
+  const advertised = s.join(" ").match(/\/[a-z]+/g) ?? [];
+  const real = new Set(slashNames());
+  for (const cmd of advertised) {
+    assert.ok(real.has(cmd.slice(1)), `splash advertises ${cmd}, which is not a real command`);
+  }
 });
 
 test("prompt prefix is [user]_:", () => {
