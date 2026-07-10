@@ -24,6 +24,16 @@ export function configPath(): string {
 }
 
 export function loadConfig(): AetherConfig {
+  const cfg = loadConfigFile();
+  // AETHER_BASE_URL is documented to override the config's baseUrl. It used
+  // to be honored only by the SDK client — the CLI silently ignored it (and
+  // kept talking to production). The env var now wins here too.
+  const envBase = process.env["AETHER_BASE_URL"];
+  if (envBase) cfg.baseUrl = envBase;
+  return cfg;
+}
+
+function loadConfigFile(): AetherConfig {
   const path = configPath();
   if (!existsSync(path)) return { ...DEFAULT_CONFIG };
   try {

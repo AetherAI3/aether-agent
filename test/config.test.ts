@@ -30,3 +30,19 @@ test("saveConfig then loadConfig round-trips", async () => {
   assert.equal(cfg.defaultModel, "claude-opus-4-8");
   assert.equal(cfg.permissionMode, "skip");
 });
+
+// AETHER_BASE_URL is documented to override baseUrl — the CLI must actually
+// honor it (it used to be SDK-only, silently no-oping for the CLI).
+test("AETHER_BASE_URL overrides the config's baseUrl", async () => {
+  const { loadConfig, saveConfig, DEFAULT_CONFIG } = await import("../src/core/config.js");
+  saveConfig({ ...DEFAULT_CONFIG, baseUrl: "https://from-file.example" });
+  const prev = process.env["AETHER_BASE_URL"];
+  process.env["AETHER_BASE_URL"] = "http://127.0.0.1:9999";
+  try {
+    assert.equal(loadConfig().baseUrl, "http://127.0.0.1:9999");
+  } finally {
+    if (prev === undefined) delete process.env["AETHER_BASE_URL"];
+    else process.env["AETHER_BASE_URL"] = prev;
+  }
+  assert.equal(loadConfig().baseUrl, "https://from-file.example");
+});
