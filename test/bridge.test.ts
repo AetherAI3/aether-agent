@@ -82,6 +82,18 @@ test("encodeCommand task carries pool_gb", () => {
   assert.equal(JSON.parse(line).pool_gb, 10);
 });
 
+// CONTRACTS.md: test_cmd="" is the documented "unverifiable run" signal —
+// it must match the host's own default (unverified unless --test-cmd).
+test("encodeCommand task defaults test_cmd to empty, not pytest -q", () => {
+  const line = encodeCommand({ type: "task", text: "fix", cwd: ".", poolGb: 5 });
+  assert.equal(JSON.parse(line).test_cmd, "");
+});
+
+test("encodeCommand task passes through an explicit test_cmd", () => {
+  const line = encodeCommand({ type: "task", text: "fix", cwd: ".", poolGb: 5, testCmd: "npm test" });
+  assert.equal(JSON.parse(line).test_cmd, "npm test");
+});
+
 // --- NDJSON line buffer (partial-line framing) -----------------------------
 test("LineBuffer reassembles a JSON object split across chunks", () => {
   const lb = new LineBuffer();

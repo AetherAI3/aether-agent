@@ -145,8 +145,13 @@ export function encodeCommand(cmd: HostCommand): string {
         pool_gb: cmd.poolGb,
         effort: cmd.effort ?? "",
         model: cmd.model ?? "",
-        // default pytest -q on the brain side; pass through what the host has.
-        test_cmd: cmd.testCmd ?? "pytest -q",
+        // CONTRACTS.md: test_cmd="" means unverifiable — must match the
+        // host's own default (code.ts only runs its final gate when
+        // --test-cmd is explicit). Defaulting to "pytest -q" here made the
+        // brain self-verify Python repos while the host still reported
+        // "unverified", and made it grind pytest pointlessly in JS/Go/Rust
+        // repos when the user simply forgot the flag.
+        test_cmd: cmd.testCmd ?? "",
       };
       break;
     case "tool_result":
