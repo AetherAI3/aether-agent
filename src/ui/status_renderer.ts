@@ -75,6 +75,8 @@ export class StatusRenderer {
   private streamed = 0; // output tokens streamed this run (the ↑ figure)
   private used = 0;
   private cap = 0;
+  private tasks = ""; // pre-styled multi-task counter (e.g. "3/7"); "" hides it
+  private beats = 0; // heartbeat pulses so far (the live "tracking each beat")
   private startedMs: number;
   private ticker: ReturnType<typeof setInterval> | null = null;
   private cleanupBound = false;
@@ -92,7 +94,7 @@ export class StatusRenderer {
   }
 
   start(): void {
-    this.startedMs = this.now();
+    this.startedMs = this.now(); // begin the thinking timer (even off-TTY: harmless)
     if (!this.tty) return;
     try { this.sink.write(HIDE); } catch { /* terminal already gone */ }
     this.installCleanup();
@@ -115,6 +117,11 @@ export class StatusRenderer {
     this.hb = g;
     this.repaint();
   }
+  /** Update the live heartbeat count (drives the thinking timer's ♥ counter). */
+  setBeats(n: number): void {
+    this.beats = n;
+    this.repaint();
+  }
   /** Set the activity word + kaomoji (from phaseVerb). */
   setVerb(verb: string, kao: string): void {
     this.verb = verb;
@@ -134,6 +141,11 @@ export class StatusRenderer {
   setProgress(used: number, cap: number): void {
     this.used = used;
     this.cap = cap;
+    this.repaint();
+  }
+  /** A compact, pre-styled multi-task counter pinned alongside the stage. */
+  setTasks(summary: string): void {
+    this.tasks = summary;
     this.repaint();
   }
 
@@ -201,21 +213,27 @@ export class StatusRenderer {
     try { this.sink.write(CLR_LINE + this.composeLine()); } catch { /* terminal already gone */ }
   }
 
-  /** The pinned heartbeat line. Reads the injected clock — public for tests.
-   *  Clamped to the sink width: a wrapped pinned line breaks the \r+2K repaint
-   *  and strands a junk row every tick. */
+  /** The pinned status line. Reads the injected clock — public for tests.
+   *  Clamped to the sink width via sliceVisible: a wrapped pinned line breaks
+   *  the \r+2K repaint and strands a junk row every tick (10-20 repaints/sec
+   *  with the heartbeat, so an unclamped wrap floods the screen fast). */
   composeLine(): string {
     const hb = this.theme.cyan(this.hb);
     const anim = this.anim ? `${this.theme.cyan(this.anim)}  ` : "";
     const kao = this.kao ? this.theme.dim(this.kao) + " " : "";
     const head = `${kao}${this.theme.bold(this.verb)}…`;
+    const tasksSeg = this.tasks ? "  " + this.tasks : ""; // pre-styled "n/7" counter
     const elapsed = formatElapsed(this.now() - this.startedMs);
     const up = this.streamed > 0 ? ` · ↑ ${humanTokens(this.streamed)} tokens` : "";
+    // The heartbeat count rides alongside elapsed time so the thinking timer
+    // visibly ticks on every beat, not just once a second.
+    const beatsSeg = this.beats > 0 ? ` ♥${this.beats}` : "";
     const uvt =
       this.mode === "api" && this.cap > 0
         ? `  ${this.theme.dim(`UVT ${humanTokens(this.used)}/${humanTokens(this.cap)} ${this.bar()}`)}`
         : "";
-    const line = `${hb}  ${anim}${head} ${this.theme.dim(`(${elapsed}${up})`)}${uvt}`;
+    const line =
+      `${hb}  ${anim}${head}${tasksSeg} ${this.theme.dim(`(${elapsed}${beatsSeg}${up})`)}${uvt}`;
     return sliceVisible(line, Math.max(20, this.sink.columns - 1));
   }
 
@@ -225,7 +243,7 @@ export class StatusRenderer {
     return "▓".repeat(f) + "░".repeat(Math.max(0, width - f));
   }
 
-  /** The guarded cursor-restore used by both exit and SIGINT. Public-ish for tests. */
+  /** Guarded cursor-restore for SIGINT only (see onSigint below). Public-ish for tests. */
   _restoreOnSignalForTest(): void {
     try { this.sink.write(SHOW); } catch { /* terminal already gone */ }
     try { this.sink.write("\n"); } catch { /* terminal already gone */ }
@@ -234,6 +252,8 @@ export class StatusRenderer {
   private installCleanup(): void {
     if (!this.ownsProcess || this.cleanupBound) return;
     this.cleanupBound = true;
+    // Plain exit: just show the cursor. No trailing "\n" here — unlike SIGINT,
+    // a normal exit isn't interrupting a still-pinned line mid-repaint.
     const restore = (): void => {
       try { this.sink.write(SHOW); } catch { /* terminal already gone */ }
     };

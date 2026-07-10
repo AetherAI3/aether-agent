@@ -45,10 +45,18 @@ export class LocalBrain implements Brain {
     const mod = this.opts.module ?? "aether_agent.headless";
     const child = spawn(python, ["-m", mod], {
       cwd: task.cwd,
-      env: { ...process.env, ...(this.opts.env ?? {}) },
+      // PYTHONUTF8 belt-and-suspenders alongside the ASCII-escaped wire: the
+      // child's stdio never falls back to cp1252 on Windows.
+      env: { ...process.env, PYTHONUTF8: "1", ...(this.opts.env ?? {}) },
       stdio: ["pipe", "pipe", "pipe"],
     }) as ChildProcessWithoutNullStreams;
     this.child = child;
+
+    // A dead child's stdin raises EPIPE asynchronously; without a listener
+    // that's an uncaught exception that kills the whole CLI mid-run (and the
+    // session log never closes). The close/exit path already surfaces the
+    // brain's death; the write error itself is noise.
+    child.stdin.on("error", () => {});
 
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {

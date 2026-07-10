@@ -83,6 +83,18 @@ test("encodeCommand task carries pool_gb", () => {
   assert.equal(JSON.parse(line).pool_gb, 10);
 });
 
+// CONTRACTS.md: test_cmd="" is the documented "unverifiable run" signal —
+// it must match the host's own default (unverified unless --test-cmd).
+test("encodeCommand task defaults test_cmd to empty, not pytest -q", () => {
+  const line = encodeCommand({ type: "task", text: "fix", cwd: ".", poolGb: 5 });
+  assert.equal(JSON.parse(line).test_cmd, "");
+});
+
+test("encodeCommand task passes through an explicit test_cmd", () => {
+  const line = encodeCommand({ type: "task", text: "fix", cwd: ".", poolGb: 5, testCmd: "npm test" });
+  assert.equal(JSON.parse(line).test_cmd, "npm test");
+});
+
 // --- NDJSON line buffer (partial-line framing) -----------------------------
 test("LineBuffer reassembles a JSON object split across chunks", () => {
   const lb = new LineBuffer();
@@ -155,7 +167,7 @@ test("repo_search finds literal matches recursively without external grep", () =
 test("repo_search caps matches at 40 hits", () => {
   const dir = mkdtempSync(join(tmpdir(), "aether-search-cap-"));
   try {
-    writeFileSync(join(dir, "many.txt"), Array.from({ length: 50 }, (_, i) => "needle " + i).join("\n"), "utf8");
+    writeFileSync(join(dir, "many.txt"), Array.from({ length: 50 }, (_, i) => `needle ${i}`).join("\n"), "utf8");
     const r = new ToolExecutor(dir).execute("repo_search", { query: "needle" });
     const hits = r.output.split(/\r?\n/).filter((line) => line.includes("needle "));
     assert.equal(hits.length, 40);
@@ -331,6 +343,9 @@ test("path-guard rejects traversal, absolute, and symlink escapes", () => {
 
 // --- probe 3: shell hardening (non-zero exit + stderr reach the brain) ------
 test("run_shell surfaces a non-zero exit code and captures stderr", (t) => {
+  // `node -e` (not a platform-specific shell one-liner) so this passes
+  // identically on Windows and POSIX without a win32/posix branch, and runs
+  // in an isolated tmpdir so it can't leave stray output under process.cwd().
   const ex = new ToolExecutor(mkdtempSync(join(tmpdir(), "aether-sh-")));
   const r = ex.execute("run_shell", {
     command: `node -e "process.stderr.write('boom'); process.exit(3)"`,

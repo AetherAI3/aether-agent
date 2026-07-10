@@ -37,6 +37,9 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "agent", args: "<n|id>", summary: "switch orchestrator (or picker)", section: "Session" },
   { name: "agents", summary: "active agent sessions + UVT", section: "Session" },
   { name: "tier", summary: "plan tier + default model", section: "Session" },
+  // effort tier persists to config and rides TaskCommand.effort into every
+  // `aether code` run — see setEffort() in slash.ts for the wire contract.
+  { name: "effort", args: "[tier|1-5]", summary: "effort dial (LOW to CODEPRO), drives aether code", section: "Session" },
   { name: "audit", args: "[n]", summary: "recent audit trail", section: "Session" },
   { name: "doctor", summary: "diagnose your setup", section: "Session" },
   { name: "clear", summary: "clear screen", section: "Session" },

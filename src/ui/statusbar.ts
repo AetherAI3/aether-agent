@@ -7,19 +7,27 @@
 // Cheap: two ints + a string, off the hot path. Clamps at 100% (the pool fades
 // stale slices to hold the line — it recycles, never hard-stops).
 
+import { KAOMOJI } from "./kaomoji.js";
+
 export const TOKENS_PER_GB = 233_000_000;
 
 // phase -> [label, kaomoji]. Tracks the agent's current activity (the spec set).
-const REASONING: [string, string] = ["reasoning", "(๑•̀ㅂ•́)و✧✎"];
+// Faces come from the ONE kaomoji table (kaomoji.ts) so the two can't drift.
+const REASONING: [string, string] = ["reasoning", KAOMOJI.active];
 const PHASES: Record<string, [string, string]> = {
-  anchoring: ["anchoring context", "＿φ(°-°=)"],
-  scanning: ["scanning repo", "(ノ￣ー￣)ノ⌨"],
+  anchoring: ["anchoring context", KAOMOJI.logging],
+  scanning: ["scanning repo", KAOMOJI.scanning],
   reasoning: REASONING,
-  grounding: ["grounding", "( Ò﹏Ó)✎"],
-  paging: ["paging", "(⌨_⌨)"],
+  // grounding/paging reuse faces from the shared kaomoji table (error/idle
+  // are close enough in spirit) so there's one source of truth to edit.
+  grounding: ["grounding", KAOMOJI.error],
+  paging: ["paging", KAOMOJI.idle],
+  // These three states have no equivalent in kaomoji.ts (agent-state faces
+  // only cover active/scanning/logging/idle/error) — origin/main's QOPC
+  // memory bridge introduced them, so they keep their own literal faces.
   "memory-extract": ["extracting memory", "(◕‿◕)✎"],
-  "memory-skill":   ["learning skill",   "🧠✨"],
-  "compacting":     ["compacting context", "(；・∀・)📦"],
+  "memory-skill": ["learning skill", "🧠✨"],
+  compacting: ["compacting context", "(；・∀・)📦"],
 };
 
 export function humanTokens(n: number): string {

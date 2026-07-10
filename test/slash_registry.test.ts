@@ -74,3 +74,13 @@ test("suggestCommand catches close typos, rejects garbage", () => {
   assert.equal(suggestCommand("vautl"), "vault");
   assert.equal(suggestCommand("zzzzzzzzz"), null);
 });
+
+// /effort (LOW..CODEPRO dial that drives `aether code` runs) has no origin/main
+// counterpart — pin its registry entry so a future registry rewrite can't
+// silently drop the only place this command is discoverable from.
+test("effort is registered in the Session section with a tier|1-5 arg hint", () => {
+  const c = findCommand("effort");
+  assert.ok(c, "/effort missing from registry");
+  assert.equal(c!.section, "Session");
+  assert.equal(c!.args, "[tier|1-5]");
+});

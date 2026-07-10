@@ -15,6 +15,9 @@ import { cmdAuth } from "./commands/auth.js";
 import { cmdModels, cmdAgents } from "./commands/models.js";
 import { cmdRun } from "./commands/run.js";
 import { cmdCode } from "./commands/code.js";
+import { errTheme } from "./ui/theme.js";
+// VERSION is imported ONCE from the generated version.js — main.ts must never
+// hardcode a duplicate version string that can drift from package.json.
 import { VERSION } from "./version.js";
 import { cmdGithub } from "./commands/github.js";
 import { cmdVault } from "./commands/vault.js";
@@ -24,6 +27,52 @@ import { cmdOutput } from "./commands/output.js";
 
 /** Coerce a parsed flag value to string | undefined. */
 const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+
+// Real top-level subcommands (mirrors the switch below). Kept local rather
+// than re-exported from slash_registry.ts: that registry's suggestCommand()
+// is scoped to slash-command vocabulary (/model, /help, ...), a different
+// namespace than these bare `aether <cmd>` words — conflating them would let
+// e.g. "aether model" suggest a slash command that isn't a valid subcommand.
+const TOP_LEVEL_COMMANDS = [
+  "auth", "github", "vault", "workflow", "image", "video", "output", "login",
+  "logout", "audit", "mcp", "models", "agents", "run", "receipt", "config",
+  "agent", "code", "resume", "chat", "help",
+];
+
+/** Bounded Levenshtein — bails early past `max` (rows are monotonic in min). */
+function editDistance(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1]! : 1 + Math.min(prev[j - 1]!, prev[j]!, cur[j - 1]!);
+    }
+    prev = cur;
+  }
+  return prev[b.length]!;
+}
+
+/**
+ * Suggestion for a lone bare token at the top level (`aether auht`). Exact
+ * matches are never guarded (the switch handles them); short tokens (≤5
+ * chars) only match at distance 1, longer at ≤2 — keeps `auht`→auth and
+ * `moddels`→models while letting an unrelated word like `hello` flow to chat.
+ */
+function suggestTopLevel(token: string): string | null {
+  if (TOP_LEVEL_COMMANDS.includes(token)) return null;
+  const max = token.length <= 5 ? 1 : 2;
+  let best: string | null = null;
+  let bestD = max + 1;
+  for (const cand of TOP_LEVEL_COMMANDS) {
+    const d = editDistance(token, cand, bestD);
+    if (d < bestD) {
+      bestD = d;
+      best = cand;
+    }
+  }
+  return bestD <= max ? best : null;
+}
 
 const HELP = `Aether Agent — an open-source coding agent for your terminal.
 
@@ -35,6 +84,7 @@ local Ollama brain — no account, no network. Override with AETHER_BACKEND or
 Usage:
   aether                       Start an interactive coding REPL (local-first)
   aether "<prompt>"            One-shot coding turn (cloud if authed, else local)
+  aether chat "<prompt>"       Same, explicit (bypasses top-level typo-matching)
   aether agent "<task>"         Autonomous coding agent (cloud when signed in)
   aether agent --local "<task>" Force the local Python/Ollama brain (offline)
   aether resume [id]           Replay a local session (latest if no id)
@@ -251,15 +301,41 @@ async function main(argv: string[]): Promise<number> {
     }
     case "chat":
       return cmdChat(ctx, rest.join(" "));
-    default:
+    default: {
+      // Typo guard (narrowed per LOOP-19 arena): fires ONLY on exactly one
+      // bare command-shaped token a Damerau edit away from a real subcommand —
+      // `aether auht` should not become a paid chat call about "auht". Multi-
+      // word prompts and non-matching words flow to chat exactly as before.
+      if (rest.length === 0 && typeof cmd === "string" && /^[a-z][a-z-]*$/.test(cmd)) {
+        const near = suggestTopLevel(cmd);
+        if (near) {
+          process.stderr.write(
+            `${errTheme.red("✗")} unknown command: ${cmd} — did you mean: aether ${near}?\n` +
+              errTheme.dim(`  ⤷ to send it as a chat prompt instead: aether chat ${cmd}`) +
+              "\n",
+          );
+          return 2;
+        }
+      }
       // Bare prompt: `aether "fix the bug"` — cmd is the first prompt word.
       return cmdChat(ctx, [cmd, ...rest].join(" "));
+    }
   }
 }
 
+// Graceful exit: process.exit() mid-teardown intermittently trips a libuv
+// assertion on Windows after TLS fetches (UV_HANDLE_CLOSING, exit 127).
+// Setting exitCode lets the loop drain (measured prompt — undici keep-alive
+// does not hold it); the unref'd timer force-exits if some path ever leaks a
+// ref'd handle, by which point teardown has settled and the race is gone.
+function finish(code: number): void {
+  process.exitCode = code;
+  setTimeout(() => process.exit(code), 2000).unref();
+}
+
 main(process.argv.slice(2))
-  .then((code) => process.exit(code))
+  .then(finish)
   .catch((err) => {
-    process.stderr.write(`\n✗ ${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(1);
+    process.stderr.write(`\n${errTheme.red("✗")} ${err instanceof Error ? err.message : String(err)}\n`);
+    finish(1);
   });

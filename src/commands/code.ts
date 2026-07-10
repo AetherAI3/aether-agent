@@ -7,7 +7,6 @@
 // event and executes every tool_call locally, then replies. That is why local
 // and cloud are indistinguishable UX.
 
-import { createInterface } from "node:readline";
 import type { AppContext } from "../core/context.js";
 import type { Brain, TaskCommand } from "../core/brain.js";
 import type { BrainEvent } from "../core/brain_protocol.js";
@@ -15,6 +14,8 @@ import type { ToolResult } from "../core/tool_executor.js";
 import { LocalBrain } from "../core/brain_local.js";
 import { CloudBrain } from "../core/brain_cloud.js";
 import { ToolExecutor } from "../core/tool_executor.js";
+import { stdioPrompt } from "../ui/interact.js";
+import { defaultRunner } from "../core/worktree.js";
 import { HostRenderer } from "../ui/host_render.js";
 import { SessionLog } from "../core/session_log.js";
 import { finalVerify, type BrainDone } from "../core/verify_gate.js";
@@ -24,12 +25,24 @@ import { HeartbeatIndicator } from "../ui/heartbeat.js";
 import { LocalAgentSource, bindEventSource } from "../core/agent_events.js";
 import { phaseVerb } from "../ui/phase_verb.js";
 import { lineDiff, renderDiff } from "../ui/diff_render.js";
+import { TaskLedger } from "../ui/ledger.js";
+import {
+  CODE_STAGES,
+  answerAgentQuestionIfPresent,
+  applyToLedger,
+  prepareWorkspace,
+  runSummary,
+  stageGate,
+  writeDiffLines,
+} from "./code_support.js";
 import { loadSession, replayLines } from "../core/session_resume.js";
 import { resumeHint } from "./resume.js";
 import { createWorktree, mergeHint, type Worktree } from "../core/worktree.js";
 import { parseRepoSpec, ensureLocalClone, prCreateHint, type RepoSpec } from "../core/repo.js";
 import { chooseBackend } from "../core/backend.js";
 import { decideGate } from "../core/autonomy.js";
+
+export { prepareWorkspace } from "./code_support.js";
 
 /** Approve (or refuse) one brain-emitted tool call before the host executes it. */
 export type ToolGate = (call: { name: string; args: Record<string, unknown> }) => Promise<boolean>;
@@ -123,26 +136,41 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     );
     return 2;
   }
-  // --repo owner/name: bring the user's GitHub repo local (their own gh/git
-  // auth — no backend token) so the agent can work on it. --repo implies a
-  // worktree so the run lands on an isolated branch ready for a PR.
+  // One interaction channel for the whole run: the repo gate, friendly stage
+  // pauses, and agent questions all speak through it (stderr-backed, so piped
+  // stdout stays clean; auto-answers in non-TTY / --yes).
+  const io = stdioPrompt();
+
+  // Two ways to land in an isolated worktree, kept as ONE sequence (not two
+  // parallel systems) so a run never tries to cut a worktree twice:
+  //
+  //  - explicit (--repo / --worktree): the user opted in by hand, so honor it
+  //    exactly — --repo clones the GitHub repo first (their own gh/git auth,
+  //    never a backend token) and implies --worktree so the run lands on an
+  //    isolated branch ready for a PR.
+  //  - implicit (the 2.0 repo gate): with no explicit flag, confirm "are you
+  //    working in this repo?" before any brain touches the tree; when `gh` is
+  //    authenticated it auto-upgrades to the same kind of isolated worktree.
+  //    A non-TTY run without --yes proceeds in place with zero prompts/side
+  //    effects, so pipes, CI, and tests never hang.
   let repoSpec: RepoSpec | null = null;
-  let repoRoot = ctx.flags.cwd;
-  if (opts.repo) {
-    try {
-      repoSpec = parseRepoSpec(opts.repo);
-      const co = ensureLocalClone(repoSpec);
-      repoRoot = co.dir;
-      process.stderr.write(`⎇ repo ${repoSpec.full} ${co.cloned ? "(cloned)" : "(reusing local clone)"}\n  ${co.dir}\n`);
-    } catch (err) {
-      process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
-      return 1;
-    }
-  }
-  // --worktree (or implied by --repo): cut a fresh git worktree off the repo and
-  // run the agent there, so its edits land on an isolated branch, not your tree.
   let worktree: Worktree | null = null;
-  if (opts.worktree || opts.repo) {
+  let cwd: string;
+  if (opts.repo || opts.worktree) {
+    let repoRoot = ctx.flags.cwd;
+    if (opts.repo) {
+      try {
+        repoSpec = parseRepoSpec(opts.repo);
+        const co = ensureLocalClone(repoSpec);
+        repoRoot = co.dir;
+        process.stderr.write(
+          `⎇ repo ${repoSpec.full} ${co.cloned ? "(cloned)" : "(reusing local clone)"}\n  ${co.dir}\n`,
+        );
+      } catch (err) {
+        process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+        return 1;
+      }
+    }
     try {
       worktree = createWorktree(repoRoot, task);
       process.stderr.write(`⌥ worktree ${worktree.branch}\n  ${worktree.dir}\n`);
@@ -150,8 +178,12 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
       process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
       return 1;
     }
+    cwd = worktree.dir;
+  } else {
+    const ws = await prepareWorkspace(ctx, task, io, defaultRunner());
+    if (!ws.proceed) return 0;
+    cwd = ws.cwd;
   }
-  const cwd = worktree ? worktree.dir : ctx.flags.cwd;
   const poolGb = opts.pool > 0 ? opts.pool : 5;
   // --local forces the local brain. Otherwise honor the backend preference
   // (AETHER_BACKEND env > config.backend > 'auto'); 'auto' is local-first, so an
@@ -184,7 +216,9 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     text: task,
     cwd,
     poolGb,
-    effort: opts.effort,
+    // --effort wins; otherwise the /effort dial saved in the Aether config
+    // (same backend: TaskCommand.effort reaches the cloud brain unchanged).
+    effort: opts.effort ?? (ctx.cfg.defaultEffort || undefined),
     model: ctx.flags.model,
     testCmd: opts.testCmd,
   };
@@ -222,6 +256,20 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   const animated =
     !ctx.flags.json && !opts.quiet && Boolean(process.stdout.isTTY) && process.env["AETHER_NO_ANIM"] !== "1";
 
+  // Multi-task ledger over the reasoning pipeline — drives the pinned n/7 counter
+  // (animated) and the end-of-run checklist recap (✓ down the pipeline, ✗ where
+  // it broke) on both paths. Seeded with the fixed stages so progress is forward
+  // looking from the first frame.
+  const ledger = new TaskLedger(CODE_STAGES);
+  const cols = process.stdout.columns && process.stdout.columns > 0 ? process.stdout.columns : 80;
+  // Blast radius for the end-of-run summary: every file the brain wrote.
+  const touched = new Set<string>();
+  const trackWrites = (ev: BrainEvent): void => {
+    if (ev.type === "tool_call" && ev.name === "write_file" && typeof ev.args["path"] === "string") {
+      touched.add(ev.args["path"] as string);
+    }
+  };
+
   let onEvent: (ev: BrainEvent) => void | Promise<void>;
   let teardown = (): void => {};
 
@@ -244,7 +292,12 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
       onFrame: (_stage, art) => sr.setAnim(art),
       onProgress: (used, c) => sr.setProgress(used, c),
     });
-    const hb = new HeartbeatIndicator({ onFrame: (g) => sr.setHeartbeat(g) });
+    const hb = new HeartbeatIndicator({
+      onFrame: (g, beats) => {
+        sr.setHeartbeat(g);
+        sr.setBeats(beats); // feed the thinking timer's live heartbeat count
+      },
+    });
     const source = new LocalAgentSource();
     bindEventSource(source, sr, anim, { hb, heartbeatTimeoutMs: 5000 });
     let tick = 0;
@@ -256,13 +309,34 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
       }
       log?.event(ev, nowIso());
       applyEventToStatus(sr, ev, tick++);
-      const dp = editPreview(exec, ev);
-      if (dp) sr.log(dp);
+      applyToLedger(ledger, ev);
+      trackWrites(ev);
       captureDone(ev);
-      source.feedBrain(ev); // adapter -> animation/status (presentation only)
-      if (interactive && ev.type === "stage") await stageGate(brain, ev.name);
+      // Intercept the whole-file write to render a live green/red diff into
+      // scrollback — the old file is still on disk because hostLoop runs onEvent
+      // BEFORE exec.execute. Skip feedBrain for it so we don't ALSO print the
+      // "  : write_file …" line; the animated kaomoji status line keeps pulsing
+      // below, so the diff and the live state stay in sync.
+      const diff =
+        ev.type === "tool_call" && ev.name === "write_file" ? writeDiffLines(exec, ev.args, true) : null;
+      if (diff && diff.length) {
+        for (const line of diff) sr.log(line);
+      } else {
+        source.feedBrain(ev); // adapter -> animation/status (presentation only)
+      }
+      // Refresh the pinned multi-step counter only on stage changes — never after
+      // a terminal event (feedBrain's done case already calls sr.end()).
+      if (ev.type === "stage") sr.setTasks(ledger.progress());
+      if (interactive && ev.type === "stage") await stageGate(brain, io, ev.name);
+      if (interactive && ev.type === "monologue") await answerAgentQuestionIfPresent(brain, io, ev.text);
     };
     teardown = (): void => {
+      // Final multi-step recap into scrollback, then drop the pinned line.
+      const recap = ledger.panel(cols);
+      if (recap.length) {
+        sr.log("");
+        for (const line of recap) sr.log(line);
+      }
       source.close();
       anim.stop();
       hb.stop();
@@ -272,20 +346,35 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     const renderer = new HostRenderer({ poolGb, quiet: opts.quiet, json: ctx.flags.json });
     if (opts.resume) replaySession(opts.resume, (line) => process.stdout.write(line + "\n"));
     onEvent = async (ev: BrainEvent): Promise<void> => {
-      renderer.event(ev);
+      applyToLedger(ledger, ev);
+      trackWrites(ev);
+      // Same diff interception for the non-animated path (pipes / NO_ANIM /
+      // --quiet). Suppressed under --json so machine consumers still receive the
+      // raw tool_call event, never the rendered diff.
+      const diff =
+        !ctx.flags.json && ev.type === "tool_call" && ev.name === "write_file"
+          ? writeDiffLines(exec, ev.args, false)
+          : null;
+      if (diff && diff.length) renderer.writeLines(diff);
+      else renderer.event(ev);
+      // End-of-run checklist recap (writeLines is a no-op under --json).
+      if (ev.type === "done") renderer.writeLines(ledger.panel(cols));
       log?.event(ev, nowIso());
-      if (ev.type === "memory") {
-        log?.event(ev, nowIso());
-      }
-      const dp = editPreview(exec, ev);
-      if (dp) process.stdout.write(dp + "\n");
       captureDone(ev);
-      if (interactive && ev.type === "stage") await stageGate(brain, ev.name);
+      if (interactive && ev.type === "stage") await stageGate(brain, io, ev.name);
+      if (interactive && ev.type === "monologue") await answerAgentQuestionIfPresent(brain, io, ev.text);
     };
   }
 
-  const code = await hostLoop(brain, exec, onEvent, taskCmd, onToolResult, gate);
-  teardown();
+  const startedAt = Date.now();
+  let code: number;
+  try {
+    code = await hostLoop(brain, exec, onEvent, taskCmd, onToolResult, gate);
+  } finally {
+    // A brain that throws mid-run must still clear the pinned status line and
+    // print the ledger recap — otherwise stale animation sits over the error.
+    teardown();
+  }
 
   // ── Final verification gate: ground truth, never the brain's self-report ──
   // The host re-runs the test command ITSELF and derives finalStatus from the real
@@ -293,30 +382,28 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   // red result with its breaker reason and can never upgrade a red run to "ok".
   const { status: finalStatus, remaining, exitCode: verifyExit } = finalVerify(exec, opts.testCmd, lastDone, sawError);
   log?.close(finalStatus, nowIso(), remaining);
-  if (log) {
-    const tail = remaining > 0 ? ` (${remaining} failing)` : "";
-    process.stderr.write(`\n  ⤷ log: ${log.dir} · ${finalStatus}${tail}\n`);
+  // The verdict line — printed even with --no-log (which used to end with
+  // NOTHING); suppressed under --json (frames already carry the data). Surfaces
+  // the failing-test count the verify gate already computed but used to bury
+  // in the log file only. runSummary only distinguishes ok/incomplete/unverified
+  // (a breaker reason like "stalled" still reads as "incomplete" to the user —
+  // the run didn't finish green either way), so collapse the wider FinalStatus.
+  if (!ctx.flags.json) {
+    const secs = (Date.now() - startedAt) / 1000;
+    const summaryStatus = finalStatus === "ok" || finalStatus === "unverified" ? finalStatus : "incomplete";
+    process.stderr.write("\n  " + runSummary(summaryStatus, remaining, touched.size, secs) + "\n");
   }
+  if (log) process.stderr.write(`  ⤷ log: ${log.dir}\n`);
   if (worktree) process.stderr.write(mergeHint(worktree));
   if (repoSpec && worktree) process.stderr.write(prCreateHint(repoSpec, worktree.branch));
   // Process exit follows the HOST: 0 only on a verified-green run. With no gate
   // ("unverified") there is no ground truth, so the loop's own code stands.
+  // Any other status (incomplete, a breaker reason, or a brain crash) always
+  // fails the process even if the loop's own code was 0 — a green exit code
+  // must never paper over red tests.
   if (finalStatus === "ok") return 0;
   if (finalStatus === "unverified") return code;
   return verifyExit !== 0 ? verifyExit : 1;
-}
-
-/** Pause at a stage boundary; an entered line becomes a /steer, blank resumes. */
-async function stageGate(brain: Brain, stage: string): Promise<void> {
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  try {
-    const note = await new Promise<string>((res) =>
-      rl.question(`\n⏸ ${stage} — [enter] continue, or type a steer: `, res),
-    );
-    if (note.trim()) brain.control("steer", note.trim());
-  } finally {
-    rl.close();
-  }
 }
 
 /**
@@ -354,7 +441,9 @@ export async function hostLoop(
           break;
         }
         case "done":
-          code = ev.ok ? 0 : 1;
+          // A prior error event keeps its exit code — a later done ok:true
+          // must never launder a failed run back to success.
+          if (!ev.ok) code = 1;
           break;
         case "error":
           code = 1;

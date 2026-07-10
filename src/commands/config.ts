@@ -5,6 +5,7 @@
 import type { AppContext } from "../core/context.js";
 import type { AetherConfig, BackendPref, PermissionMode } from "../types.js";
 import { saveConfig } from "../core/config.js";
+import { EFFORT_TIERS, normalizeEffort } from "../ui/effort.js";
 
 const BOOL_KEYS = new Set<keyof AetherConfig>(["autoApply", "telemetry"]);
 const PERMISSION_MODES: PermissionMode[] = ["ask", "auto", "skip"];
@@ -41,6 +42,13 @@ export async function cmdConfig(ctx: AppContext, argv: string[]): Promise<number
         return 2;
       }
       ctx.cfg.permissionMode = value as PermissionMode;
+    } else if (key === "defaultEffort") {
+      const tier = value === "" ? "" : normalizeEffort(value);
+      if (tier === null) {
+        process.stderr.write(`defaultEffort must be one of: ${EFFORT_TIERS.join(", ")} (or "" to unset)\n`);
+        return 2;
+      }
+      ctx.cfg.defaultEffort = tier;
     } else if (key === "backend") {
       if (!BACKEND_PREFS.includes(value as BackendPref)) {
         process.stderr.write(`backend must be one of: ${BACKEND_PREFS.join(", ")}\n`);

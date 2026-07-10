@@ -3,7 +3,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { AetherConfig } from "../types.js";
 
 // The public API front door. The backend is served under the `/cloud` path; the
@@ -15,6 +15,7 @@ export const DEFAULT_CONFIG: AetherConfig = {
   permissionMode: "ask",
   autoApply: false,
   telemetry: true,
+  defaultEffort: "",
   // Local-first: 'auto' runs the cloud brain when signed in, else local Ollama.
   // A config.json written before this key existed merges to this default.
   backend: "auto",
@@ -29,29 +30,51 @@ export function configPath(): string {
 }
 
 export function loadConfig(): AetherConfig {
-  const path = configPath();
-  let cfg: AetherConfig;
-  if (!existsSync(path)) {
-    cfg = { ...DEFAULT_CONFIG };
-  } else {
-    try {
-      const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<AetherConfig>;
-      cfg = { ...DEFAULT_CONFIG, ...raw };
-    } catch {
-      // Corrupt config must never brick the CLI — fall back to defaults.
-      cfg = { ...DEFAULT_CONFIG };
-    }
-  }
-  // Env override wins (matches the upstream CLI), so a single env var can point
-  // every API call at a staging/self-hosted backend without editing config.json.
+  const cfg = loadConfigFile();
+  // AETHER_BASE_URL is documented to override the config's baseUrl (a single
+  // env var can point every API call at a staging/self-hosted backend without
+  // editing config.json). This is a distinct concern from AETHER_BACKEND
+  // (local-vs-cloud brain choice, read where `backend` is consumed) — do not
+  // conflate the two. saveConfig() below takes care not to persist this
+  // override back into config.json.
   const envBase = process.env["AETHER_BASE_URL"];
-  if (envBase) cfg = { ...cfg, baseUrl: envBase };
+  if (envBase) cfg.baseUrl = envBase;
   return cfg;
+}
+
+function loadConfigFile(): AetherConfig {
+  const path = configPath();
+  if (!existsSync(path)) return { ...DEFAULT_CONFIG };
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<AetherConfig>;
+    return { ...DEFAULT_CONFIG, ...raw };
+  } catch {
+    // Corrupt config must never brick the CLI — fall back to defaults.
+    return { ...DEFAULT_CONFIG };
+  }
 }
 
 export function saveConfig(cfg: AetherConfig): void {
   const dir = configDir();
   // 0700: this directory also holds the .token credential — keep it owner-only.
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  writeFileSync(configPath(), JSON.stringify(cfg, null, 2) + "\n", "utf8");
+
+  // Never persist the AETHER_BASE_URL env override: a one-off
+  // `AETHER_BASE_URL=http://localhost aether models use x` must not rewrite
+  // config.json's baseUrl and silently point every future run at localhost.
+  const out = { ...cfg };
+  const envBase = process.env["AETHER_BASE_URL"];
+  if (envBase && out.baseUrl === envBase) {
+    out.baseUrl = loadConfigFile().baseUrl;
+  }
+
+  // Write-then-rename instead of an in-place truncate: two processes saving
+  // at once (e.g. `/effort` in one REPL, `config set` in another) could tear
+  // the file, and a reader parsing a torn JSON file falls back to defaults —
+  // silently resetting baseUrl to production. rename() is atomic on both
+  // POSIX and NTFS.
+  const path = configPath();
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(out, null, 2) + "\n", "utf8");
+  renameSync(tmp, path);
 }

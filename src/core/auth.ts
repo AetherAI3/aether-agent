@@ -11,7 +11,6 @@
 import { join } from "node:path";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { configDir } from "./config.js";
-import { NotWiredError } from "./errors.js";
 import { LOGIN_PATH } from "./transport.js";
 
 export interface TokenStore {
@@ -31,10 +30,13 @@ export class FileTokenStore implements TokenStore {
   }
 
   async set(token: string): Promise<void> {
-    // Create the dir 0700 and the file 0600 AT CREATION so the token is never
-    // world-readable, even for the window between write and chmod. The trailing
-    // chmod is belt-and-suspenders for a pre-existing file written by an older
-    // build at a looser mode. chmod is a no-op on some Windows filesystems.
+    // mkdirSync is required here: on a fresh machine nothing else creates the
+    // config dir before first login, so omitting this throws ENOENT (verified
+    // bug on HEAD's side). Creating dir 0700 / file 0600 AT CREATION (rather
+    // than write-then-chmod) closes the race window where the token would
+    // otherwise be briefly world-readable. The trailing chmod below is
+    // belt-and-suspenders for a pre-existing file written by an older build
+    // at a looser mode; it's a no-op on filesystems without POSIX modes.
     mkdirSync(configDir(), { recursive: true, mode: 0o700 });
     writeFileSync(this.path, token, { encoding: "utf8", mode: 0o600 });
     try {
@@ -131,13 +133,4 @@ export async function loginWithPassword(
   if (body.plan != null) result.plan = body.plan;
   if (body.commitment_hash != null) result.commitmentHash = body.commitment_hash;
   return result;
-}
-
-/**
- * Browser-based login. The CLI opens the account page; future builds may add
- * Aether; a CLI device/PKCE flow against that is future work. Use
- * loginWithPassword (or `--token`) until then.
- */
-export async function deviceLogin(_baseUrl: string, _store: TokenStore): Promise<void> {
-  throw new NotWiredError("browser OAuth login");
 }

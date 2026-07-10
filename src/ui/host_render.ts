@@ -5,7 +5,7 @@
 // never for machines parsing logs). See specs/neo_lite_terminal_personality.md.
 
 import type { Writable } from "node:stream";
-import { theme } from "./theme.js";
+import { theme, errTheme, clipCodePoints } from "./theme.js";
 import { renderStatusBar } from "./statusbar.js";
 import type { BrainEvent } from "../core/brain_protocol.js";
 
@@ -53,6 +53,19 @@ export class HostRenderer {
     }
   }
 
+  /**
+   * Write pre-styled transcript lines (e.g. a rendered diff) as permanent
+   * output. No-op in --json mode — the diff is presentation, never machine data,
+   * so log/JSON consumers see only the raw tool_call. Clears any live status bar
+   * first so the diff doesn't smear over it.
+   */
+  writeLines(lines: string[]): void {
+    if (this.opts.json || lines.length === 0) return;
+    this.header();
+    this.breakBar();
+    for (const line of lines) this.out.write(line + "\n");
+  }
+
   event(ev: BrainEvent): void {
     if (this.opts.json) {
       this.out.write(JSON.stringify(ev) + "\n");
@@ -87,17 +100,27 @@ export class HostRenderer {
         break;
       }
       case "status": {
+        if (this.opts.quiet) break;
         const line = renderStatusBar(ev.poolUsed, this.opts.poolGb, ev.phase, 30, ev.poolCap);
-        if (!this.opts.quiet) {
-          this.err.write("\r" + line);
+        // \r-rewrite is a TTY affordance; piped stderr gets plain lines (the
+        // file's own header promises that) and no unclamped wrapping.
+        if (process.stderr.isTTY) {
+          const cols = (process.stderr.columns || 80) - 1;
+          this.err.write("\r" + (line.length > cols ? line.slice(0, cols) : line));
           this.barLive = true;
+        } else {
+          this.err.write(line + "\n");
         }
         break;
       }
       case "telemetry": {
-        if (!this.opts.quiet && ev.tps > 0) {
-          this.err.write(theme.dim(`\r  └─ speed: ${ev.tps.toFixed(1)}k t/s · vram ${ev.vram}%   `));
+        if (this.opts.quiet || ev.tps <= 0) break;
+        const body = `  └─ speed: ${ev.tps.toFixed(1)}k t/s · vram ${ev.vram}%   `;
+        if (process.stderr.isTTY) {
+          this.err.write(errTheme.dim("\r" + body));
           this.barLive = true;
+        } else {
+          this.err.write(body.trimEnd() + "\n");
         }
         break;
       }
@@ -108,14 +131,14 @@ export class HostRenderer {
       }
       case "done": {
         this.breakBar();
-        const flag = ev.ok ? theme.cyan("[ OKAY ]") : "[ FAIL ]";
+        const flag = ev.ok ? theme.cyan("[ OKAY ]") : theme.red("[ FAIL ]");
         const mark = ev.ok ? "ᕙ(`▽`)ᕗ" : "o(TヘTo)";
         this.out.write("\n" + `${mark} ${ev.result || (ev.ok ? "done" : "stopped")} ` + flag + "\n");
         break;
       }
       case "error": {
         this.breakBar();
-        this.err.write("\n" + theme.bold("✗ ") + ev.msg + "\n");
+        this.err.write("\n" + errTheme.red("✗ ") + ev.msg + "\n");
         break;
       }
     }
@@ -125,6 +148,5 @@ export class HostRenderer {
 /** A short, single-line hint of a tool call's primary arg. */
 function argHint(args: Record<string, unknown>): string {
   const k = args["path"] ?? args["command"] ?? args["query"] ?? args["message"] ?? "";
-  const s = String(k);
-  return s.length > 60 ? s.slice(0, 57) + "…" : s;
+  return clipCodePoints(String(k), 60);
 }

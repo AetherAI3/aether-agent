@@ -267,8 +267,13 @@ export function encodeCommand(cmd: HostCommand): string {
         pool_gb: cmd.poolGb,
         effort: cmd.effort ?? "",
         model: cmd.model ?? "",
-        // default pytest -q on the brain side; pass through what the host has.
-        test_cmd: cmd.testCmd ?? "pytest -q",
+        // CONTRACTS.md: test_cmd="" means unverifiable — must match the
+        // host's own default (code.ts only runs its final gate when
+        // --test-cmd is explicit). Defaulting to "pytest -q" here made the
+        // brain self-verify Python repos while the host still reported
+        // "unverified", and made it grind pytest pointlessly in JS/Go/Rust
+        // repos when the user simply forgot the flag.
+        test_cmd: cmd.testCmd ?? "",
       };
       break;
     case "tool_result":
@@ -278,7 +283,16 @@ export function encodeCommand(cmd: HostCommand): string {
       wire = { type: "control", action: cmd.action, note: cmd.note ?? "" };
       break;
   }
-  return JSON.stringify(wire) + "\n";
+  // CONTRACTS.md invariant 3: the wire is ASCII-escaped (ensure_ascii) so it
+  // survives a Windows cp1252 pipe. Raw UTF-8 here corrupts (…→â€¦) or
+  // crashes (UnicodeDecodeError on bytes undefined in cp1252) the Python
+  // brain — capped tool_results inject '…' on every truncation.
+  return asciiEscape(JSON.stringify(wire)) + "\n";
+}
+
+/** \uXXXX-escape every non-ASCII char (JSON-semantically identical). */
+export function asciiEscape(json: string): string {
+  return json.replace(/[\u0080-\uffff]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
 }
 
 // --- NDJSON line buffer (partial-line safe stdout framing) -----------------

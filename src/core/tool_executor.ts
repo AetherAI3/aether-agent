@@ -6,14 +6,20 @@
 // brain's grounding gate (tests_pass / parse_fail_count) reads the same shape
 // regardless of which side originally ran it.
 
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import type { ToolName } from "./brain_protocol.js";
 import { webFetch, webSearch } from "./web.js";
 
 const MAX_OUTPUT = 8000;
-const DEFAULT_TEST_CMD = "pytest -q";
+// CONTRACTS.md invariant 5: an unset test_cmd means "no ground truth to assert" —
+// it must default to "" (unverifiable), never a real command. brain_protocol.ts's
+// encodeCommand was fixed to this in cac0399; this sibling default is the executor
+// that actually RUNS run_tests, so it must agree or every brain-initiated run_tests
+// call with no explicit command silently runs pytest in non-Python repos.
+const DEFAULT_TEST_CMD = "";
+// Files larger than this are not diffed inline (the transcript would drown).
 const SNAPSHOT_MAX_BYTES = 1024 * 1024;
 const SEARCH_MAX_HITS = 40;
 const SEARCH_SKIP_DIRS = new Set([".git", "node_modules", "dist"]);
@@ -23,6 +29,12 @@ export interface ToolResult {
   exitCode: number;
 }
 
+/**
+ * A pre-write read of a file, for rendering the live diff. `text` is null when
+ * the content is unsuitable to diff (binary, oversized, or outside the
+ * workspace guard); `reason` says which. Path-guarded by the same allowlist as
+ * every other tool — a snapshot can never read outside the workspace.
+ */
 export interface FileSnapshot {
   existed: boolean;
   text: string | null;
@@ -67,24 +79,16 @@ export class ToolExecutor {
 
   /** Run a shell command in the workspace; capture combined output, capped. */
   private run(command: string, timeoutMs = 900_000): ToolResult {
+    const shell =
+      process.platform === "win32" ? (process.env["ComSpec"] ?? "C:\\Windows\\System32\\cmd.exe") : true;
     const r = spawnSync(command, {
-      shell: true,
+      shell,
       cwd: this.root,
       encoding: "utf8",
       timeout: timeoutMs,
       maxBuffer: 64 * 1024 * 1024,
     });
-    if (r.error) {
-      const err = r.error as NodeJS.ErrnoException;
-      if (err.code === "ETIMEDOUT") {
-        return { output: `[timeout after ${Math.round(timeoutMs / 1000)}s]`, exitCode: 124 };
-      }
-      const code = err.code === "ENOENT" ? 127 : 1;
-      return { output: `[spawn error ${err.code ?? "UNKNOWN"}: ${err.message}]`, exitCode: code };
-    }
-    const code = r.status ?? 1;
-    const body = capHeadTail((r.stdout ?? "") + (r.stderr ?? ""), MAX_OUTPUT);
-    return { output: `[exit ${code}]\n${body}`, exitCode: code };
+    return toResult(r, timeoutMs);
   }
 
   /**
@@ -102,8 +106,15 @@ export class ToolExecutor {
           return this.writeFile(String(args["path"] ?? ""), String(args["content"] ?? ""));
         case "run_shell":
           return this.run(String(args["command"] ?? ""));
-        case "run_tests":
-          return this.run(String(args["command"] ?? "") || this.testCmd);
+        case "run_tests": {
+          const cmd = String(args["command"] ?? "") || this.testCmd;
+          // No explicit command and no configured testCmd: CONTRACTS.md invariant 5
+          // — "" means "no ground truth to assert". Report it plainly instead of
+          // spawning an empty/undefined command (which reads as a confusing shell
+          // or ENOENT error) or silently substituting an unrelated test runner.
+          if (!cmd) return { output: "[no test_cmd configured — unverifiable]", exitCode: 1 };
+          return this.run(cmd);
+        }
         case "repo_search":
           return this.repoSearch(String(args["query"] ?? ""));
         case "git_commit":
@@ -158,6 +169,14 @@ export class ToolExecutor {
     return { output: `[wrote ${path} · ${Buffer.byteLength(content)} bytes]`, exitCode: 0 };
   }
 
+  /**
+   * Read a file for diffing BEFORE it is overwritten. Same path-guard as every
+   * tool. Returns existed=false for a new file (so the host can render `(new)`),
+   * and text=null with a reason for binary / oversized / out-of-workspace
+   * content (skip the diff, don't drown the transcript). Never throws — a guard
+   * failure reads as "unsafe" so the write still proceeds and surfaces the real
+   * error through the normal write path.
+   */
   snapshot(path: string): FileSnapshot {
     let abs: string;
     try {
@@ -206,14 +225,54 @@ export class ToolExecutor {
     return { output: `[exit 0]\n${capHeadTail(hits.join("\n"), MAX_OUTPUT)}`, exitCode: 0 };
   }
 
+  /** Run a command via argv (no shell) — for git, where the message can
+   * contain shell metacharacters the string form of `run()` would interpret. */
+  private runArgv(argv: string[], timeoutMs = 900_000): ToolResult {
+    const [cmd, ...rest] = argv;
+    const r = spawnSync(cmd!, rest, {
+      cwd: this.root,
+      encoding: "utf8",
+      timeout: timeoutMs,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return toResult(r, timeoutMs);
+  }
+
   private gitCommit(message: string): ToolResult {
     this.run("git add -A");
-    const r = this.run(`git commit -q -m ${JSON.stringify(message)} || echo "[nothing to commit]"`);
+    // argv form: the commit message reaches git as one real argument, never
+    // interpreted by a shell — `fix "cap & retry"` used to split at `&` and
+    // could execute what followed it.
+    const commit = this.runArgv(["git", "commit", "-q", "-m", message]);
+    const nothingToCommit = commit.exitCode !== 0 && /nothing to commit/i.test(commit.output);
+    if (commit.exitCode !== 0 && !nothingToCommit) {
+      // A real failure (hook rejection, unset user.name, etc.) — surface it
+      // as-is. Fetching HEAD here would report the PREVIOUS commit's sha as
+      // if this one had landed.
+      return commit;
+    }
     // Surface the new short sha so the brain can emit a checkpoint event.
-    const sha = this.run("git rev-parse --short HEAD");
+    const sha = this.runArgv(["git", "rev-parse", "--short", "HEAD"]);
     const head = sha.exitCode === 0 ? sha.output.replace(/^\[exit 0\]\n/, "").trim() : "";
-    return { output: capHeadTail(`${r.output}\n${head}`, MAX_OUTPUT), exitCode: r.exitCode };
+    const body = nothingToCommit ? "[nothing to commit]" : commit.output;
+    return { output: capHeadTail(`${body}\n${head}`, MAX_OUTPUT), exitCode: 0 };
   }
+}
+
+/** Shared spawnSync -> ToolResult mapping for run() (shell) and runArgv() (argv):
+ * same timeout/ENOENT/exit-code handling either way, only the spawn call itself differs. */
+function toResult(r: SpawnSyncReturns<string>, timeoutMs: number): ToolResult {
+  if (r.error) {
+    const err = r.error as NodeJS.ErrnoException;
+    if (err.code === "ETIMEDOUT") {
+      return { output: `[timeout after ${Math.round(timeoutMs / 1000)}s]`, exitCode: 124 };
+    }
+    const code = err.code === "ENOENT" ? 127 : 1;
+    return { output: `[spawn error ${err.code ?? "UNKNOWN"}: ${err.message}]`, exitCode: code };
+  }
+  const code = r.status ?? 1;
+  const body = capHeadTail((r.stdout ?? "") + (r.stderr ?? ""), MAX_OUTPUT);
+  return { output: `[exit ${code}]\n${body}`, exitCode: code };
 }
 
 /** Cap text to `max` chars keeping BOTH ends. Test runners print detail first and

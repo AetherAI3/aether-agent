@@ -11,6 +11,8 @@
 import type { Writable } from "node:stream";
 import type { StreamFrame } from "./stream.js";
 import { header, actionLine } from "../ui/agent.js";
+import { TaskLedger } from "../ui/ledger.js";
+import { errTheme } from "../ui/theme.js";
 import { sanitizeTerm } from "../ui/text.js";
 import { MdStream } from "../ui/md_stream.js";
 
@@ -31,6 +33,10 @@ export class Renderer {
   private agentHeader = false;
   private tasksStarted = 0;
   private tasksDone = 0;
+  // Live checklist of orchestrator tasks — concurrent (peers don't auto-complete
+  // each other), recapped as a ✓/✗ panel at project completion.
+  private readonly ledger = new TaskLedger();
+  private readonly taskLedgerLabels = new Map<string, string>();
 
   constructor(private readonly opts: RenderOptions) {
     this.out = opts.out ?? process.stdout;
@@ -41,6 +47,12 @@ export class Renderer {
   /** Project completion fraction so far (done / started). */
   private projFrac(): number {
     return this.tasksStarted > 0 ? this.tasksDone / this.tasksStarted : 0;
+  }
+
+  /** Stable ledger label for a task id (falls back to `task <id>`). */
+  private labelFor(taskId?: string): string {
+    if (taskId && this.taskLedgerLabels.has(taskId)) return this.taskLedgerLabels.get(taskId)!;
+    return taskId ? `task ${taskId}` : "task";
   }
 
   private ensureHeader(): void {
@@ -63,10 +75,13 @@ export class Renderer {
         this.ensureHeader();
         break;
       case "reasoning":
-        // thinking → stderr, keeps answer on stdout. Stream-sourced text is
-        // sanitized: a hostile/buggy server must not be able to emit OSC/CSI
-        // (title/clipboard rewrite, screen clear, hidden text) into the TTY.
-        this.err.write(sanitizeTerm(f.text));
+        // thinking → stderr (keeps the answer on stdout). Sanitize first: a
+        // hostile/buggy server must not be able to emit OSC/CSI (title/clipboard
+        // rewrite, screen clear, hidden text) into the TTY. Then dim via
+        // errTheme (stderr-keyed) so it reads as a different voice than the
+        // answer, and so styling a stderr write never sprays ANSI into a
+        // `2>err.log` redirect when only stdout is a TTY.
+        this.err.write(errTheme.dim(sanitizeTerm(f.text)));
         break;
       case "delta": {
         const styled = this.md.feed(sanitizeTerm(f.text));
@@ -83,8 +98,15 @@ export class Renderer {
       case "task_start": {
         this.ensureHeader();
         this.tasksStarted += 1;
+        // Sanitize before it ever touches the ledger or a written line — a
+        // hostile/buggy server must not be able to smuggle OSC/CSI through a
+        // task label into the TTY (or into the ledger panel rendered later).
         const label = sanitizeTerm(f.label ?? `task ${f.taskId ?? ""}`);
-        this.out.write("\n" + actionLine(label, "active", sanitizeTerm(f.taskId ?? ""), this.projFrac()) + "\n");
+        const taskId = sanitizeTerm(f.taskId ?? "");
+        const ledgerLabel = taskId ? `${label} (${taskId})` : label;
+        if (taskId) this.taskLedgerLabels.set(taskId, ledgerLabel);
+        this.ledger.setActive(ledgerLabel, false); // peers stay active - these run concurrently
+        this.out.write("\n" + actionLine(label, "active", taskId, this.projFrac()) + "\n");
         break;
       }
       case "task_progress":
@@ -92,16 +114,22 @@ export class Renderer {
         break;
       case "task_done":
         this.tasksDone += 1;
+        this.ledger.setState(this.labelFor(f.taskId), "done");
         this.out.write("\n" + actionLine(`${sanitizeTerm(f.taskId ?? "task")} done`, "logging", "", this.projFrac()) + "\n");
         break;
       case "task_failed":
-        this.err.write("\n" + actionLine(`${sanitizeTerm(f.taskId ?? "task")} failed`, "error", sanitizeTerm(f.msg ?? ""), this.projFrac()) + "\n");
+        this.ledger.setState(this.labelFor(f.taskId), "failed");
+        this.err.write(
+          "\n" + actionLine(`${sanitizeTerm(f.taskId ?? "task")} failed`, "error", sanitizeTerm(f.msg ?? ""), this.projFrac()) + "\n",
+        );
         break;
       case "task_blocked":
         this.err.write("\n" + actionLine(`${sanitizeTerm(f.taskId ?? "task")} blocked`, "idle", sanitizeTerm(f.msg ?? ""), this.projFrac()) + "\n");
         break;
       case "project_done":
+        this.ledger.finishAll();
         this.out.write("\n" + actionLine("project complete", "active", "", 1) + "\n");
+        for (const line of this.ledger.panel()) this.out.write(line + "\n");
         break;
       case "custody": {
         // Persistence happens in the chat loop; here we only confirm receipt.
@@ -126,9 +154,15 @@ export class Renderer {
   }
 
   private error(f: Extract<StreamFrame, { type: "error" }>): void {
+    // Flush any buffered markdown first — an error can arrive mid-fence/bold
+    // run, and the partial styled text must land on stdout before the error
+    // glyph goes to stderr, or scrollback interleaves the two out of order.
     const rest = this.md.flush();
     if (rest) this.out.write(rest);
-    this.err.write(`\n✗ ${sanitizeTerm(f.msg)}`);
+    // errTheme.red keeps the glyph consistently red regardless of stdout's
+    // TTY-ness (it's keyed off stderr); sanitize the server-sourced fields so
+    // a hostile/buggy server can't smuggle OSC/CSI through an error message.
+    this.err.write(`\n${errTheme.red("✗")} ${sanitizeTerm(f.msg)}`);
     if (f.errorCode) this.err.write(` [${sanitizeTerm(f.errorCode)}]`);
     if (f.refId) this.err.write(` (ref ${sanitizeTerm(f.refId)})`);
     this.err.write("\n");

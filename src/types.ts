@@ -19,6 +19,10 @@ export interface AetherConfig {
   autoApply: boolean;
   /** Anonymous usage telemetry opt-in. */
   telemetry: boolean;
+  /** Default effort tier (LOW|MED|MAX|ULTRA|CODEPRO, "" = server default).
+   * Shared with the AetherCloud backend: rides TaskCommand.effort into the
+   * cloud brain on every `aether code` run when --effort is not passed. */
+  defaultEffort: string;
   /** Which brain runs a turn. 'auto' is local-first: cloud when authed, else
    * local Ollama. Overridden per-process by the AETHER_BACKEND env var. */
   backend: BackendPref;

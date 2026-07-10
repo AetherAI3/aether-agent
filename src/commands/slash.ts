@@ -28,6 +28,8 @@ import { fetchTrail } from "../core/audit.js";
 import { isApiToken } from "./auth.js";
 import { theme } from "../ui/theme.js";
 import { SLASH_COMMANDS, SLASH_SECTIONS, findCommand, suggestCommand } from "./slash_registry.js";
+import { EFFORT_TIERS, normalizeEffort, renderEffortSlider, renderCodeProArt } from "../ui/effort.js";
+import { saveConfig } from "../core/config.js";
 import { handleGoal, handleGoals } from "./goals.js";
 import { box } from "../ui/box.js";
 import { sliceVisible } from "../ui/text.js";
@@ -70,9 +72,9 @@ export function resolveSelection(items: CatalogItem[], arg: string): CatalogItem
   return items.find((i) => i.id === a) ?? null;
 }
 
-async function getCatalog(ctx: AppContext, force = false): Promise<CatalogResponse> {
+async function getCatalog(ctx: AppContext, force = false, signal?: AbortSignal): Promise<CatalogResponse> {
   if (!_catalog || force) {
-    _catalog = await ctx.api.getJson<CatalogResponse>(MODELS_PATH);
+    _catalog = await ctx.api.getJson<CatalogResponse>(MODELS_PATH, signal);
   }
   return _catalog;
 }
@@ -95,6 +97,7 @@ export async function handleSlash(
   ctx: AppContext,
   line: string,
   out: Writable,
+  signal?: AbortSignal,
 ): Promise<SlashResult> {
   const parts = line.slice(1).trim().split(/\s+/);
   const cmd = (parts[0] ?? "").toLowerCase();
@@ -109,33 +112,36 @@ export async function handleSlash(
       printHelp(out, arg);
       break;
     case "models":
-      await showPicker(ctx, out, "model");
+      await showPicker(ctx, out, "model", signal);
       break;
     case "model": {
       if (!arg) {
-        const r = await showPicker(ctx, out, "model");
+        const r = await showPicker(ctx, out, "model", signal);
         if (r) return { exit: false, restart: r };
         break;
       }
-      const r = await select(ctx, out, arg, "model");
+      const r = await select(ctx, out, arg, "model", signal);
       if (r) return { exit: false, restart: r };
       break;
     }
     case "agent": {
       if (!arg) {
-        const r = await showPicker(ctx, out, "orchestrator");
+        const r = await showPicker(ctx, out, "orchestrator", signal);
         if (r) return { exit: false, restart: r };
         break;
       }
-      const r = await select(ctx, out, arg, "orchestrator");
+      const r = await select(ctx, out, arg, "orchestrator", signal);
       if (r) return { exit: false, restart: r };
       break;
     }
     case "tier":
-      await showTier(ctx, out);
+      await showTier(ctx, out, signal);
+      break;
+    case "effort":
+      setEffort(ctx, out, arg);
       break;
     case "audit":
-      await showAudit(ctx, out, arg);
+      await showAudit(ctx, out, arg, signal);
       break;
     case "vault": {
       await vaultStatusSlash(ctx, out);
@@ -193,7 +199,7 @@ export async function handleSlash(
       break;
     }
     case "doctor":
-      await doctor(ctx, out);
+      await doctor(ctx, out, signal);
       break;
     case "mcp": {
       if (!process.stdin.isTTY) {
@@ -395,7 +401,7 @@ function printCommandHelp(out: Writable, name: string): void {
   out.write("  " + theme.dim(`section: ${c.section}`) + "\n\n");
 }
 
-async function doctor(ctx: AppContext, out: Writable): Promise<void> {
+async function doctor(ctx: AppContext, out: Writable, signal?: AbortSignal): Promise<void> {
   out.write("Aether Agent · doctor\n");
   out.write(`  api:    ${ctx.cfg.baseUrl}\n`);
   const t = await ctx.tokens.get();
@@ -405,7 +411,7 @@ async function doctor(ctx: AppContext, out: Writable): Promise<void> {
     out.write(`  auth:   ✓ ${isApiToken(t) ? "API token" : "session token"}\n`);
   }
   try {
-    const cat = await getCatalog(ctx);
+    const cat = await getCatalog(ctx, false, signal);
     out.write(`  server: ✓ reachable (tier ${cat.tier})\n`);
   } catch {
     out.write("  server: ✗ unreachable or token rejected\n");
@@ -417,8 +423,9 @@ async function showPicker(
   ctx: AppContext,
   out: Writable,
   kind: Kind,
+  signal?: AbortSignal,
 ): Promise<{ model?: string; agent?: string } | null> {
-  const cat = await getCatalog(ctx);
+  const cat = await getCatalog(ctx, false, signal);
   const items = byKind(cat, kind);
 
   const picked = await pickModel(items, out);
@@ -443,24 +450,7 @@ async function showPicker(
     return null;
   }
 
-  if (!picked.available) {
-    out.write(`${picked.id} is locked on tier ${cat.tier}\n`);
-    return null;
-  }
-
-  // Show warning + confirm (same as existing select() logic)
-  out.write(
-    theme.dim(
-      `⚠ Switching ${kind === "model" ? "model" : "orchestrator"} to ${picked.label} will ` +
-        `restart the session and clear context.\n`,
-    ),
-  );
-  const ok = ctx.flags.yes || (await ctx.confirm("Continue? [y/N] "));
-  if (!ok) {
-    out.write("kept current session.\n");
-    return null;
-  }
-  return kind === "model" ? { model: picked.id } : { agent: picked.id };
+  return confirmSwitch(ctx, out, picked, kind, cat.tier);
 }
 
 async function select(
@@ -468,19 +458,32 @@ async function select(
   out: Writable,
   arg: string,
   kind: Kind,
+  signal?: AbortSignal,
 ): Promise<{ model?: string; agent?: string } | null> {
   if (!arg) {
     out.write(`usage: /${kind === "model" ? "model" : "agent"} <n|id>\n`);
     return null;
   }
-  const cat = await getCatalog(ctx);
+  const cat = await getCatalog(ctx, false, signal);
   const item = resolveSelection(byKind(cat, kind), arg);
   if (!item) {
     out.write(`no such ${kind}: ${arg}\n`);
     return null;
   }
+  return confirmSwitch(ctx, out, item, kind, cat.tier);
+}
+
+/** Shared by showPicker/select once a target item is resolved: lock check,
+ * restart warning, and the y/N gate that produces the caller's restart signal. */
+async function confirmSwitch(
+  ctx: AppContext,
+  out: Writable,
+  item: CatalogItem,
+  kind: Kind,
+  tier: string,
+): Promise<{ model?: string; agent?: string } | null> {
   if (!item.available) {
-    out.write(`${item.id} is locked on tier ${cat.tier}\n`);
+    out.write(`${item.id} is locked on tier ${tier}\n`);
     return null;
   }
   out.write(
@@ -497,8 +500,30 @@ async function select(
   return kind === "model" ? { model: item.id } : { agent: item.id };
 }
 
-async function showTier(ctx: AppContext, out: Writable): Promise<void> {
-  const cat = await getCatalog(ctx);
+/** `/effort` — show the dial; `/effort <tier|1-5>` — set it. The tier persists
+ * in the shared Aether config and rides TaskCommand.effort into the cloud
+ * brain on every `aether code` run (same backend as AetherCloud; no wire
+ * change). CODEPRO gets the full banner. */
+function setEffort(ctx: AppContext, out: Writable, arg: string): void {
+  if (!arg) {
+    for (const l of renderEffortSlider(ctx.cfg.defaultEffort)) out.write(l + "\n");
+    out.write(`set: /effort <${EFFORT_TIERS.join("|")}> (or 1-${EFFORT_TIERS.length})\n`);
+    return;
+  }
+  const tier = normalizeEffort(arg);
+  if (!tier) {
+    out.write(`no such effort tier: ${arg}  (${EFFORT_TIERS.join(", ")})\n`);
+    return;
+  }
+  ctx.cfg.defaultEffort = tier;
+  saveConfig(ctx.cfg);
+  if (tier === "CODEPRO") for (const l of renderCodeProArt()) out.write(l + "\n");
+  for (const l of renderEffortSlider(tier)) out.write(l + "\n");
+  out.write(`effort → ${tier}  (saved — drives your aether code runs)\n`);
+}
+
+async function showTier(ctx: AppContext, out: Writable, signal?: AbortSignal): Promise<void> {
+  const cat = await getCatalog(ctx, false, signal);
   const models = byKind(cat, "model").filter((m) => m.available).length;
   const orch = byKind(cat, "orchestrator").filter((m) => m.available).length;
   out.write(
@@ -506,10 +531,10 @@ async function showTier(ctx: AppContext, out: Writable): Promise<void> {
   );
 }
 
-async function showAudit(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+async function showAudit(ctx: AppContext, out: Writable, arg: string, signal?: AbortSignal): Promise<void> {
   const n = Number(arg);
   const limit = Number.isInteger(n) && n > 0 ? n : 10;
-  const entries = await fetchTrail(ctx.api, { limit });
+  const entries = await fetchTrail(ctx.api, { limit }, signal);
   if (entries.length === 0) {
     out.write("(no audit entries)\n");
     return;

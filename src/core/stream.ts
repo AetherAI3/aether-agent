@@ -238,7 +238,11 @@ export async function* decodeSse(
   const td = new TextDecoder();
   let buf = "";
   for await (const chunk of stream) {
-    buf += td.decode(chunk, { stream: true });
+    // SSE permits CRLF line endings; "\r\n\r\n" contains no "\n\n", so a
+    // CRLF server/proxy would buffer the whole response and deliver zero
+    // frames. Normalize as we append (a split CRLF at a chunk boundary is
+    // caught on the next pass since the lone \r stays in buf).
+    buf = (buf + td.decode(chunk, { stream: true })).replace(/\r\n/g, "\n");
     let idx: number;
     while ((idx = buf.indexOf("\n\n")) !== -1) {
       const raw = buf.slice(0, idx);

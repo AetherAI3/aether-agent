@@ -1,14 +1,125 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyRestart, buildPromptContext, repaintString } from "../src/commands/chat.js";
+import { runTurn, ChatTurnError, applyRestart, buildPromptContext, repaintString } from "../src/commands/chat.js";
 import { handleSlash } from "../src/commands/slash.js";
+import { ApiClient } from "../src/core/transport.js";
 import type { GlobalFlags, AppContext } from "../src/core/context.js";
+import type { TokenStore } from "../src/core/auth.js";
+
+const tokens = { get: async () => "aek_t" } as unknown as TokenStore;
+
+function sseFetch(events: string[]): typeof globalThis.fetch {
+  const body = events.map((e) => `data: ${e}\n\n`).join("");
+  return (async () => {
+    const bytes = new TextEncoder().encode(body);
+    return {
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+      body: (async function* (): AsyncIterable<Uint8Array> {
+        yield bytes;
+      })(),
+    } as unknown as Response;
+  }) as typeof globalThis.fetch;
+}
+
+function ctxWith(): AppContext {
+  return {
+    cfg: {
+      baseUrl: "https://stub.test",
+      defaultModel: "",
+      permissionMode: "ask",
+      autoApply: false,
+      telemetry: false,
+      defaultEffort: "",
+      backend: "cloud", // pin cloud so resolveBackend doesn't probe a local Ollama in CI
+    },
+    flags: { json: true, audit: false, yes: false, cwd: "." }, // json:true keeps stdout output quiet
+    tokens,
+    api: new ApiClient("https://stub.test", tokens),
+  } as unknown as AppContext;
+}
+
+// runTurn is void+onFrame (orchestrator-shaped, see resolveBackend/runCloudTurn
+// in chat.ts); a streamed `error` frame is signaled by throwing ChatTurnError
+// rather than a boolean return, since the Renderer already paints the "✗ msg"
+// line before runTurn can return control to the caller (CONTRACTS.md: a
+// rendered error is not the same as a successful turn).
+test("runTurn throws ChatTurnError when the server streams an error frame", async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = sseFetch([
+    JSON.stringify({ type: "delta", text: "partial" }),
+    JSON.stringify({ type: "error", msg: "rate limited" }),
+  ]);
+  try {
+    await assert.rejects(() => runTurn(ctxWith(), "hi"), ChatTurnError);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("runTurn resolves cleanly on a clean stream", async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = sseFetch([
+    JSON.stringify({ type: "delta", text: "ok" }),
+    JSON.stringify({ type: "done", uvt: 1, cents: 0 }),
+  ]);
+  try {
+    await runTurn(ctxWith(), "hi"); // must not throw
+  } finally {
+    globalThis.fetch = real;
+  }
+});
 
 test("applyRestart sets the new model and clears the agent", () => {
   const flags = { model: "haiku", agent: "neo", json: false, audit: false, yes: false, cwd: "." } as GlobalFlags;
   applyRestart(flags, { model: "opus" });
   assert.equal(flags.model, "opus");
   assert.equal(flags.agent, undefined);
+});
+
+// Regression: the thinking pulse is presentation-only, like every other
+// status/diagnostic writer in this codebase (StatusRenderer, HostRenderer's
+// status/telemetry). It must target stderr so stdout stays byte-identical
+// for redirection/piping — even when stdout is a still-TTY sink (script(1),
+// pty recorders). A prior merge resolution accidentally routed it to stdout.
+test("interactive TTY chat pulse writes only to stderr, never stdout", async () => {
+  const real = globalThis.fetch;
+  const origStdoutWrite = process.stdout.write.bind(process.stdout);
+  const origStderrWrite = process.stderr.write.bind(process.stderr);
+  const origStdoutIsTTY = process.stdout.isTTY;
+  const origStderrIsTTY = process.stderr.isTTY;
+
+  let stdoutBytes = "";
+  let stderrBytes = "";
+  (process.stdout as unknown as { isTTY: boolean }).isTTY = true;
+  (process.stderr as unknown as { isTTY: boolean }).isTTY = true;
+  process.stdout.write = ((chunk: unknown): boolean => {
+    stdoutBytes += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: unknown): boolean => {
+    stderrBytes += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+
+  globalThis.fetch = sseFetch([
+    JSON.stringify({ type: "delta", text: "ok" }),
+    JSON.stringify({ type: "done", uvt: 1, cents: 0 }),
+  ]);
+  try {
+    const ctx = ctxWith();
+    ctx.flags.json = false; // json:true would suppress the pulse entirely; must be off to exercise it
+    await runTurn(ctx, "hi");
+    assert.doesNotMatch(stdoutBytes, /thinking/, "pulse frames must never reach stdout");
+  } finally {
+    globalThis.fetch = real;
+    process.stdout.write = origStdoutWrite;
+    process.stderr.write = origStderrWrite;
+    (process.stdout as unknown as { isTTY: boolean | undefined }).isTTY = origStdoutIsTTY;
+    (process.stderr as unknown as { isTTY: boolean | undefined }).isTTY = origStderrIsTTY;
+  }
+  void stderrBytes; // presence on stderr is covered by thinking.test.ts; this test's contract is "never on stdout"
 });
 
 test("applyRestart sets the new agent and clears the model", () => {

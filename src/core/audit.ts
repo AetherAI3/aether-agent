@@ -31,13 +31,20 @@ export interface TrailOptions {
   since?: number;
 }
 
-export async function fetchTrail(api: ApiClient, opts: TrailOptions = {}): Promise<AuditEntry[]> {
+export async function fetchTrail(
+  api: ApiClient,
+  opts: TrailOptions = {},
+  signal?: AbortSignal,
+): Promise<AuditEntry[]> {
   const q = new URLSearchParams();
   if (opts.limit != null) q.set("limit", String(opts.limit));
   if (opts.eventType) q.set("event_type", opts.eventType);
   if (opts.since != null) q.set("since", String(opts.since));
   const qs = q.toString();
-  const r = await api.getJson<RawTrailResponse>(qs ? `${AUDIT_TRAIL_PATH}?${qs}` : AUDIT_TRAIL_PATH);
+  const r = await api.getJson<RawTrailResponse>(
+    qs ? `${AUDIT_TRAIL_PATH}?${qs}` : AUDIT_TRAIL_PATH,
+    signal,
+  );
   return (r.entries ?? []).map(normalizeEntry);
 }
 

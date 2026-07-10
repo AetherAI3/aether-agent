@@ -32,14 +32,39 @@ These apply to any command (parsed anywhere on the line).
 
 ### `aether` — interactive REPL
 Opens a session. Type a prompt to chat; type `/` commands to control it (see
-[Slash commands](#slash-commands)). `Ctrl-C` or `/exit` to leave.
+[Slash commands](#slash-commands)). Up-arrow recalls prompts across sessions
+(history lives at `~/.aether-agent/history`); Tab completes slash commands.
+`Ctrl-C` mid-answer cancels the turn and keeps the session; `Ctrl-C` at an
+empty prompt (or `/exit`) leaves.
 
 ### `aether "<prompt>"` — one-shot
 Runs a single turn against your default (or `--model`) and streams the answer.
+`aether chat "<prompt>"` is the explicit form — it bypasses command matching,
+so a prompt that happens to look like a command still chats.
 ```bash
 aether "explain what src/router.ts does"
 aether --model opus "rewrite this function to be O(n)"
 ```
+A lone near-miss token is treated as a typo, not a prompt: `aether auht`
+suggests `aether auth` and exits `2` instead of spending a turn on "auht".
+
+### `aether code "<task>"` — autonomous coding agent
+One host loop drives a pluggable brain: cloud (UVT-metered) by default,
+`--local` for the Python/Ollama brain. The host renders every event, executes
+every tool call locally, and verifies the result itself — the final status is
+derived from your test command's exit code, never the brain's self-report.
+Every run ends with a verdict line: `✓ ok · 4 files changed · tests green · 3m12s`.
+
+| Flag | Meaning |
+|---|---|
+| `--local` | Use the local brain (Python/Ollama) instead of the cloud. |
+| `--pool <gb>` | Context pool size in GB (status-bar reach = pool × 233M tokens). |
+| `--effort <t>` | Effort tier: `LOW` \| `MED` \| `MAX` \| `ULTRA` \| `CODEPRO` (overrides the saved `/effort` dial). |
+| `--test-cmd <c>` | Command the verification gate runs (unverified without it). |
+| `--quiet` | Plain output (strip the personality frames). |
+| `--interactive` | Pause at each stage boundary to type a steer (TTY only). |
+| `--no-log` | Disable the local session log (`~/.aether-agent/logs`). |
+| `--swarm <N>` | N-agent swarm (gated; local-only; refuses at runtime — see `commands/code.ts`). |
 
 ### `aether run <neo|kronus> "<task>"` — orchestrator
 Hands a multi-step task to an orchestrator, which plans, fans out sub-agents,
@@ -124,6 +149,7 @@ aether config set autoApply true
 |---|---|---|
 | `baseUrl` | string | Aether API base URL. |
 | `defaultModel` | string | Model used when `--model` is omitted. |
+| `defaultEffort` | string | Effort tier for `aether code` when `--effort` is omitted (`LOW`\|`MED`\|`MAX`\|`ULTRA`\|`CODEPRO`, `""` = server default). Same dial as `/effort`. |
 | `permissionMode` | `ask`\|`auto`\|`skip` | Gate edits/commands: prompt every time, auto with confirm, or fully autonomous. |
 | `autoApply` | bool | Apply streamed edits without a per-edit prompt. |
 | `telemetry` | bool | Anonymous usage telemetry opt-in. |
@@ -146,11 +172,15 @@ mirrors the live registry in `src/commands/slash.ts`.
 | `/agents` | View active agent sessions (name, status, time, UVT, task). |
 | `/agent <n\|id>` | Switch orchestrator (Neo / Kronus) — opens the picker with no arg. |
 | `/tier` | Show your plan tier, default, and available counts. |
+| `/effort [tier\|1-5]` | Show or set the effort dial (`LOW`→`CODEPRO`). Persists to your Aether config and drives `aether code`. `CODEPRO` gets the banner. |
 | `/audit [n]` | Recent chain-of-custody receipts. |
 | `/doctor` | Diagnose setup: API base, auth state, server reachability. |
 | `/clear` | Clear the screen. |
 | `/mcp` | MCP server management (coming soon). |
 | `/exit`, `/quit` | Leave the REPL. |
+
+Typos get a nudge: `/modle` answers `did you mean /model?`. Tab completes any
+of the above.
 
 ### Agent modes
 
@@ -236,8 +266,10 @@ Requires an active orchestrator — switch with `/agent neo` or `/agent kronus` 
 | `AETHER_BASE_URL` | `https://api.aethersystems.net` | Overrides the config `baseUrl`. |
 | `AETHER_LOGIN_URL` | `https://aethersystems.net/platform` | Page `aether auth login` opens. |
 | `AETHER_TOKEN` | *(unset)* | Inject a session token (CI / headless / embedding). |
-| `AETHER_CONFIG_DIR` | `~/.config/aether` | Config + token directory. |
+| `AETHER_CONFIG_DIR` | `~/.config/aether` | Config + token + REPL-history directory. |
 | `AETHER_STREAM_TIMEOUT_MS` | `120000` | Stream open/idle timeout (ms). `0` disables it. |
+| `AETHER_NO_ANIM` | *(unset)* | `1` disables all animated status lines and the thinking pulse. |
+| `NO_COLOR` | *(unset)* | Any value disables ANSI colors (https://no-color.org). |
 
 See [`.env.example`](.env.example).
 

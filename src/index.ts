@@ -23,5 +23,5 @@ export { StdoutSink, StringSink } from "./ui/sink.js";
 export type { RenderSink, StringSinkOptions } from "./ui/sink.js";
 export { createTheme } from "./ui/theme.js";
 export type { Theme } from "./ui/theme.js";
-export { SseEventSource, LocalAgentSource, mapBrainEvent } from "./core/agent_events.js";
+export { LocalAgentSource, mapBrainEvent } from "./core/agent_events.js";
 export type { AgentSource, AgentEvent } from "./core/agent_events.js";

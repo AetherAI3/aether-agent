@@ -11,6 +11,8 @@ dist/
 # editor
 .idea/
 .vscode/
+# scratch output (test redirects, etc.) — never a build or loop artifact
+_tmp/
 
 # agent runtime output (plans the agent writes during /plan runs)
 .hermes/

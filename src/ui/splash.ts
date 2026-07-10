@@ -12,7 +12,7 @@ export interface SplashInfo {
 
 /** Rotating power-feature tips — one shows per launch. Exported for tests. */
 export const TIPS: readonly string[] = [
-  "Tab completes /commands",
+  "Tab completes any slash command",
   "/steer redirects the agent mid-turn",
   "/queue lines up the next task while one runs",
   "Ctrl+→/← jumps words · Ctrl+L clears the screen",
@@ -26,7 +26,11 @@ export function tipLine(i: number): string {
   return theme.dim(`tip: ${tip}`);
 }
 
-/** Plain status lines (no art) — exposed for testing the content. */
+/** Plain status lines (no art) — exposed for testing the content. Every
+ * slash token shown here must exist in the command registry (pinned by
+ * test/ui.test.ts): the splash advertises only commands that actually run.
+ * /effort earned its place back once it became a real command (the effort
+ * dial) — see the slash registry. */
 export function statusLines(info: SplashInfo, tipSlot?: number): string[] {
   return [
     theme.dim(`v${info.version}`),

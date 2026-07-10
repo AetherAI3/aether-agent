@@ -177,6 +177,9 @@ function printAuthHelp(): void {
   );
 }
 
+// NOTE: HEAD had a plain-text authStatus() here; origin/main's `status` case
+// now renders the branded renderAuthBox() panel instead (see cmdAuth above),
+// which supersedes it — dropped to avoid dead code.
 async function authToken(ctx: AppContext): Promise<number> {
   const t = await ctx.tokens.get();
   if (!t) {
@@ -201,10 +204,10 @@ async function authRefresh(ctx: AppContext): Promise<number> {
     const r = await ctx.api.postJson<{ session_token?: string }>(REFRESH_PATH, {});
     if (r.session_token) {
       await ctx.tokens.set(r.session_token);
-      process.stdout.write("Session refreshed.\n");
+      process.stdout.write("✓ Session refreshed.\n");
       return 0;
     }
-    process.stderr.write("refresh failed\n");
+    process.stderr.write("✗ Refresh failed — try: aether auth login\n");
     return 1;
   } catch (err) {
     process.stderr.write(`\u2717 ${err instanceof Error ? err.message : String(err)}\n`);
