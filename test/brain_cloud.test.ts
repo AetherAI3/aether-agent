@@ -58,6 +58,37 @@ test("a clean stream still ends done ok:true", async () => {
   assert.ok(done && done.type === "done" && done.ok === true);
 });
 
+// Finding E's Tier-2/3 metrics (docs/specs/2026-07-10-workflow-viewer-agent-panel-design.md)
+// must survive the REAL cloud path (SSE -> stream.ts's normalizeFrame -> here),
+// not just brain_protocol.ts's separate NDJSON decoder — that decoder is never
+// on this path (confirmed: CloudBrain maps StreamFrame, not raw NDJSON).
+test("agent_done forwards optional tokens/toolCalls/durationMs from the SSE frame", async () => {
+  const events = await runCloud([
+    JSON.stringify({
+      type: "agent_done", agent_id: "resolve:B", phase_n: 1, summary: "ok",
+      tokens: 97600, tool_calls: 40, duration_ms: 266000,
+    }),
+    JSON.stringify({ type: "done", uvt: 1, cents: 0 }),
+  ]);
+  const done = events.find((e) => e.type === "agent_done");
+  assert.ok(done && done.type === "agent_done");
+  assert.equal(done.tokens, 97600);
+  assert.equal(done.toolCalls, 40);
+  assert.equal(done.durationMs, 266000);
+});
+
+test("agent_done leaves tokens/toolCalls/durationMs undefined when the SSE frame omits them", async () => {
+  const events = await runCloud([
+    JSON.stringify({ type: "agent_done", agent_id: "resolve:B", phase_n: 1, summary: "ok" }),
+    JSON.stringify({ type: "done", uvt: 1, cents: 0 }),
+  ]);
+  const done = events.find((e) => e.type === "agent_done");
+  assert.ok(done && done.type === "agent_done");
+  assert.equal(done.tokens, undefined);
+  assert.equal(done.toolCalls, undefined);
+  assert.equal(done.durationMs, undefined);
+});
+
 test("custody frames on the cloud code path persist to the client-held log", async () => {
   const dir = mkdtempSync(join(tmpdir(), "aether-custody-"));
   const prev = process.env["AETHER_CONFIG_DIR"];

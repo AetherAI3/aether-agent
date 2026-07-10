@@ -35,7 +35,17 @@ import { HostRenderer } from "../ui/host_render.js";
 import type { TaskCommand } from "../core/brain.js";
 import { getRegistry } from "../core/context_registry.js";
 import { renderHud, timerLive } from "../core/hud.js";
-import { createViewerState, applyViewerFrame, moveCursor, renderCiTree } from "../ui/workflow_viewer.js";
+import {
+  createViewerState,
+  applyViewerFrame,
+  moveCursor,
+  renderCiTree,
+  selectAgent,
+  renderAgentFeed,
+  togglePhaseExpanded,
+  viewerClearSequence,
+  viewerLineCount,
+} from "../ui/workflow_viewer.js";
 import type { WorkflowViewerState } from "../ui/workflow_viewer.js";
 import type { StreamFrame } from "../core/stream.js";
 
@@ -382,6 +392,10 @@ async function repl(ctx: AppContext): Promise<number> {
   // Workflow swarm viewer — updated as workflow_* frames arrive during a turn.
   let viewerState: WorkflowViewerState = createViewerState();
   let viewerOpen = false;
+  // Line count of the last panel actually printed (tree or agent-feed), so
+  // redrawViewerTree can clear exactly that many lines instead of stacking
+  // duplicate copies in scrollback on every cursor move (Finding B).
+  let viewerLastLines = 0;
   return await new Promise<number>((resolve) => {
     const onResize = (): void => repaint();
     const cleanup = (): void => {
@@ -409,6 +423,7 @@ async function repl(ctx: AppContext): Promise<number> {
       btwNotes.length = 0;
       viewerState = createViewerState();
       viewerOpen = false;
+      viewerLastLines = 0;
       turnAbort = new AbortController();
       try {
         await runTurn(ctx, built.prompt, turnAbort.signal, (f) => {
@@ -418,21 +433,46 @@ async function repl(ctx: AppContext): Promise<number> {
               break;
             case "phase_start":
               viewerState = applyViewerFrame(viewerState, { type: "phase_start", phaseN: f.phase_n, phaseType: f.phase_type, agentCount: f.agent_count });
+              if (viewerOpen) redrawViewerTree();
               break;
             case "phase_done":
               viewerState = applyViewerFrame(viewerState, { type: "phase_done", phaseN: f.phase_n, artifactSummary: f.artifact_summary });
+              if (viewerOpen) redrawViewerTree();
               break;
             case "agent_spawn":
               viewerState = applyViewerFrame(viewerState, { type: "agent_spawn", agentId: f.agent_id, phaseN: f.phase_n, brief: f.brief });
+              if (viewerOpen) redrawViewerTree();
               break;
             case "agent_progress":
               viewerState = applyViewerFrame(viewerState, { type: "agent_progress", agentId: f.agent_id, delta: f.delta });
+              // Only the drilled-into agent's feed view actually changes on a
+              // progress delta — the tree view's row doesn't show feed content,
+              // so redrawing there on every token would just be flicker.
+              if (viewerOpen && viewerState.selectedAgentId === f.agent_id) redrawViewerTree();
               break;
             case "agent_done":
-              viewerState = applyViewerFrame(viewerState, { type: "agent_done", agentId: f.agent_id, phaseN: f.phase_n, summary: f.summary });
+              viewerState = applyViewerFrame(viewerState, {
+                type: "agent_done",
+                agentId: f.agent_id,
+                phaseN: f.phase_n,
+                summary: f.summary,
+                tokens: f.tokens,
+                toolCalls: f.tool_calls,
+                durationMs: f.duration_ms,
+              });
+              if (viewerOpen) redrawViewerTree();
               break;
             case "workflow_done":
               viewerState = applyViewerFrame(viewerState, { type: "workflow_done", synthesis: f.synthesis, totalPhases: f.total_phases, totalAgents: f.total_agents });
+              // Symmetric with the Escape-close path: erase the panel from the
+              // terminal instead of just flipping viewerOpen, or a popout still
+              // on screen when the workflow finishes is stuck in scrollback for
+              // the rest of the turn (the exact defect class Finding B fixed).
+              if (viewerOpen) {
+                process.stdout.write(viewerClearSequence(viewerLastLines));
+                viewerLastLines = 0;
+                repaint();
+              }
               viewerOpen = false;
               break;
           }
@@ -604,11 +644,17 @@ async function repl(ctx: AppContext): Promise<number> {
       repaint();
     };
 
-    // Clear the row and redraw the swarm viewer tree at its current cursor
-    // position, then restore the input line below it.
+    // Clear exactly the previously-printed panel (tree or agent-feed, per
+    // viewerLastLines) and redraw it at the current cursor/selection, then
+    // restore the input line below it. Renders the agent feed instead of the
+    // tree once an agent is selected (Finding D).
     const redrawViewerTree = (): void => {
-      process.stdout.write("\r\x1b[2K");
-      process.stdout.write(renderCiTree(viewerState) + "\n");
+      process.stdout.write(viewerClearSequence(viewerLastLines));
+      const rendered = viewerState.selectedAgentId != null
+        ? renderAgentFeed(viewerState)
+        : renderCiTree(viewerState);
+      process.stdout.write(rendered + "\n");
+      viewerLastLines = viewerLineCount(rendered);
       repaint();
     };
 
@@ -666,10 +712,30 @@ async function repl(ctx: AppContext): Promise<number> {
           repaint();
           return;
         case "left":
+          // While the tree is open on a workflow with real phase data,
+          // Left/Right collapse/expand the phase under the cursor instead of
+          // moving the (currently irrelevant) text-input caret — matches the
+          // design mockup's "→/Enter expand phase · ←/Esc collapse" footer.
+          if (viewerOpen && viewerState.selectedAgentId == null && viewerState.phases.length > 0) {
+            const agent = viewerState.agents[viewerState.cursorIndex];
+            if (agent) {
+              viewerState = togglePhaseExpanded(viewerState, agent.phaseN);
+              redrawViewerTree();
+            }
+            return;
+          }
           buf.left();
           repaint();
           return;
         case "right":
+          if (viewerOpen && viewerState.selectedAgentId == null && viewerState.phases.length > 0) {
+            const agent = viewerState.agents[viewerState.cursorIndex];
+            if (agent) {
+              viewerState = togglePhaseExpanded(viewerState, agent.phaseN);
+              redrawViewerTree();
+            }
+            return;
+          }
           buf.right();
           repaint();
           return;
@@ -716,8 +782,10 @@ async function repl(ctx: AppContext): Promise<number> {
           return;
         case "up":
           if (viewerOpen) {
-            viewerState = moveCursor(viewerState, -1);
-            redrawViewerTree();
+            if (viewerState.selectedAgentId == null) {
+              viewerState = moveCursor(viewerState, -1);
+              redrawViewerTree();
+            }
           } else {
             buf.historyUp();
             repaint();
@@ -728,8 +796,10 @@ async function repl(ctx: AppContext): Promise<number> {
             viewerOpen = true;
             redrawViewerTree();
           } else if (viewerOpen) {
-            viewerState = moveCursor(viewerState, 1);
-            redrawViewerTree();
+            if (viewerState.selectedAgentId == null) {
+              viewerState = moveCursor(viewerState, 1);
+              redrawViewerTree();
+            }
           } else {
             buf.historyDown();
             repaint();
@@ -742,13 +812,35 @@ async function repl(ctx: AppContext): Promise<number> {
           if (!buf.value) finish(0);
           return;
         case "submit":
+          // While the popout is open, Enter drills into the agent under the
+          // cursor instead of submitting the input buffer as a chat turn
+          // (Finding D: selectAgent/renderAgentFeed were fully built but
+          // never wired to a key handler).
+          if (viewerOpen) {
+            if (viewerState.selectedAgentId == null) {
+              const agent = viewerState.agents[viewerState.cursorIndex];
+              if (agent) {
+                viewerState = selectAgent(viewerState, agent.id);
+                redrawViewerTree();
+              }
+            }
+            return;
+          }
           void onSubmit().catch((err) => printError(err, ctx.cfg.baseUrl));
           return;
         case "escape":
           if (viewerOpen) {
-            viewerOpen = false;
-            process.stdout.write("\r\x1b[2K");
-            repaint();
+            if (viewerState.selectedAgentId != null) {
+              // Back out of the agent-feed drill-down to the tree, not a
+              // full close — mirrors the design's two-level Esc behavior.
+              viewerState = selectAgent(viewerState, null);
+              redrawViewerTree();
+            } else {
+              viewerOpen = false;
+              process.stdout.write(viewerClearSequence(viewerLastLines));
+              viewerLastLines = 0;
+              repaint();
+            }
           }
           return;
         default:
