@@ -8,8 +8,8 @@
 // TODO: prefer the OS keychain over the file store; the TokenStore
 // interface keeps that swappable.
 
-import { join } from "node:path";
-import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { configDir } from "./config.js";
 import { NotWiredError } from "./errors.js";
 import { LOGIN_PATH } from "./transport.js";
@@ -31,6 +31,9 @@ export class FileTokenStore implements TokenStore {
   }
 
   async set(token: string): Promise<void> {
+    // First write on a fresh machine: nothing else creates the config dir on
+    // the login path — without this, the documented first step fails ENOENT.
+    mkdirSync(dirname(this.path), { recursive: true });
     writeFileSync(this.path, token, "utf8");
     try {
       chmodSync(this.path, 0o600);
