@@ -45,7 +45,9 @@ export class LocalBrain implements Brain {
     const mod = this.opts.module ?? "aether_agent.headless";
     const child = spawn(python, ["-m", mod], {
       cwd: task.cwd,
-      env: { ...process.env, ...(this.opts.env ?? {}) },
+      // PYTHONUTF8 belt-and-suspenders alongside the ASCII-escaped wire: the
+      // child's stdio never falls back to cp1252 on Windows.
+      env: { ...process.env, PYTHONUTF8: "1", ...(this.opts.env ?? {}) },
       stdio: ["pipe", "pipe", "pipe"],
     }) as ChildProcessWithoutNullStreams;
     this.child = child;
