@@ -59,25 +59,33 @@ test("setProgress forwards to onProgress", () => {
 // --- heartbeat -------------------------------------------------------------
 test("heartbeat: one beat reaches the peak then returns to rest", async () => {
   const seen: string[] = [];
-  const frameMs = 5;
-  const hb = new HeartbeatIndicator({ onFrame: (g) => seen.push(g), frameMs });
-  hb.beat();
-  // Poll instead of assuming wall-clock timing: a loaded host lags setTimeout,
-  // so a fixed delay flakes. The one-shot envelope ends at rest and STAYS there
-  // (idx=-1), and `seen` keeps the peak, so each wait is deterministic.
-  for (let i = 0; i < 200 && !seen.includes("◉"); i++) await delay(5);
-  assert.ok(seen.includes("◉"), "beat reaches the peak glyph");
-  for (let i = 0; i < 200 && hb.glyph() !== "·"; i++) await delay(5);
-  assert.equal(hb.glyph(), "·", "rests between beats");
-  hb.stop();
+  let hb: HeartbeatIndicator;
+  await new Promise<void>((resolve, reject) => {
+    let peaked = false;
+    const timeout = setTimeout(() => reject(new Error("heartbeat did not settle")), 500);
+    hb = new HeartbeatIndicator({
+      frameMs: 1,
+      onFrame: (glyph) => {
+        seen.push(glyph);
+        if (glyph === "\u25c9") peaked = true;
+        if (peaked && glyph === "\u00b7") {
+          clearTimeout(timeout);
+          resolve();
+        }
+      },
+    });
+    hb.beat();
+  });
+  assert.ok(seen.includes("\u25c9"), "beat reaches the peak glyph");
+  assert.equal(hb!.glyph(), "\u00b7", "rests between beats");
+  hb!.stop();
 });
-
 test("heartbeat: stall shows hollow; next beat clears it", () => {
   const hb = new HeartbeatIndicator({ frameMs: 1 });
   hb.markStalled();
-  assert.equal(hb.glyph(), "○");
+  assert.equal(hb.glyph(), "â—‹");
   hb.beat();
-  assert.notEqual(hb.glyph(), "○");
+  assert.notEqual(hb.glyph(), "â—‹");
   hb.stop();
 });
 
@@ -186,7 +194,7 @@ test("pager preserves position when new output arrives while scrolled up", () =>
   }
 });
 
-test("StatusRenderer non-TTY = plain lines, zero ANSI (keeps §8 logs clean)", () => {
+test("StatusRenderer non-TTY = plain lines, zero ANSI (keeps Â§8 logs clean)", () => {
   const prev = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
   Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
   const out: string[] = [];
@@ -195,7 +203,7 @@ test("StatusRenderer non-TTY = plain lines, zero ANSI (keeps §8 logs clean)", (
   try {
     const sr = new StatusRenderer({ mode: "local" });
     sr.start();
-    sr.setAnim("▸▹");
+    sr.setAnim("â–¸â–¹");
     sr.log("  : run_tests");
     sr.setProgress(100, 500);
     sr.end();
@@ -218,7 +226,7 @@ test("TuiLayout non-TTY stays plain (no ANSI)", () => {
     const nt = new TuiLayout({ mode: "api" });
     nt.mount();
     nt.log("agent line");
-    nt.setHeartbeat("●");
+    nt.setHeartbeat("â—");
   } finally {
     process.stdout.write = real;
     if (prev) Object.defineProperty(process.stdout, "isTTY", prev);
@@ -266,7 +274,7 @@ test("status row is clamped to the terminal width", () => {
   const real = process.stdout.write.bind(process.stdout);
   process.stdout.write = ((c: string) => (out.push(String(c)), true)) as typeof process.stdout.write;
   try {
-    t.setVerb("Reconnoitring the perimeter fences", "( ⚆ _ ⚆ )");
+    t.setVerb("Reconnoitring the perimeter fences", "( âš† _ âš† )");
     t.setUvt(123456, 999999);
     const status = out[out.length - 1]!;
     const visible = stripAnsi(status);
@@ -305,7 +313,7 @@ test("TuiLayout setVerb/setStreamed are silent off-TTY (no stray writes)", () =>
   process.stdout.write = ((c: string) => (out.push(String(c)), true)) as typeof process.stdout.write;
   try {
     const t = new TuiLayout({ mode: "api", now: () => 0 });
-    t.setVerb("Forging", "(ง'̀-'́)ง");
+    t.setVerb("Forging", "(à¸‡'Ì€-'Ì)à¸‡");
     t.setStreamed(33_000);
     assert.equal(out.length, 0, "status setters write nothing when not a TTY");
   } finally {
@@ -313,3 +321,4 @@ test("TuiLayout setVerb/setStreamed are silent off-TTY (no stray writes)", () =>
     if (prev) Object.defineProperty(process.stdout, "isTTY", prev);
   }
 });
+
