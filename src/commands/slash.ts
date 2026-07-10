@@ -41,9 +41,9 @@ export function resolveSelection(items: CatalogItem[], arg: string): CatalogItem
   return items.find((i) => i.id === a) ?? null;
 }
 
-async function getCatalog(ctx: AppContext, force = false): Promise<CatalogResponse> {
+async function getCatalog(ctx: AppContext, force = false, signal?: AbortSignal): Promise<CatalogResponse> {
   if (!_catalog || force) {
-    _catalog = await ctx.api.getJson<CatalogResponse>(MODELS_PATH);
+    _catalog = await ctx.api.getJson<CatalogResponse>(MODELS_PATH, signal);
   }
   return _catalog;
 }
@@ -56,6 +56,7 @@ export async function handleSlash(
   ctx: AppContext,
   line: string,
   out: Writable,
+  signal?: AbortSignal,
 ): Promise<SlashResult> {
   const parts = line.slice(1).trim().split(/\s+/);
   const cmd = (parts[0] ?? "").toLowerCase();
@@ -70,28 +71,28 @@ export async function handleSlash(
       printHelp(out);
       break;
     case "models":
-      await showList(ctx, out, "model");
+      await showList(ctx, out, "model", signal);
       break;
     case "agents":
-      await showList(ctx, out, "orchestrator");
+      await showList(ctx, out, "orchestrator", signal);
       break;
     case "model":
-      await select(ctx, out, arg, "model");
+      await select(ctx, out, arg, "model", signal);
       break;
     case "agent":
-      await select(ctx, out, arg, "orchestrator");
+      await select(ctx, out, arg, "orchestrator", signal);
       break;
     case "tier":
-      await showTier(ctx, out);
+      await showTier(ctx, out, signal);
       break;
     case "effort":
       setEffort(ctx, out, arg);
       break;
     case "audit":
-      await showAudit(ctx, out, arg);
+      await showAudit(ctx, out, arg, signal);
       break;
     case "doctor":
-      await doctor(ctx, out);
+      await doctor(ctx, out, signal);
       break;
     case "mcp":
       out.write("MCP servers — coming soon. Aether Code will manage MCP tools here.\n");
@@ -119,7 +120,7 @@ function printHelp(out: Writable): void {
   out.write(lines.join("\n") + "\n");
 }
 
-async function doctor(ctx: AppContext, out: Writable): Promise<void> {
+async function doctor(ctx: AppContext, out: Writable, signal?: AbortSignal): Promise<void> {
   out.write("Aether Code · doctor\n");
   out.write(`  api:    ${ctx.cfg.baseUrl}\n`);
   const t = await ctx.tokens.get();
@@ -129,15 +130,15 @@ async function doctor(ctx: AppContext, out: Writable): Promise<void> {
     out.write(`  auth:   ✓ ${isApiToken(t) ? "API token" : "session token"}\n`);
   }
   try {
-    const cat = await getCatalog(ctx);
+    const cat = await getCatalog(ctx, false, signal);
     out.write(`  server: ✓ reachable (tier ${cat.tier})\n`);
   } catch {
     out.write("  server: ✗ unreachable or token rejected\n");
   }
 }
 
-async function showList(ctx: AppContext, out: Writable, kind: Kind): Promise<void> {
-  const cat = await getCatalog(ctx);
+async function showList(ctx: AppContext, out: Writable, kind: Kind, signal?: AbortSignal): Promise<void> {
+  const cat = await getCatalog(ctx, false, signal);
   const items = byKind(cat, kind);
   const current =
     kind === "model" ? ctx.flags.model ?? ctx.cfg.defaultModel ?? cat.default : ctx.flags.agent;
@@ -150,12 +151,18 @@ async function showList(ctx: AppContext, out: Writable, kind: Kind): Promise<voi
   out.write(kind === "model" ? "switch: /model <n|id>\n" : "switch: /agent <n|id>\n");
 }
 
-async function select(ctx: AppContext, out: Writable, arg: string, kind: Kind): Promise<void> {
+async function select(
+  ctx: AppContext,
+  out: Writable,
+  arg: string,
+  kind: Kind,
+  signal?: AbortSignal,
+): Promise<void> {
   if (!arg) {
     out.write(`usage: /${kind === "model" ? "model" : "agent"} <n|id>\n`);
     return;
   }
-  const cat = await getCatalog(ctx);
+  const cat = await getCatalog(ctx, false, signal);
   const item = resolveSelection(byKind(cat, kind), arg);
   if (!item) {
     out.write(`no such ${kind}: ${arg}\n`);
@@ -198,8 +205,8 @@ function setEffort(ctx: AppContext, out: Writable, arg: string): void {
   out.write(`effort → ${tier}  (saved — drives your aether code runs)\n`);
 }
 
-async function showTier(ctx: AppContext, out: Writable): Promise<void> {
-  const cat = await getCatalog(ctx);
+async function showTier(ctx: AppContext, out: Writable, signal?: AbortSignal): Promise<void> {
+  const cat = await getCatalog(ctx, false, signal);
   const models = byKind(cat, "model").filter((m) => m.available).length;
   const orch = byKind(cat, "orchestrator").filter((m) => m.available).length;
   out.write(
@@ -207,10 +214,10 @@ async function showTier(ctx: AppContext, out: Writable): Promise<void> {
   );
 }
 
-async function showAudit(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+async function showAudit(ctx: AppContext, out: Writable, arg: string, signal?: AbortSignal): Promise<void> {
   const n = Number(arg);
   const limit = Number.isInteger(n) && n > 0 ? n : 10;
-  const entries = await fetchTrail(ctx.api, { limit });
+  const entries = await fetchTrail(ctx.api, { limit }, signal);
   if (entries.length === 0) {
     out.write("(no audit entries)\n");
     return;

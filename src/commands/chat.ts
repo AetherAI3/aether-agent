@@ -114,8 +114,8 @@ async function repl(ctx: AppContext): Promise<number> {
     completer: slashCompletions,
   });
   // In terminal mode readline owns Ctrl+C (no process SIGINT is raised).
-  // Mid-turn: cancel the in-flight turn, keep the session. Idle: leave with
-  // a goodbye at exit 130 (the status_renderer/tui cleanup convention).
+  // Mid-turn or mid-slash-command: cancel it, keep the session. Idle: leave
+  // with a goodbye at exit 130 (the status_renderer/tui cleanup convention).
   let inflight: AbortController | null = null;
   rl.on("SIGINT", () => {
     if (inflight) {
@@ -144,11 +144,18 @@ async function repl(ctx: AppContext): Promise<number> {
     }
     appendHistory(historyPath, t);
     if (t.startsWith("/")) {
+      inflight = new AbortController();
       try {
-        const res = await handleSlash(ctx, t, process.stdout);
+        const res = await handleSlash(ctx, t, process.stdout, inflight.signal);
         if (res.exit) break;
       } catch (err) {
-        printError(err, ctx.cfg.baseUrl);
+        if (isAbortError(err)) {
+          process.stderr.write(errTheme.dim("✗ canceled\n"));
+        } else {
+          printError(err, ctx.cfg.baseUrl);
+        }
+      } finally {
+        inflight = null;
       }
       rl.prompt();
       continue;
