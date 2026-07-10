@@ -186,9 +186,19 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
+// Graceful exit: process.exit() mid-teardown intermittently trips a libuv
+// assertion on Windows after TLS fetches (UV_HANDLE_CLOSING, exit 127).
+// Setting exitCode lets the loop drain (measured prompt — undici keep-alive
+// does not hold it); the unref'd timer force-exits if some path ever leaks a
+// ref'd handle, by which point teardown has settled and the race is gone.
+function finish(code: number): void {
+  process.exitCode = code;
+  setTimeout(() => process.exit(code), 2000).unref();
+}
+
 main(process.argv.slice(2))
-  .then((code) => process.exit(code))
+  .then(finish)
   .catch((err) => {
     process.stderr.write(`\n${errTheme.red("✗")} ${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(1);
+    finish(1);
   });
