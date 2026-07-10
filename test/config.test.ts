@@ -1,6 +1,6 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -65,4 +65,14 @@ test("AETHER_BASE_URL overrides the config's baseUrl", async () => {
     else process.env["AETHER_BASE_URL"] = prev;
   }
   assert.equal(loadConfig().baseUrl, "https://from-file.example");
+});
+
+test("saveConfig writes via rename (no leftover .tmp, no truncate-in-place)", async () => {
+  const { loadConfig, saveConfig, DEFAULT_CONFIG } = await import("../src/core/config.js");
+  saveConfig({ ...DEFAULT_CONFIG, defaultModel: "a" });
+  saveConfig({ ...DEFAULT_CONFIG, defaultModel: "b" });
+  saveConfig({ ...DEFAULT_CONFIG, defaultModel: "c" });
+  assert.equal(loadConfig().defaultModel, "c");
+  const leftovers = readdirSync(dir).filter((f) => f.endsWith(".tmp"));
+  assert.deepEqual(leftovers, [], `stray tmp files: ${leftovers.join(", ")}`);
 });

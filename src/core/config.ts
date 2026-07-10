@@ -3,7 +3,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { AetherConfig } from "../types.js";
 
 export const DEFAULT_CONFIG: AetherConfig = {
@@ -56,5 +56,13 @@ export function saveConfig(cfg: AetherConfig): void {
   if (envBase && out.baseUrl === envBase) {
     out.baseUrl = loadConfigFile().baseUrl;
   }
-  writeFileSync(configPath(), JSON.stringify(out, null, 2) + "\n", "utf8");
+  // Write-then-rename instead of an in-place truncate: two processes saving
+  // at once (e.g. `/effort` in one REPL, `config set` in another) could tear
+  // the file, and a reader parsing a torn JSON file falls back to defaults —
+  // silently resetting baseUrl to production. rename() is atomic on both
+  // POSIX and NTFS.
+  const path = configPath();
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(out, null, 2) + "\n", "utf8");
+  renameSync(tmp, path);
 }
