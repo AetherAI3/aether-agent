@@ -79,6 +79,22 @@ test("decodeSse yields frames split on blank lines", async () => {
   assert.equal(frames[2]?.type, "done");
 });
 
+test("decodeSse handles CRLF servers, including a CRLF split across chunks", async () => {
+  async function* bytes(): AsyncGenerator<Uint8Array> {
+    const enc = new TextEncoder();
+    yield enc.encode('data: {"type":"delta","text":"a"}\r\n\r\n');
+    // Split the CRLF pair across a chunk boundary.
+    yield enc.encode('data: {"type":"delta","text":"b"}\r');
+    yield enc.encode('\n\r\ndata: {"type":"done","uvt":1,"cents":0}\r\n\r\n');
+  }
+  const frames = [];
+  for await (const f of decodeSse(bytes())) frames.push(f);
+  assert.equal(frames.length, 3);
+  assert.deepEqual(frames[0], { type: "delta", text: "a" });
+  assert.deepEqual(frames[1], { type: "delta", text: "b" });
+  assert.equal(frames[2]?.type, "done");
+});
+
 test("decodeSse handles a frame split across chunks", async () => {
   async function* bytes(): AsyncGenerator<Uint8Array> {
     const enc = new TextEncoder();
