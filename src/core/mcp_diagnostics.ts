@@ -53,7 +53,7 @@ function redactUrl(value: string): string {
   }
 }
 
-async function bounded<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+export async function bounded<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([

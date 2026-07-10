@@ -180,48 +180,31 @@ export class ApiClient {
   }
 
   async postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
-    const res = await fetch(this.url(path), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        ...(await this.authHeaders()),
-      },
-      body: JSON.stringify(body),
-      ...(signal ? { signal } : {}),
-    });
-    if (!res.ok) throw await toHttpError(res);
-    return (await res.json()) as T;
+    return this.request<T>("POST", path, { body, signal });
   }
 
   async getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-    const res = await fetch(this.url(path), {
-      headers: { Accept: "application/json", ...(await this.authHeaders()) },
-      ...(signal ? { signal } : {}),
-    });
-    if (!res.ok) throw await toHttpError(res);
-    return (await res.json()) as T;
-  }
-
-  async putJson<T>(path: string, body: unknown): Promise<T> {
-    const res = await fetch(this.url(path), {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        ...(await this.authHeaders()),
-      },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) throw await toHttpError(res);
-    return (await res.json()) as T;
+    return this.request<T>("GET", path, { signal });
   }
 
   async deleteJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+    return this.request<T>("DELETE", path, { signal });
+  }
+
+  private async request<T>(
+    method: string,
+    path: string,
+    opts: { body?: unknown; signal?: AbortSignal } = {},
+  ): Promise<T> {
     const res = await fetch(this.url(path), {
-      method: "DELETE",
-      headers: { Accept: "application/json", ...(await this.authHeaders()) },
-      ...(signal ? { signal } : {}),
+      method,
+      headers: {
+        ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
+        Accept: "application/json",
+        ...(await this.authHeaders()),
+      },
+      ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
     });
     if (!res.ok) throw await toHttpError(res);
     return (await res.json()) as T;

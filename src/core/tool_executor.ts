@@ -232,6 +232,7 @@ export class ToolExecutor {
         if (!ent.isFile()) continue;
 
         const file = resolve(dir, ent.name);
+        if (statSync(file).size > SNAPSHOT_MAX_BYTES) continue;
         const buf = readFileSync(file);
         if (buf.includes(0)) continue;
         const rel = "./" + relative(this.root, file).split(sep).join("/");
@@ -247,26 +248,13 @@ export class ToolExecutor {
     return { output: `[exit 0]\n${capHeadTail(hits.join("\n"), MAX_OUTPUT)}`, exitCode: 0 };
   }
 
-  /** Run a command via argv (no shell) — for git, where the message can
-   * contain shell metacharacters the string form of `run()` would interpret. */
-  private runArgv(argv: string[], timeoutMs = 900_000): ToolResult {
-    const [cmd, ...rest] = argv;
-    const r = spawnSync(cmd!, rest, {
-      cwd: this.root,
-      encoding: "utf8",
-      timeout: timeoutMs,
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    return toResult(r, timeoutMs);
-  }
-
   private gitCommit(message: string): ToolResult {
     return this.committer.commit(message);
   }
 }
 
-/** Shared spawnSync -> ToolResult mapping for run() (shell) and runArgv() (argv):
- * same timeout/ENOENT/exit-code handling either way, only the spawn call itself differs. */
+/** Shared spawnSync -> ToolResult mapping for run() (shell):
+ * timeout/ENOENT/exit-code handling. */
 function toResult(r: SpawnSyncReturns<string>, timeoutMs: number): ToolResult {
   if (r.error) {
     const err = r.error as NodeJS.ErrnoException;

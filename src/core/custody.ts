@@ -58,3 +58,15 @@ export function readCustodyLog(limit = 200): CustodyRecord[] {
     return [];
   }
 }
+
+/** Short, stable hash-ish display for a commitment/attestation blob. */
+export function shortCustodyHash(v: unknown): string {
+  if (v == null) return "-";
+  if (typeof v === "string") return v.slice(0, 12) || "-";
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const inner = o["hash"] ?? o["env_hash"] ?? o["commitment_hash"] ?? o["digest"];
+    if (inner != null) return String(inner).slice(0, 12);
+  }
+  return "✓"; // present but no obvious hash field
+}

@@ -3,7 +3,7 @@
 // Every function wraps a single ApiClient call. Download/delete use raw fetch()
 // because ApiClient doesn't expose those methods yet. Same auth header pattern.
 
-import { ApiClient } from "./transport.js";
+import { ApiClient, isCredentialSafeUrl } from "./transport.js";
 import {
   VAULT_LIST_PATH, VAULT_BROWSE_PATH,
   VAULT_SPACES_LIST_PATH, VAULT_SPACES_USAGE_PATH,
@@ -14,6 +14,7 @@ import {
   VAULT_NOTES_OUTLINKS_PATH, VAULT_NOTES_TREE_PATH,
   AGENT_VAULT_SNAPSHOT_PATH, AGENT_VAULT_SLASH_PATH,
 } from "./transport.js";
+import { InsecureTransportError } from "./errors.js";
 
 // ── Response types ────────────────────────────────
 
@@ -101,14 +102,18 @@ async function _bearerToken(api: ApiClient): Promise<string | null> {
   }
 }
 
-async function _authHeaders(api: ApiClient): Promise<Record<string, string>> {
-  const t = await _bearerToken(api);
-  return t ? { Authorization: `Bearer ${t}` } : {};
-}
-
 function _baseUrl(api: ApiClient): string {
   const b = (api as unknown as { baseUrl: string }).baseUrl;
   return b.replace(/\/$/, "");
+}
+
+async function _authHeaders(api: ApiClient): Promise<Record<string, string>> {
+  const t = await _bearerToken(api);
+  if (!t) return {};
+  // Fail closed: never put the bearer on an insecure transport, same as ApiClient.authHeaders.
+  const base = _baseUrl(api);
+  if (!isCredentialSafeUrl(base)) throw new InsecureTransportError(base);
+  return { Authorization: `Bearer ${t}` };
 }
 
 // ── Vault list / browse ──────────────────────────

@@ -70,6 +70,13 @@ function loggedEvent(ev: BrainEvent): BrainEvent {
     case "checkpoint": return { ...ev, gitSha: redactInline(ev.gitSha) };
     case "done": return { ...ev, result: redactInline(ev.result), reason: redactInline(ev.reason) };
     case "error": return { ...ev, msg: redactInline(ev.msg) };
+    case "workflow_start": return { ...ev, workflowId: redactInline(ev.workflowId) };
+    case "phase_start": return { ...ev, phaseType: redactInline(ev.phaseType) };
+    case "phase_done": return { ...ev, artifactSummary: redactInline(ev.artifactSummary) };
+    case "agent_spawn": return { ...ev, agentId: redactInline(ev.agentId), brief: redactInline(ev.brief) };
+    case "agent_progress": return { ...ev, agentId: redactInline(ev.agentId), delta: redactInline(ev.delta) };
+    case "agent_done": return { ...ev, agentId: redactInline(ev.agentId), summary: redactInline(ev.summary) };
+    case "workflow_done": return { ...ev, synthesis: redactInline(ev.synthesis) };
     default: return ev;
   }
 }
@@ -206,7 +213,7 @@ export class SessionLog {
       JSON.stringify(
         {
           sessionId: this.sessionId,
-          task: this.meta.task,
+          task: redactInline(this.meta.task),
           model: this.meta.model,
           poolGb: this.meta.poolGb,
           brain: this.meta.brain,

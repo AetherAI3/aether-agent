@@ -24,35 +24,16 @@ import { cmdVault } from "./commands/vault.js";
 import { cmdWorkflow } from "./commands/workflow.js";
 import { cmdImage, cmdVideo } from "./commands/media.js";
 import { cmdOutput } from "./commands/output.js";
-import { renderCliHelp } from "./commands/cli_registry.js";
+import { CLI_COMMANDS, renderCliHelp } from "./commands/cli_registry.js";
+import { commandNames, suggestRegisteredCommand } from "./core/command_registry.js";
 
 /** Coerce a parsed flag value to string | undefined. */
 const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
-// Real top-level subcommands (mirrors the switch below). Kept local rather
-// than re-exported from slash_registry.ts: that registry's suggestCommand()
-// is scoped to slash-command vocabulary (/model, /help, ...), a different
-// namespace than these bare `aether <cmd>` words — conflating them would let
-// e.g. "aether model" suggest a slash command that isn't a valid subcommand.
-const TOP_LEVEL_COMMANDS = [
-  "auth", "github", "vault", "workflow", "image", "video", "output", "login",
-  "logout", "audit", "mcp", "models", "agents", "run", "receipt", "config",
-  "agent", "code", "resume", "chat", "help",
-];
-
-/** Bounded Levenshtein — bails early past `max` (rows are monotonic in min). */
-function editDistance(a: string, b: string, max: number): number {
-  if (Math.abs(a.length - b.length) > max) return max + 1;
-  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [i];
-    for (let j = 1; j <= b.length; j++) {
-      cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1]! : 1 + Math.min(prev[j - 1]!, prev[j]!, cur[j - 1]!);
-    }
-    prev = cur;
-  }
-  return prev[b.length]!;
-}
+// Real top-level subcommand names, sourced from CLI_COMMANDS (cli_registry.ts)
+// — the same registry the switch below is cross-checked against — so this can
+// never drift from the actual dispatched subcommands.
+const TOP_LEVEL_COMMAND_NAMES = commandNames(CLI_COMMANDS);
 
 /**
  * Suggestion for a lone bare token at the top level (`aether auht`). Exact
@@ -61,18 +42,9 @@ function editDistance(a: string, b: string, max: number): number {
  * `moddels`→models while letting an unrelated word like `hello` flow to chat.
  */
 function suggestTopLevel(token: string): string | null {
-  if (TOP_LEVEL_COMMANDS.includes(token)) return null;
+  if (TOP_LEVEL_COMMAND_NAMES.includes(token)) return null;
   const max = token.length <= 5 ? 1 : 2;
-  let best: string | null = null;
-  let bestD = max + 1;
-  for (const cand of TOP_LEVEL_COMMANDS) {
-    const d = editDistance(token, cand, bestD);
-    if (d < bestD) {
-      bestD = d;
-      best = cand;
-    }
-  }
-  return bestD <= max ? best : null;
+  return suggestRegisteredCommand(token, TOP_LEVEL_COMMAND_NAMES, max);
 }
 
 async function main(argv: string[]): Promise<number> {

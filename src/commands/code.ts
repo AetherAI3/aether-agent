@@ -24,7 +24,6 @@ import { AnimationController } from "../ui/animations.js";
 import { HeartbeatIndicator } from "../ui/heartbeat.js";
 import { LocalAgentSource, bindEventSource } from "../core/agent_events.js";
 import { phaseVerb } from "../ui/phase_verb.js";
-import { lineDiff, renderDiff } from "../ui/diff_render.js";
 import { TaskLedger } from "../ui/ledger.js";
 import {
   CODE_STAGES,
@@ -87,25 +86,6 @@ export function applyEventToStatus(
   } else if (ev.type === "telemetry") {
     sr.setStreamed(ev.tokens);
   }
-}
-
-/** Colorized diff preview for a write_file edit, or null if not an edit.
- * Reads through ToolExecutor.snapshot() so preview reads share the same
- * workspace guard as the eventual write. */
-export function editPreview(exec: ToolExecutor, ev: BrainEvent): string | null {
-  if (ev.type !== "tool_call" || ev.name !== "write_file") return null;
-  const path = String(ev.args["path"] ?? "");
-  const next = String(ev.args["content"] ?? "");
-  if (!path) return null;
-  const before = exec.snapshot(path);
-  if (before.reason === "unsafe") return null;
-  if (before.existed && before.text === null) {
-    const kind = before.reason === "binary" ? "binary" : "large file";
-    return `  ✎ ${path}  (${kind}, wrote ${Buffer.byteLength(next)} b)`;
-  }
-  const ops = lineDiff(before.text ?? "", next);
-  if (ops.length === 0) return null;
-  return renderDiff(path, ops);
 }
 
 /** Replay a prior local session's transcript into the active surface. Fail-soft:

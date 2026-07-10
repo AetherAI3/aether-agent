@@ -60,7 +60,7 @@ function canonicalizeCandidate(candidate: string): string {
 
 export function confineToWorkspace(cwd: string, candidate: string, mustExist = false): string {
   const root = normalizeWorkspace(cwd);
-  const lexical = fold(resolve(cwd, candidate));
+  const lexical = fold(resolve(root, candidate));
   if (!inside(root, lexical)) throw new Error("path escapes workspace");
   const canonical = canonicalizeCandidate(lexical);
   if (!inside(root, canonical)) throw new Error("path escapes workspace through a link");
@@ -73,7 +73,7 @@ export function confineToWorkspace(cwd: string, candidate: string, mustExist = f
 export function resolveOpaqueChild(root: string, id: string, label = "id"): string {
   const safe = requireOpaqueId(id, label);
   const canonicalRoot = normalizeWorkspace(root);
-  const child = fold(resolve(root, safe));
+  const child = fold(resolve(canonicalRoot, safe));
   if (!inside(canonicalRoot, child)) throw new Error(`invalid ${label}`);
   return child;
 }

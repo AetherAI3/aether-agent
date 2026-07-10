@@ -8,7 +8,7 @@ import { validateToolDefinitionCoverage } from "./tool_registry.js";
 import { localMemoryReport, type MemoryRoots } from "./memory.js";
 import { LocalMcpStore } from "./mcp_store.js";
 import { McpClient } from "./mcp.js";
-import { collectMcpDiagnostics } from "./mcp_diagnostics.js";
+import { bounded, collectMcpDiagnostics } from "./mcp_diagnostics.js";
 
 export const DIAGNOSTIC_CONCURRENCY = 8;
 
@@ -84,21 +84,6 @@ export async function executeDiagnosticChecks(
   };
   await Promise.all(Array.from({ length: Math.min(width, specs.length) }, () => worker()));
   return results;
-}
-
-async function bounded<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error("timeout")), timeoutMs);
-        timer.unref?.();
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }
 
 function nearestExisting(path: string): string {

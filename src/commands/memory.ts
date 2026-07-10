@@ -111,7 +111,9 @@ export async function cmdMemory(
     if (sub === "prune") {
       const days = Number(argv[1]);
       const apply = options.apply === true || argv.includes("--apply");
-      if (!Number.isInteger(days)) throw new Error("usage: aether memory prune <days> [--apply]");
+      if (!Number.isInteger(days) || days < 1 || days > 36500) {
+        throw new Error("usage: aether memory prune <days> [--apply]");
+      }
       if (apply) {
         const confirmed =
           ctx.flags.yes || (await ctx.confirm(`Prune local snapshots older than ${days} day(s)? [y/N] `));

@@ -41,7 +41,7 @@ test("git_commit with nothing staged reports it without a fabricated failure", (
     const exec = new ToolExecutor(dir);
     const r = exec.execute("git_commit", { message: "no-op" });
     assert.equal(r.exitCode, 0);
-    assert.match(r.output, /nothing to commit/i);
+    assert.match(r.output, /nothing new to commit/i);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

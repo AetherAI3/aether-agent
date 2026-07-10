@@ -203,6 +203,7 @@ async function runLocalTurn(ctx: AppContext, prompt: string): Promise<void> {
     for await (const ev of brain.run(task)) {
       renderer.event(ev);
       if (ev.type === "error") sawError = ev.msg;
+      if (ev.type === "done" && !ev.ok) sawError = ev.result || ev.reason || "turn did not complete";
       if (ev.type === "tool_call") {
         // executeAsync so the two web tools (web_search/web_fetch) work too.
         const approved = await approveTool(ev.name, ev.args);
@@ -811,7 +812,7 @@ async function replLines(ctx: AppContext): Promise<number> {
       process.stdout.write(p);
       continue;
     }
-    if (historyEnabled()) appendHistory(t);
+    if (historyEnabled()) appendHistory(t, historyPath(ctx.flags.cwd));
     if (t.startsWith("/")) {
       inflight = new AbortController();
       try {
