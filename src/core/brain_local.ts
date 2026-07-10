@@ -52,6 +52,12 @@ export class LocalBrain implements Brain {
     }) as ChildProcessWithoutNullStreams;
     this.child = child;
 
+    // A dead child's stdin raises EPIPE asynchronously; without a listener
+    // that's an uncaught exception that kills the whole CLI mid-run (and the
+    // session log never closes). The close/exit path already surfaces the
+    // brain's death; the write error itself is noise.
+    child.stdin.on("error", () => {});
+
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       for (const line of this.lines.push(chunk)) {
