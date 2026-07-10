@@ -20,20 +20,32 @@ Branch `loop/LOOP-19-2026-07-09` continued: welds 17–29 (sweep W1–W13). Test
 | W12 | /effort survives a hand-edited config (String coercion) | ux#9 |
 | W13 | teardown always runs when the brain throws (no stale status over the fatal ✗) | ux#10 |
 
-## Deferred → register (nothing silently dropped)
+## Deferred findings — CLOSED OUT in a follow-up pass (not silently dropped)
 
-| id | finding | why deferred | suggested shape |
-|----|---------|-------------|-----------------|
-| D1 | core#4: server `error` frame in chat/run renders but exits 0 | needs a runTurn signature change rippling through 3 callers — clean but not a one-liner; do as its own weld with fixture tests | runTurn returns {ok}; cmdChat/cmdRun map to exit 1 |
-| D2 | core#5: gitCommit `\|\| echo` masks failures; shell-quoted message is injectable (cmd.exe %VAR%, POSIX $()) | tool_executor rework + brain-visible output contract must stay `[exit N]` — needs care + tests | spawnSync argv form; detect "nothing to commit" from git output |
-| D3 | core#6: testCmd defaults diverge (wire says `pytest -q`, host gate runs only with --test-cmd → brain-verified runs still print "unverified") | protocol-adjacent semantics — operator should pick: send `test_cmd:""` when unset (wire change vs Python brain) or host-gate on the resolved default (false failures in JS repos) | operator decision |
-| D4 | ux#4: pulse repaints fight readline type-ahead echo mid-turn (input flickers, runs later as "ghost" queued line) | rl.pause() would break mid-turn Ctrl+C (coherence #1); the safe fix is pulse-repaints-readline-row coordination — small design task | pulse.onFrame → rl.\_refreshLine() or pause pulse on keypress |
-| D5 | ux#5: SIGINT during a network slash command exits the whole session; getJson has no timeout | mirror of the turn path — per-slash AbortController + timeout; medium change | wire SIGINT to a slash-scoped controller |
-| D6 | ux#7: clip/argHint can slice surrogate pairs → mojibake | multi-file shared-helper change; cosmetic corruption only | code-point clip helper in theme.ts, adopt in 4 sites |
-| D7 | ux#8: saveConfig non-atomic (torn config.json silently resets to defaults incl. baseUrl) | small but touches every save path; do with a tmp+rename test | writeFileSync tmp + renameSync |
-| D8 | SseEventSource in agent_events.ts is dead code with a broken decode if ever wired | deletion is the right fix but it's referenced by the file's own docs — operator taste | delete or fix when wiring |
-| D9 | E15 paste burst-batching (register R6, unchanged) | raw-mode ownership is the real fix (register R1) | interim: queued-lines batch |
+Nine findings were deferred rather than rushed. The operator asked for a normal (non-ceremony)
+follow-up pass; eight are now fixed as plain commits on this same branch. Tests 183 → **193/193**.
+
+| id | finding | resolution |
+|----|---------|-----------|
+| D1 | core#4: server `error` frame in chat/run renders but exits 0 | **FIXED** — `runTurn` returns `false` on a streamed error frame; `cmdChat`/`cmdRun` map to exit 1. |
+| D2 | core#5: `gitCommit` `\|\| echo` masks failures; shell-quoted message is injectable | **FIXED** — argv-form `spawnSync` (no shell); only "nothing to commit" is treated as benign, real failures surface with no fabricated sha. Real temp-git-repo tests, incl. an injection-payload commit message and a pre-commit-hook rejection. |
+| D3 | core#6: `testCmd` defaults diverge (wire `pytest -q` vs host gate only with `--test-cmd`) | **FIXED — operator decision resolved via AskUserQuestion**: send `test_cmd:""` when unset, matching CONTRACTS.md's documented unverifiable-run signal (the host's own default). The other option (host-gate on the resolved default) risked false failures in non-Python repos. |
+| D4 | ux#4: pulse repaints fight readline type-ahead echo mid-turn | **FIXED** — `ThinkingPulse` gained an `onPaint` hook; the REPL re-syncs readline's input line after every repaint via `_refreshLine()`. Does NOT pause readline (would reopen the Ctrl+C-goes-dark risk from coherence check #1). |
+| D5 | ux#5: SIGINT during a network slash command exits the whole session; `getJson` has no timeout | **FIXED** — `getJson`/`fetchTrail`/`getCatalog`/`handleSlash` thread an `AbortSignal` the same way `runTurn` already does; the REPL wraps slash dispatch in its own `AbortController` wired to the same SIGINT handler. |
+| D6 | ux#7: clip/argHint can slice surrogate pairs → mojibake | **FIXED** — one shared `clipCodePoints()` in theme.ts, adopted at all four sites (diff.ts, ledger.ts, both `argHint`s). |
+| D7 | ux#8: `saveConfig` non-atomic (torn write can silently reset config to defaults) | **FIXED** — write-then-`renameSync` (atomic on POSIX and NTFS). |
+| D8 | `SseEventSource` in agent_events.ts is dead code with a broken decode if ever wired | **FIXED (removed)** — confirmed zero callers anywhere in src/ or test/; deleted rather than half-fixing something nobody calls. File header corrected (it described a cloud/local split that isn't how the code actually works — both brains feed the same `LocalAgentSource`). |
+| D9 | paste burst-batching (a 10-line paste fires 10 sequential turns) | **STILL DEFERRED** (register R6/R9) — the real fix needs raw-mode input ownership, the same structural work as the rejected alt-screen rebuild (register R1). Not rushed as a partial hack. |
 
 ## Verification note
 
-Each weld ran the full suite green before commit (`npm test`, exit-code-checked). No separate end-of-sweep LOOP-11 gate was run — every fix came FROM an adversarial finder and carries its own regression test where testable (W3, W4, W5, W9, W10 + W1/W2's e2e pins); W6-W8, W11-W13 are one-guard welds verified by suite + reasoning, disclosed here.
+Sweep #1: every weld ran the full suite green before commit (`npm test`, exit-code-checked). No
+separate end-of-sweep LOOP-11 gate was run — every fix came FROM an adversarial finder and carries
+its own regression test where testable (W3, W4, W5, W9, W10 + W1/W2's e2e pins); W6-W8, W11-W13 are
+one-guard welds verified by suite + reasoning, disclosed here.
+
+Sweep #2 (deferred-findings close-out): plain commits, no ratchet-weld ceremony (operator correction:
+"do normal testing like claude code or hermes agent, dont do strict rule if it doesnt make sense").
+Each fix still got a real regression test where the bug was reachable (D1-D2, D3, D5-D7) and `npm test`
+green before every commit; D4 and D8 are guard/removal changes verified by the suite + a piped-REPL
+smoke rather than a dedicated new test file, disclosed here rather than padded with one.
