@@ -19,6 +19,7 @@ import type { CatalogItem, CatalogResponse } from "../types.js";
 import { MODELS_PATH } from "../core/transport.js";
 import { fetchTrail } from "../core/audit.js";
 import { isApiToken } from "./auth.js";
+import { SLASH_COMMANDS, slashNames, nearest } from "./slash_registry.js";
 
 export interface SlashResult {
   exit: boolean;
@@ -93,28 +94,24 @@ export async function handleSlash(
     case "clear":
       out.write("\x1b[2J\x1b[H");
       break;
-    default:
-      out.write(`unknown command: /${cmd}  (try /help)\n`);
+    default: {
+      const near = nearest(cmd, slashNames(), 2);
+      const hint = near ? ` — did you mean /${near}?` : "";
+      out.write(`unknown command: /${cmd}${hint}  (/help lists commands)\n`);
+    }
   }
   return { exit: false };
 }
 
+// Help derives from the registry, so it can never drift from what the switch
+// above actually accepts (the old hand-written list had lost /quit).
 function printHelp(out: Writable): void {
-  out.write(
-    [
-      "/models            list chat models",
-      "/model <n|id>      switch model",
-      "/agents            list orchestrators (Neo/Kronus)",
-      "/agent <n|id>      switch orchestrator",
-      "/tier              plan tier + default",
-      "/audit [n]         recent Aether audit trail",
-      "/doctor            diagnose your setup",
-      "/mcp               MCP servers (coming soon)",
-      "/clear             clear screen",
-      "/exit              leave",
-      "",
-    ].join("\n"),
-  );
+  const lines = SLASH_COMMANDS.map((c) => {
+    const names = [c.name, ...(c.aliases ?? [])].map((n) => `/${n}`).join(" | ");
+    const left = c.args ? `${names} ${c.args}` : names;
+    return `${left.padEnd(18)} ${c.desc}`;
+  });
+  out.write(lines.join("\n") + "\n");
 }
 
 async function doctor(ctx: AppContext, out: Writable): Promise<void> {
