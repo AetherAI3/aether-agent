@@ -17,6 +17,7 @@ import { CHAT_STREAM_PATH, CHAT_PATH } from "./transport.js";
 import { buildChatRequest } from "./envelope.js";
 import { decodeSse, type StreamFrame } from "./stream.js";
 import { StreamUnavailableError } from "./errors.js";
+import { appendCustody } from "./custody.js";
 
 export class CloudBrain implements Brain {
   private aborted = false;
@@ -38,12 +39,25 @@ export class CloudBrain implements Brain {
     queue.push({ type: "stage", name: "execute", face: "⟨◉⟩" }); // uplink face
     try {
       const stream = await this.api.stream(CHAT_STREAM_PATH, req);
+      // The terminal done must be ground truth, never fabricated success
+      // (CONTRACTS.md invariant 5): a streamed error or a user abort ends the
+      // run ok:false. Custody receipts persist here too — the server stores
+      // nothing; the client-held log is the only copy.
+      let failed: string | null = null;
       for await (const frame of decodeSse(stream)) {
         if (this.aborted) break;
+        if (frame.type === "custody") appendCustody(frame.custody);
+        if (frame.type === "error") failed = frame.msg;
         const ev = mapFrame(frame);
         if (ev) queue.push(ev);
       }
-      queue.push({ type: "done", ok: true, result: "", remaining: 0, reason: "" });
+      if (failed) {
+        queue.push({ type: "done", ok: false, result: failed, remaining: 0, reason: "" });
+      } else if (this.aborted) {
+        queue.push({ type: "done", ok: false, result: "aborted", remaining: 0, reason: "" });
+      } else {
+        queue.push({ type: "done", ok: true, result: "", remaining: 0, reason: "" });
+      }
     } catch (err) {
       if (err instanceof StreamUnavailableError) {
         // Fail-soft: non-streaming fallback (contract `{"stream": false}`).

@@ -267,7 +267,9 @@ export async function hostLoop(
           break;
         }
         case "done":
-          code = ev.ok ? 0 : 1;
+          // A prior error event keeps its exit code — a later done ok:true
+          // must never launder a failed run back to success.
+          if (!ev.ok) code = 1;
           break;
         case "error":
           code = 1;
