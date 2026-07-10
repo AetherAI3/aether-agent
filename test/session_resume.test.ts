@@ -5,12 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadSession, latestSession, replayLines } from "../src/core/session_resume.js";
 
-function seed(root: string, id: string, started: string): void {
+function seed(root: string, id: string, started: string, cwd?: string): void {
   const dir = join(root, id);
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, "manifest.json"),
-    JSON.stringify({ sessionId: id, task: "fix x", model: "haiku", brain: "cloud", started, finalStatus: "running" }),
+    JSON.stringify({ sessionId: id, task: "fix x", model: "haiku", brain: "cloud", started, finalStatus: "running", ...(cwd ? { cwd } : {}) }),
   );
   writeFileSync(
     join(dir, "events.jsonl"),
@@ -33,15 +33,25 @@ test("loadSession reads manifest + events", () => {
   }
 });
 
-test("latestSession returns the newest by started time", () => {
+test("latestSession returns only the newest record scoped to this workspace", () => {
   const root = mkdtempSync(join(tmpdir(), "aec-"));
   try {
-    seed(root, "a", "2026-01-01T00:00:00.000Z");
-    seed(root, "b", "2026-02-01T00:00:00.000Z");
-    assert.equal(latestSession(root)?.manifest.sessionId, "b");
+    const cwd = join(root, "workspace");
+    const other = join(root, "other");
+    mkdirSync(cwd);
+    mkdirSync(other);
+    seed(root, "current-old", "2026-01-01T00:00:00.000Z", cwd);
+    seed(root, "other-new", "2026-04-01T00:00:00.000Z", other);
+    seed(root, "legacy-newest", "2026-05-01T00:00:00.000Z");
+    seed(root, "current-new", "2026-03-01T00:00:00.000Z", cwd);
+    assert.equal(latestSession(cwd, root)?.manifest.sessionId, "current-new");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("loadSession rejects traversal before reading", () => {
+  assert.throws(() => loadSession("../outside", "C:\\safe"), /invalid session id/);
 });
 
 test("replayLines renders the transcript history", () => {

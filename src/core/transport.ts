@@ -193,9 +193,10 @@ export class ApiClient {
     return (await res.json()) as T;
   }
 
-  async getJson<T>(path: string): Promise<T> {
+  async getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
     const res = await fetch(this.url(path), {
       headers: { Accept: "application/json", ...(await this.authHeaders()) },
+      ...(signal ? { signal } : {}),
     });
     if (!res.ok) throw await toHttpError(res);
     return (await res.json()) as T;
@@ -210,6 +211,16 @@ export class ApiClient {
         ...(await this.authHeaders()),
       },
       body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await toHttpError(res);
+    return (await res.json()) as T;
+  }
+
+  async deleteJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+    const res = await fetch(this.url(path), {
+      method: "DELETE",
+      headers: { Accept: "application/json", ...(await this.authHeaders()) },
+      ...(signal ? { signal } : {}),
     });
     if (!res.ok) throw await toHttpError(res);
     return (await res.json()) as T;

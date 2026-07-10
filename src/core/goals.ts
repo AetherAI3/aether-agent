@@ -3,8 +3,9 @@
 
 import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { isCurrentWorkspace, normalizeWorkspace } from "./workspace_scope.js";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -39,59 +40,89 @@ export interface Goal {
   selectedPhaseId?: string;
   createdAt: string;
   completedAt?: string;
+  cwd?: string;
 }
 
 // ── Store ────────────────────────────────────────────────────────────
 
-const GOALS_DIR = join(homedir(), ".config", "aether");
-const GOALS_FILE = join(GOALS_DIR, "goals.json");
-
-function ensureDir(): void {
-  if (!existsSync(GOALS_DIR)) mkdirSync(GOALS_DIR, { recursive: true });
+export function goalsFile(): string {
+  return process.env["AETHER_GOALS_FILE"] ?? join(homedir(), ".config", "aether", "goals.json");
 }
 
-export function loadGoals(): Goal[] {
+function ensureDir(file: string): void {
+  const dir = dirname(file);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+}
+
+export type GoalStoreStatus = "missing" | "ok" | "corrupt" | "unreadable";
+export interface GoalStoreState { status: GoalStoreStatus; goals: Goal[] }
+
+export function readGoals(file: string = goalsFile()): GoalStoreState {
+  if (!existsSync(file)) return { status: "missing", goals: [] };
+  let raw: string;
   try {
-    if (!existsSync(GOALS_FILE)) return [];
-    const raw = readFileSync(GOALS_FILE, "utf8");
-    if (!raw.trim()) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    raw = readFileSync(file, "utf8");
   } catch {
-    return [];
+    return { status: "unreadable", goals: [] };
+  }
+  try {
+    if (!raw.trim()) return { status: "corrupt", goals: [] };
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? { status: "ok", goals: parsed as Goal[] }
+      : { status: "corrupt", goals: [] };
+  } catch {
+    return { status: "corrupt", goals: [] };
   }
 }
 
-function saveGoals(goals: Goal[]): void {
-  ensureDir();
-  writeFileSync(GOALS_FILE, JSON.stringify(goals, null, 2), { mode: 0o600 });
+export function loadGoals(file: string = goalsFile()): Goal[] {
+  return readGoals(file).goals;
 }
 
-export function upsertGoal(goal: Goal): void {
-  const all = loadGoals();
+function mutableGoals(file: string): Goal[] {
+  const state = readGoals(file);
+  if (state.status === "corrupt" || state.status === "unreadable") {
+    throw new Error(`goal store is ${state.status}; refusing to overwrite it`);
+  }
+  return state.goals;
+}
+
+function saveGoals(goals: Goal[], file: string): void {
+  ensureDir(file);
+  writeFileSync(file, JSON.stringify(goals, null, 2), { encoding: "utf8", mode: 0o600 });
+}
+
+export function upsertGoal(goal: Goal, file: string = goalsFile()): void {
+  const all = mutableGoals(file);
   const idx = all.findIndex((g) => g.id === goal.id);
   if (idx >= 0) all[idx] = goal;
   else all.push(goal);
-  saveGoals(all);
+  saveGoals(all, file);
 }
 
-export function deleteGoal(id: string): void {
-  const all = loadGoals().filter((g) => g.id !== id);
-  saveGoals(all);
+export function deleteGoal(id: string, file: string = goalsFile()): void {
+  const all = mutableGoals(file).filter((g) => g.id !== id);
+  saveGoals(all, file);
 }
 
-export function getGoal(id: string): Goal | undefined {
-  return loadGoals().find((g) => g.id === id);
+export function getGoal(id: string, file: string = goalsFile()): Goal | undefined {
+  return loadGoals(file).find((g) => g.id === id);
 }
 
-export function getActiveGoal(): Goal | undefined {
-  return loadGoals().find((g) => g.status === "running" || g.status === "paused");
+export function goalsForWorkspace(cwd: string, file: string = goalsFile()): Goal[] {
+  return loadGoals(file).filter((goal) => isCurrentWorkspace(goal.cwd, cwd));
 }
 
-export function newGoal(title: string): Goal {
+export function getActiveGoal(cwd: string, file: string = goalsFile()): Goal | undefined {
+  return goalsForWorkspace(cwd, file).find((g) => g.status === "running" || g.status === "paused");
+}
+
+export function newGoal(title: string, cwd: string): Goal {
   return {
     id: `goal_${randomUUID().slice(0, 8)}`,
     title,
+    cwd: normalizeWorkspace(cwd),
     phases: [],
     status: "idle",
     createdAt: new Date().toISOString(),

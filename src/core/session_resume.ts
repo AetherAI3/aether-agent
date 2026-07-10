@@ -6,6 +6,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { logsRoot, monologueLine } from "./session_log.js";
 import { decodeEvent, type BrainEvent } from "./brain_protocol.js";
+import { isCurrentWorkspace, resolveOpaqueChild } from "./workspace_scope.js";
 
 export interface SessionManifest {
   sessionId: string;
@@ -15,6 +16,7 @@ export interface SessionManifest {
   started: string;
   ended?: string | null;
   finalStatus?: string;
+  cwd?: string;
 }
 
 export interface LoadedSession {
@@ -25,7 +27,7 @@ export interface LoadedSession {
 
 /** Load one session by id (directory name) from the logs root. */
 export function loadSession(id: string, root: string = logsRoot()): LoadedSession {
-  const dir = join(root, id);
+  const dir = resolveOpaqueChild(root, id, "session id");
   const manifestPath = join(dir, "manifest.json");
   if (!existsSync(manifestPath)) throw new Error(`no such session: ${id}`);
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as SessionManifest;
@@ -38,9 +40,34 @@ export function loadSession(id: string, root: string = logsRoot()): LoadedSessio
     : [];
   return { dir, manifest, events };
 }
+export interface SessionSummary {
+  id: string;
+  dir: string;
+  manifest: SessionManifest;
+}
+
+export function listSessionManifests(root: string = logsRoot()): SessionSummary[] {
+  if (!existsSync(root)) return [];
+  const summaries: SessionSummary[] = [];
+  for (const id of readdirSync(root)) {
+    try {
+      const dir = resolveOpaqueChild(root, id, "session id");
+      if (!statSync(dir).isDirectory()) continue;
+      const manifestPath = join(dir, "manifest.json");
+      if (!existsSync(manifestPath)) continue;
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as SessionManifest;
+      summaries.push({ id, dir, manifest });
+    } catch {
+      /* malformed and unreadable records remain unavailable, never fatal */
+    }
+  }
+  return summaries.sort((a, b) => b.manifest.started.localeCompare(a.manifest.started));
+}
+
+
 
 /** The most recently started session, or null if none. */
-export function latestSession(root: string = logsRoot()): LoadedSession | null {
+export function latestSession(cwd: string, root: string = logsRoot()): LoadedSession | null {
   if (!existsSync(root)) return null;
   const ids = readdirSync(root).filter((n) => {
     try {
@@ -53,6 +80,7 @@ export function latestSession(root: string = logsRoot()): LoadedSession | null {
   for (const id of ids) {
     try {
       const s = loadSession(id, root);
+      if (!isCurrentWorkspace(s.manifest.cwd, cwd)) continue;
       if (!best || s.manifest.started > best.manifest.started) best = s;
     } catch {
       /* skip unreadable */

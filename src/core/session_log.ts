@@ -14,6 +14,7 @@ import { join } from "node:path";
 import type { BrainEvent } from "./brain_protocol.js";
 import type { ToolResult } from "./tool_executor.js";
 import { registerRestore } from "../ui/restore.js";
+import { normalizeWorkspace } from "./workspace_scope.js";
 
 export function logsRoot(): string {
   return process.env["AETHER_LOG_DIR"] ?? join(homedir(), ".aether-agent", "logs");
@@ -38,6 +39,7 @@ export interface SessionMeta {
   model: string;
   poolGb: number;
   brain: "local" | "cloud";
+  cwd: string;
 }
 
 export class SessionLog {
@@ -60,9 +62,11 @@ export class SessionLog {
     this.started = now;
     this.sessionId = now.replace(/[:.]/g, "-") + "-" + String(meta.brain);
     this.dir = join(root, this.sessionId);
-    mkdirSync(this.dir, { recursive: true });
+    mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     this.eventsPath = join(this.dir, "events.jsonl");
     this.monologuePath = join(this.dir, "monologue.txt");
+    writeFileSync(this.eventsPath, "", { encoding: "utf8", mode: 0o600 });
+    writeFileSync(this.monologuePath, "", { encoding: "utf8", mode: 0o600 });
     this.manifestPath = join(this.dir, "manifest.json");
     this.writeManifest(null);
     // Batched writes must still land if the process exits abruptly (SIGINT
@@ -151,6 +155,7 @@ export class SessionLog {
           model: this.meta.model,
           poolGb: this.meta.poolGb,
           brain: this.meta.brain,
+          cwd: normalizeWorkspace(this.meta.cwd),
           started: this.started,
           ended: end?.ended ?? null,
           finalStatus: end?.finalStatus ?? "running",
@@ -161,7 +166,7 @@ export class SessionLog {
         null,
         2,
       ) + "\n",
-      "utf8",
+      { encoding: "utf8", mode: 0o600 },
     );
   }
 }

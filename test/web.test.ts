@@ -5,6 +5,7 @@ import {
   isSafeUrl,
   htmlToText,
   parseDuckDuckGoLite,
+  pinnedRequestOptions,
   webFetch,
   webSearch,
 } from "../src/core/web.js";
@@ -36,6 +37,25 @@ test("isSafeUrl refuses private + link-local + reserved IP literals", () => {
   assert.equal(isSafeUrl("http://0.0.0.0/").ok, false); // reserved
   assert.equal(isSafeUrl("http://[fc00::1]/").ok, false); // unique-local v6
   assert.equal(isSafeUrl("http://[fe80::1]/").ok, false); // link-local v6
+});
+
+test("isSafeUrl refuses mapped, transition, and documentation IPv6 forms", () => {
+  assert.equal(isSafeUrl("http://[::ffff:127.0.0.1]/").ok, false);
+  assert.equal(isSafeUrl("http://[::ffff:7f00:1]/").ok, false);
+  assert.equal(isSafeUrl("http://[2001:db8::1]/").ok, false);
+  assert.equal(isSafeUrl("http://[2002:7f00:1::]/").ok, false);
+  assert.equal(isSafeUrl("http://[2606:4700:4700::1111]/").ok, true);
+});
+
+test("pinned transport connects to the approved address with original Host and SNI", () => {
+  const options = pinnedRequestOptions(
+    "https://public.example.test:8443/docs?q=1",
+    "203.0.113.10",
+  );
+  assert.equal(options.hostname, "203.0.113.10");
+  assert.equal(options.headers.host, "public.example.test:8443");
+  assert.equal(options.servername, "public.example.test");
+  assert.equal(options.path, "/docs?q=1");
 });
 
 test("isSafeUrl allows a normal public host literal", () => {

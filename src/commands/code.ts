@@ -168,7 +168,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   const exec = new ToolExecutor(cwd, opts.testCmd);
   const log = opts.noLog
     ? null
-    : new SessionLog({ task, model: ctx.flags.model ?? "", poolGb, brain: brainKind }, nowIso());
+    : new SessionLog({ task, model: ctx.flags.model ?? "", poolGb, brain: brainKind, cwd }, nowIso());
 
   // Ctrl-C prints the exact command to re-enter this session. Registered BEFORE
   // the renderer's own SIGINT handler so this fires first.

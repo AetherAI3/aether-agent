@@ -10,6 +10,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import type { ToolName } from "./brain_protocol.js";
+import { validateToolCall } from "./tool_registry.js";
+import { GitCommitGuard, SpawnGitRunner } from "./git_commit_guard.js";
 import { webFetch, webSearch } from "./web.js";
 
 const MAX_OUTPUT = 8000;
@@ -31,6 +33,7 @@ export interface FileSnapshot {
 
 export class ToolExecutor {
   private readonly root: string;
+  private readonly committer: GitCommitGuard;
 
   constructor(
     cwd: string,
@@ -39,6 +42,7 @@ export class ToolExecutor {
     // Canonicalize the root once (resolve any symlinks in the workspace path).
     const r = resolve(cwd);
     this.root = existsSync(r) ? realpathSync(r) : r;
+    this.committer = new GitCommitGuard(new SpawnGitRunner(this.root));
   }
 
   /**
@@ -93,7 +97,12 @@ export class ToolExecutor {
    * SSRF resolve) and live on executeAsync; called here they return a clear
    * pointer rather than silently no-op'ing.
    */
-  execute(name: string, args: Record<string, unknown>): ToolResult {
+  execute(name: string, rawArgs: unknown): ToolResult {
+    const validation = validateToolCall(name, rawArgs);
+    if (!validation.ok) {
+      return { output: `[tool ${name} rejected: ${validation.error}]`, exitCode: 1 };
+    }
+    const args = validation.args;
     try {
       switch (name as ToolName) {
         case "read_file":
@@ -127,7 +136,12 @@ export class ToolExecutor {
    * Web tools never throw — they return a bracketed string, exit 0 (advisory
    * output the brain reads as ordinary tool output).
    */
-  async executeAsync(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  async executeAsync(name: string, rawArgs: unknown): Promise<ToolResult> {
+    const validation = validateToolCall(name, rawArgs);
+    if (!validation.ok) {
+      return { output: `[tool ${name} rejected: ${validation.error}]`, exitCode: 1 };
+    }
+    const args = validation.args;
     if (name === "web_search") {
       const limit = Number(args["limit"]);
       const text = await webSearch(
@@ -207,12 +221,7 @@ export class ToolExecutor {
   }
 
   private gitCommit(message: string): ToolResult {
-    this.run("git add -A");
-    const r = this.run(`git commit -q -m ${JSON.stringify(message)} || echo "[nothing to commit]"`);
-    // Surface the new short sha so the brain can emit a checkpoint event.
-    const sha = this.run("git rev-parse --short HEAD");
-    const head = sha.exitCode === 0 ? sha.output.replace(/^\[exit 0\]\n/, "").trim() : "";
-    return { output: capHeadTail(`${r.output}\n${head}`, MAX_OUTPUT), exitCode: r.exitCode };
+    return this.committer.commit(message);
   }
 }
 

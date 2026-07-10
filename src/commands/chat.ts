@@ -238,7 +238,7 @@ async function repl(ctx: AppContext): Promise<number> {
   void primeCatalog(ctx); // non-blocking warm; first /models is then instant
 
   const buf = new InputBuffer();
-  const histPath = historyPath();
+  const histPath = historyPath(ctx.flags.cwd);
   if (historyEnabled()) buf.loadHistory(loadHistory(histPath));
   const remember = (line: string): void => {
     if (historyEnabled()) appendHistory(line, histPath);

@@ -23,18 +23,19 @@ test("gateActionFor gates mutating/shell tools and ignores read-only ones", () =
   assert.equal(gateActionFor("git_commit"), "shell");
   assert.equal(gateActionFor("read_file"), null);
   assert.equal(gateActionFor("repo_search"), null);
-  assert.equal(gateActionFor("run_tests"), null);
+  assert.equal(gateActionFor("run_tests"), "shell");
   assert.equal(gateActionFor("unknown_tool"), null);
 });
 
 test("decideGate: read-only tools always allow regardless of mode/tty", () => {
   assert.equal(decideGate("read_file", "ask", false, { yes: false, isTty: false }), "allow");
-  assert.equal(decideGate("run_tests", "ask", false, { yes: false, isTty: false }), "allow");
+  assert.equal(decideGate("repo_search", "ask", false, { yes: false, isTty: false }), "allow");
 });
 
 test("decideGate: ask mode prompts on a TTY, FAILS CLOSED (deny) without one", () => {
   assert.equal(decideGate("run_shell", "ask", false, { yes: false, isTty: true }), "prompt");
   assert.equal(decideGate("run_shell", "ask", false, { yes: false, isTty: false }), "deny");
+  assert.equal(decideGate("run_tests", "ask", false, { yes: false, isTty: false }), "deny");
   assert.equal(decideGate("write_file", "ask", false, { yes: false, isTty: false }), "deny");
 });
 

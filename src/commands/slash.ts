@@ -25,9 +25,9 @@ import type { AppContext } from "../core/context.js";
 import type { CatalogItem, CatalogResponse } from "../types.js";
 import { MODELS_PATH } from "../core/transport.js";
 import { fetchTrail } from "../core/audit.js";
-import { isApiToken } from "./auth.js";
 import { theme } from "../ui/theme.js";
-import { SLASH_COMMANDS, SLASH_SECTIONS, findCommand, suggestCommand } from "./slash_registry.js";
+import { suggestCommand } from "./slash_registry.js";
+import { printSlashHelp } from "./slash_help.js";
 import { handleGoal, handleGoals } from "./goals.js";
 import { box } from "../ui/box.js";
 import { sliceVisible } from "../ui/text.js";
@@ -106,7 +106,7 @@ export async function handleSlash(
       return { exit: true };
     case "help":
     case "":
-      printHelp(out, arg);
+      printSlashHelp(out, arg);
       break;
     case "models":
       await showPicker(ctx, out, "model");
@@ -188,16 +188,30 @@ export async function handleSlash(
       await handleGoals(ctx, out, arg);
       break;
     }
+    case "memory": {
+      const { cmdMemory } = await import("./memory.js");
+      const args = arg.trim() ? arg.trim().split(/\s+/) : [];
+      await cmdMemory(ctx, args, { out });
+      break;
+    }
     case "agents": {
       await agentsSlash(ctx, out);
       break;
     }
-    case "doctor":
-      await doctor(ctx, out);
+    case "doctor": {
+      const { cmdDoctor } = await import("./doctor.js");
+      await cmdDoctor(ctx, arg.trim() ? [arg.trim()] : [], { out });
       break;
+    }
     case "mcp": {
+      const args = arg.trim() ? arg.trim().split(/\s+/) : [];
+      if (args.length > 0) {
+        const { cmdMcp } = await import("./mcp.js");
+        await cmdMcp(ctx, args, { out });
+        break;
+      }
       if (!process.stdin.isTTY) {
-        out.write("MCP manager needs an interactive terminal — run `aether mcp`.\n");
+        out.write("MCP manager needs an interactive terminal - run `aether mcp`.\n");
         break;
       }
       const { mcpFromRepl } = await import("./mcp.js");
@@ -334,82 +348,6 @@ export async function handleSlash(
     }
   }
   return { exit: false };
-}
-
-// /help is generated from SLASH_COMMANDS (slash_registry.ts) — a command added
-// to the registry is automatically listed here, Tab-completable, and
-// did-you-mean'd. test/slash_registry.test.ts pins registry ↔ switch sync.
-const SECTION_ICONS: Record<string, string> = {
-  "Session": "☁",
-  "Agent Modes": "⚡",
-  "Steering": "🎯",
-  "Context & Limits": "🧠",
-  "Goals & Workflows": "🗺",
-  "Vault": "📁",
-  "Orchestra": "🎻",
-  "UVT Tools": "🛠",
-  "Media": "🎬",
-  "HUD": "🖥",
-};
-
-const USAGE_COL = 30;
-function printHelp(out: Writable, arg = ""): void {
-  const name = arg.trim().replace(/^\//, "").toLowerCase();
-  if (name) {
-    printCommandHelp(out, name);
-    return;
-  }
-  const BOX = 74;
-  const inner = BOX - 8; // box() padding + a one-column safety margin
-  for (const section of SLASH_SECTIONS) {
-    const cmds = SLASH_COMMANDS.filter((c) => c.section === section && !c.hidden);
-    if (cmds.length === 0) continue;
-    const lines: string[] = ["", theme.iceBlue(SECTION_ICONS[section] ?? "·") + "  " + theme.bold(section), ""];
-    for (const c of cmds) {
-      const plain = `/${c.name}${c.args ? " " + c.args : ""}${c.aliases?.length ? " | /" + c.aliases.join(" | /") : ""}`;
-      const styled =
-        theme.dim("/" + c.name) +
-        (c.args ? " " + c.args : "") +
-        (c.aliases?.length ? theme.dim(" | /" + c.aliases.join(" | /")) : "");
-      const pad = " ".repeat(Math.max(2, USAGE_COL - plain.length));
-      // Clamp to the box interior — an overlong row would spill past the border.
-      lines.push(sliceVisible(styled + pad + c.summary, inner));
-    }
-    lines.push("");
-    out.write(box(lines, { width: BOX }) + "\n\n");
-  }
-  out.write("  " + theme.dim("/help <command> for detail · Tab completes /commands.") + "\n");
-  out.write("  " + theme.dim("/model or /agent with no arg opens the interactive picker.") + "\n\n");
-}
-
-function printCommandHelp(out: Writable, name: string): void {
-  const c = findCommand(name);
-  if (!c) {
-    const near = suggestCommand(name);
-    out.write(`no such command: /${name}${near ? `  — did you mean ${theme.cyan("/" + near)}?` : ""}\n`);
-    return;
-  }
-  out.write("\n  " + theme.bold(`/${c.name}${c.args ? " " + c.args : ""}`) + "\n");
-  out.write("  " + c.summary + "\n");
-  if (c.aliases?.length) out.write("  " + theme.dim("aliases: " + c.aliases.map((a) => "/" + a).join("  /")) + "\n");
-  out.write("  " + theme.dim(`section: ${c.section}`) + "\n\n");
-}
-
-async function doctor(ctx: AppContext, out: Writable): Promise<void> {
-  out.write("Aether Agent · doctor\n");
-  out.write(`  api:    ${ctx.cfg.baseUrl}\n`);
-  const t = await ctx.tokens.get();
-  if (!t) {
-    out.write("  auth:   ✗ not logged in — run: aether auth login\n");
-  } else {
-    out.write(`  auth:   ✓ ${isApiToken(t) ? "API token" : "session token"}\n`);
-  }
-  try {
-    const cat = await getCatalog(ctx);
-    out.write(`  server: ✓ reachable (tier ${cat.tier})\n`);
-  } catch {
-    out.write("  server: ✗ unreachable or token rejected\n");
-  }
 }
 
 /** Launch interactive picker, then show the standard warning + confirm. */

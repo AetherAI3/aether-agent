@@ -18,7 +18,7 @@ import type { HudElementId, HudTimer } from "./hud.js";
 import { createTimer, timerSwitch } from "./hud.js";
 
 // ── Types ──
-
+import { confineToWorkspace, isCurrentWorkspace, normalizeWorkspace, resolveOpaqueChild } from "./workspace_scope.js";
 export interface PinnedEntry {
   /** File path or module identifier. */
   path: string;
@@ -46,7 +46,7 @@ export interface SnapshotData {
   /** Active plan file path (if any). */
   planPath: string | null;
   /** Working directory. */
-  cwd: string;
+  cwd?: string;
   /** Active HUD elements. */
   hudElements: HudElementId[];
   /** HUD timer state. */
@@ -164,7 +164,7 @@ export class ContextRegistry {
   }
 
   /** Export snapshot data for serialization. */
-  toSnapshot(): SnapshotData {
+  toSnapshot(cwd: string): SnapshotData {
     return {
       createdAt: new Date().toISOString(),
       sessionLabel: this.sessionLabel,
@@ -173,18 +173,22 @@ export class ContextRegistry {
       uvtCap: this.uvtCap,
       uvtSpent: this.uvtSpent,
       planPath: this.planPath,
-      cwd: process.cwd(),
+      cwd: normalizeWorkspace(cwd),
       hudElements: [...this.hudElements],
       hudTimer: { ...this.hudTimer },
     };
   }
 
   /** Restore from a snapshot file. */
-  static fromSnapshot(data: SnapshotData): ContextRegistry {
+  static fromSnapshot(data: SnapshotData, cwd: string): ContextRegistry {
+    if (!isCurrentWorkspace(data.cwd, cwd)) {
+      throw new Error(data.cwd ? "snapshot belongs to another workspace" : "legacy unscoped snapshot cannot be restored");
+    }
+    if (!Array.isArray(data.pins) || !Array.isArray(data.drops)) throw new Error("invalid snapshot");
     const reg = new ContextRegistry();
     reg.sessionLabel = data.sessionLabel;
-    reg.pins = data.pins;
-    reg.drops = data.drops;
+    reg.pins = data.pins.map((pin) => ({ ...pin, path: confineToWorkspace(cwd, pin.path) }));
+    reg.drops = data.drops.map((path) => confineToWorkspace(cwd, path));
     reg.uvtCap = data.uvtCap;
     reg.uvtSpent = data.uvtSpent;
     reg.planPath = data.planPath;
@@ -214,19 +218,17 @@ export function snapshotsRoot(): string {
   return process.env["AETHER_SNAPSHOT_DIR"] ?? join(homedir(), ".aether-agent", "snapshots");
 }
 
-export function saveSnapshot(reg: ContextRegistry): string {
-  const dir = snapshotsRoot();
-  mkdirSync(dir, { recursive: true });
-  const data = reg.toSnapshot();
+export function saveSnapshot(reg: ContextRegistry, cwd: string, dir: string = snapshotsRoot()): string {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const data = reg.toSnapshot(cwd);
   const filename = `snapshot-${data.createdAt.replace(/[:.]/g, "-")}.json`;
   const path = join(dir, filename);
-  writeFileSync(path, JSON.stringify(data, null, 2), "utf8");
+  writeFileSync(path, JSON.stringify(data, null, 2), { encoding: "utf8", mode: 0o600 });
   return path;
 }
 
-export function loadSnapshot(id: string): SnapshotData | null {
-  const dir = snapshotsRoot();
-  const path = join(dir, id);
+export function loadSnapshot(id: string, dir: string = snapshotsRoot()): SnapshotData | null {
+  const path = resolveOpaqueChild(dir, id, "snapshot id");
   if (!existsSync(path)) return null;
   try {
     return JSON.parse(readFileSync(path, "utf8")) as SnapshotData;
@@ -235,14 +237,13 @@ export function loadSnapshot(id: string): SnapshotData | null {
   }
 }
 
-export function listSnapshots(): Array<{ id: string; data: SnapshotData }> {
-  const dir = snapshotsRoot();
+export function listSnapshots(cwd?: string, dir: string = snapshotsRoot()): Array<{ id: string; data: SnapshotData }> {
   if (!existsSync(dir)) return [];
   const results: Array<{ id: string; data: SnapshotData }> = [];
   for (const name of readdirSync(dir)) {
     if (!name.endsWith(".json")) continue;
-    const data = loadSnapshot(name);
-    if (data) results.push({ id: name, data });
+    const data = loadSnapshot(name, dir);
+    if (data && (!cwd || isCurrentWorkspace(data.cwd, cwd))) results.push({ id: name, data });
   }
   results.sort((a, b) => b.data.createdAt.localeCompare(a.data.createdAt));
   return results;
@@ -255,10 +256,10 @@ export function listSnapshots(): Array<{ id: string; data: SnapshotData }> {
  * Fail-soft: logs a warning on network error, never throws.
  * Returns true if the sync succeeded.
  */
-export async function syncToBackend(api: ApiClient): Promise<boolean> {
+export async function syncToBackend(api: ApiClient, cwd: string): Promise<boolean> {
   try {
     const reg = getRegistry();
-    await api.postJson(AGENT_CONTEXT_PATH, reg.toSnapshot());
+    await api.postJson(AGENT_CONTEXT_PATH, reg.toSnapshot(cwd));
     return true;
   } catch (err) {
     // Best-effort — backend may be offline or vault not configured
@@ -270,19 +271,12 @@ export async function syncToBackend(api: ApiClient): Promise<boolean> {
  * Pull the last-saved context state from the backend into the registry.
  * Returns true if state was loaded, false if no state or error.
  */
-export async function loadFromBackend(api: ApiClient): Promise<boolean> {
+export async function loadFromBackend(api: ApiClient, cwd: string): Promise<boolean> {
   try {
     const resp = await api.getJson<{ found: boolean; state: SnapshotData | null }>(AGENT_CONTEXT_PATH);
     if (!resp.found || !resp.state) return false;
-    const reg = getRegistry();
-    reg.sessionLabel = resp.state.sessionLabel;
-    reg.pins = resp.state.pins;
-    reg.drops = resp.state.drops;
-    reg.uvtCap = resp.state.uvtCap;
-    reg.uvtSpent = resp.state.uvtSpent;
-    reg.planPath = resp.state.planPath;
-    reg.hudElements = resp.state.hudElements ?? [];
-    reg.hudTimer = resp.state.hudTimer ?? createTimer();
+    const restored = ContextRegistry.fromSnapshot(resp.state, cwd);
+    Object.assign(getRegistry(), restored);
     return true;
   } catch {
     return false;

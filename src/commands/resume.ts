@@ -10,8 +10,8 @@ export function resumeHint(sessionId: string): string {
   return `session paused — resume with:  aether agent --resume ${sessionId}`;
 }
 
-export async function cmdResume(_ctx: AppContext, id: string): Promise<number> {
-  const s = id ? loadSession(id) : latestSession();
+export async function cmdResume(ctx: AppContext, id: string): Promise<number> {
+  const s = id ? loadSession(id) : latestSession(ctx.flags.cwd);
   if (!s) {
     process.stderr.write('no sessions to resume (run `aether agent "<task>"` first)\n');
     return 1;

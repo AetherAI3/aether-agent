@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionLog, monologueLine } from "../src/core/session_log.js";
+import { normalizeWorkspace } from "../src/core/workspace_scope.js";
 
 const TS = "2026-06-04T08:30:00.000Z";
 
@@ -11,7 +12,7 @@ test("SessionLog writes events.jsonl, monologue.txt, and a manifest", () => {
   const root = mkdtempSync(join(tmpdir(), "aether-log-"));
   try {
     const log = new SessionLog(
-      { task: "fix tests", model: "qwen3-coder:30b", poolGb: 5, brain: "local" },
+      { task: "fix tests", model: "qwen3-coder:30b", poolGb: 5, brain: "local", cwd: root },
       TS,
       root,
     );
@@ -37,6 +38,7 @@ test("SessionLog writes events.jsonl, monologue.txt, and a manifest", () => {
     assert.equal(manifest.toolCalls, 1);
     assert.equal(manifest.started, TS);
     assert.equal(manifest.ended, TS);
+    assert.equal(manifest.cwd, normalizeWorkspace(root));
 
     // monologue: human-readable, no status/telemetry noise
     const mono = readFileSync(join(log.dir, "monologue.txt"), "utf8");

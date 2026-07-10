@@ -4,6 +4,13 @@
 // command added here is automatically discoverable everywhere. A test asserts
 // the table stays in sync with the handleSlash switch.
 
+import {
+  commandNames,
+  completeCommand,
+  findRegisteredCommand,
+  suggestRegisteredCommand,
+} from "../core/command_registry.js";
+
 export interface SlashCommand {
   name: string;
   /** Argument shape shown in help, e.g. "<n|id>". Empty = no args. */
@@ -38,7 +45,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "agents", summary: "active agent sessions + UVT", section: "Session" },
   { name: "tier", summary: "plan tier + default model", section: "Session" },
   { name: "audit", args: "[n]", summary: "recent audit trail", section: "Session" },
-  { name: "doctor", summary: "diagnose your setup", section: "Session" },
+  { name: "doctor", args: "[deep]", summary: "structured runtime diagnostics", section: "Session" },
   { name: "clear", summary: "clear screen", section: "Session" },
   { name: "exit", aliases: ["quit"], summary: "leave the REPL", section: "Session" },
   { name: "mcp", summary: "manage MCP servers (connect, add, repair)", section: "Session" },
@@ -74,6 +81,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   // ── Goals & Workflows ──
   { name: "goal", args: "<desc|view|start|pause|resume|cancel|complete|note>", summary: "create/manage a goal (agent plans phases)", section: "Goals & Workflows" },
   { name: "goals", args: "[id]", summary: "list saved goals / view one", section: "Goals & Workflows" },
+  { name: "memory", args: "[status|inspect|forget|prune]", summary: "inspect and manage scoped memory", section: "Goals & Workflows" },
   { name: "workflow", summary: "workflow status", section: "Goals & Workflows" },
   { name: "workflow-templates", summary: "list workflow templates", section: "Goals & Workflows" },
   { name: "workflow-template", args: "<n>", summary: "load a workflow template", section: "Goals & Workflows" },
@@ -120,17 +128,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
 
 /** Every dispatchable name (canonical + aliases). */
 export function allCommandNames(): string[] {
-  const names: string[] = [];
-  for (const c of SLASH_COMMANDS) {
-    names.push(c.name);
-    if (c.aliases) names.push(...c.aliases);
-  }
-  return names;
+  return commandNames(SLASH_COMMANDS);
 }
 
 export function findCommand(name: string): SlashCommand | undefined {
-  const n = name.toLowerCase().replace(/^\//, "");
-  return SLASH_COMMANDS.find((c) => c.name === n || c.aliases?.includes(n));
+  return findRegisteredCommand(SLASH_COMMANDS, name);
 }
 
 /**
@@ -141,47 +143,12 @@ export function findCommand(name: string): SlashCommand | undefined {
 export function completeSlash(input: string): { completed: string | null; matches: string[] } {
   if (!input.startsWith("/") || /\s/.test(input)) return { completed: null, matches: [] };
   const partial = input.slice(1).toLowerCase();
-  const matches = allCommandNames().filter((n) => n.startsWith(partial)).sort();
-  if (matches.length === 0) return { completed: null, matches: [] };
-  if (matches.length === 1) return { completed: "/" + matches[0] + " ", matches };
-  let prefix = matches[0]!;
-  for (const m of matches) {
-    while (!m.startsWith(prefix)) prefix = prefix.slice(0, -1);
-  }
-  const completed = prefix.length > partial.length ? "/" + prefix : null;
-  return { completed, matches };
+  const result = completeCommand(partial, allCommandNames());
+  const completed = result.completed ? "/" + result.completed : null;
+  return { completed, matches: result.matches };
 }
 
 /** Did-you-mean for an unknown command (edit distance ≤ 2, closest first). */
 export function suggestCommand(name: string): string | null {
-  const n = name.toLowerCase();
-  let best: string | null = null;
-  let bestD = 3;
-  for (const cand of allCommandNames()) {
-    const d = editDistance(n, cand, bestD);
-    if (d < bestD) {
-      bestD = d;
-      best = cand;
-    }
-  }
-  return best;
-}
-
-/** Bounded Levenshtein — bails early past `max` (rows are monotonic in min). */
-function editDistance(a: string, b: string, max: number): number {
-  if (Math.abs(a.length - b.length) > max) return max + 1;
-  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [i];
-    let rowMin = i;
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      const v = Math.min(prev[j]! + 1, cur[j - 1]! + 1, prev[j - 1]! + cost);
-      cur.push(v);
-      if (v < rowMin) rowMin = v;
-    }
-    if (rowMin > max) return max + 1;
-    prev = cur;
-  }
-  return prev[b.length]!;
+  return suggestRegisteredCommand(name, allCommandNames());
 }
