@@ -27,7 +27,7 @@ export async function cmdLogin(ctx: AppContext, opts: LoginOpts): Promise<number
   // 1. Direct token.
   if (opts.token) {
     await ctx.tokens.set(opts.token);
-    process.stdout.write("Token stored.\n");
+    process.stdout.write("✓ Token stored.\n");
     return 0;
   }
   // 2. Token piped on stdin.
@@ -38,11 +38,11 @@ export async function cmdLogin(ctx: AppContext, opts: LoginOpts): Promise<number
     }
     const t = (await readStdin()).trim();
     if (!t) {
-      process.stderr.write("no token on stdin\n");
+      process.stderr.write("✗ No token on stdin.\n");
       return 2;
     }
     await ctx.tokens.set(t);
-    process.stdout.write("Token stored.\n");
+    process.stdout.write("✓ Token stored.\n");
     return 0;
   }
   // 3. Headless username/password.
@@ -51,7 +51,7 @@ export async function cmdLogin(ctx: AppContext, opts: LoginOpts): Promise<number
       const credsBase = { username: opts.username, password: opts.password };
       const creds = opts.licenseKey ? { ...credsBase, licenseKey: opts.licenseKey } : credsBase;
       const r = await loginWithPassword(ctx.cfg.baseUrl, ctx.tokens, creds);
-      process.stdout.write(`Logged in${r.plan ? ` (plan: ${r.plan})` : ""}.\n`);
+      process.stdout.write(`✓ Logged in${r.plan ? ` (plan: ${r.plan})` : ""}.\n`);
       return 0;
     } catch (err) {
       process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);

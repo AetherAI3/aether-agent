@@ -37,7 +37,7 @@ export async function cmdAuth(
       printAuthHelp();
       return 0;
     default:
-      process.stderr.write(`unknown: aether auth ${sub}\n`);
+      process.stderr.write(`unknown subcommand: aether auth ${sub}\n`);
       printAuthHelp();
       return 2;
   }
@@ -63,7 +63,7 @@ async function authStatus(ctx: AppContext): Promise<number> {
     return 1;
   }
   const kind = isApiToken(t) ? "API token" : "session token";
-  process.stdout.write(`aethersystems.net\n  ✓ logged in (${kind})  ${mask(t)}\n  api: ${ctx.cfg.baseUrl}\n`);
+  process.stdout.write(`aethersystems.net\n  ✓ Logged in (${kind})  ${mask(t)}\n  api: ${ctx.cfg.baseUrl}\n`);
   try {
     const cat = await ctx.api.getJson<{ tier?: string; default?: string }>(MODELS_PATH);
     if (cat.tier) {
@@ -100,10 +100,10 @@ async function authRefresh(ctx: AppContext): Promise<number> {
     const r = await ctx.api.postJson<{ session_token?: string }>(REFRESH_PATH, {});
     if (r.session_token) {
       await ctx.tokens.set(r.session_token);
-      process.stdout.write("Session refreshed.\n");
+      process.stdout.write("✓ Session refreshed.\n");
       return 0;
     }
-    process.stderr.write("refresh failed\n");
+    process.stderr.write("✗ Refresh failed — try: aether auth login\n");
     return 1;
   } catch (err) {
     process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
