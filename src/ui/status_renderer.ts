@@ -8,7 +8,7 @@
 // lines, never `\r`/ANSI. Honors NO_COLOR and AETHER_NO_ANIM=1. This isolation is
 // what keeps the §8 emission logs clean.
 
-import { theme } from "./theme.js";
+import { theme, stripAnsi } from "./theme.js";
 import { humanTokens } from "./statusbar.js";
 
 const ESC = "\x1b[";
@@ -109,7 +109,21 @@ export class StatusRenderer {
         : this.cap > 0
           ? `  ${this.bar()}`
           : "";
-    return `${hb}  ${stage} ${art}${tasksSeg}${timerSeg}${theme.dim(fill)}`;
+    // A pinned \r-line that wraps leaves one stale row PER REPAINT (10-20/s
+    // with the heartbeat) — clamp to the terminal by shedding the least
+    // important segments first, hard-clipping the stage as the last resort.
+    const cols = (process.stdout.columns && process.stdout.columns > 0 ? process.stdout.columns : 80) - 1;
+    const candidates = [
+      `${hb}  ${stage} ${art}${tasksSeg}${timerSeg}${theme.dim(fill)}`,
+      `${hb}  ${stage} ${art}${tasksSeg}${timerSeg}`,
+      `${hb}  ${stage} ${art}${tasksSeg}`,
+      `${hb}  ${stage} ${art}`,
+    ];
+    for (const c of candidates) {
+      if (stripAnsi(c).length <= cols) return c;
+    }
+    const plainStage = this.stage ? "* " + this.stage : "";
+    return `${hb}  ${theme.bold(plainStage.slice(0, Math.max(0, cols - 3)))}`;
   }
 
   /** The thinking timer: elapsed wall-clock + the running heartbeat count. Loops
