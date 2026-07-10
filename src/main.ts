@@ -18,6 +18,7 @@ import { cmdAudit } from "./commands/audit.js";
 import { cmdConfig } from "./commands/config.js";
 import { cmdCode } from "./commands/code.js";
 import { errTheme } from "./ui/theme.js";
+import { suggestTopLevel } from "./commands/slash_registry.js";
 import { VERSION } from "./version.js";
 
 /** Coerce a parsed flag value to string | undefined. */
@@ -28,6 +29,7 @@ const HELP = `Aether Code — an open-source coding agent for your terminal.
 Usage:
   aether                       Start an interactive coding REPL
   aether "<prompt>"            One-shot coding turn
+  aether chat "<prompt>"       Same, explicit (bypasses command matching)
   aether code "<task>"         Autonomous coding agent (cloud brain, UVT-metered)
   aether code --local "<task>" Same agent, local Python/Ollama brain (offline)
   aether run <neo|kronus> "<task>"   Stream an orchestrator run
@@ -162,9 +164,25 @@ async function main(argv: string[]): Promise<number> {
       });
     case "chat":
       return cmdChat(ctx, rest.join(" "));
-    default:
+    default: {
+      // Typo guard (narrowed per LOOP-19 arena): fires ONLY on exactly one
+      // bare command-shaped token a Damerau edit away from a real subcommand —
+      // `aether auht` should not become a paid chat call about "auht". Multi-
+      // word prompts and non-matching words flow to chat exactly as before.
+      if (rest.length === 0 && typeof cmd === "string" && /^[a-z][a-z-]*$/.test(cmd)) {
+        const near = suggestTopLevel(cmd);
+        if (near) {
+          process.stderr.write(
+            `${errTheme.red("✗")} unknown command: ${cmd} — did you mean: aether ${near}?\n` +
+              errTheme.dim(`  ⤷ to send it as a chat prompt instead: aether chat ${cmd}`) +
+              "\n",
+          );
+          return 2;
+        }
+      }
       // Bare prompt: `aether "fix the bug"` — cmd is the first prompt word.
       return cmdChat(ctx, [cmd, ...rest].join(" "));
+    }
   }
 }
 
