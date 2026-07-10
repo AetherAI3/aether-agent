@@ -72,14 +72,60 @@ test("/help lists every registry command (help cannot drift from the switch)", a
   }
 });
 
-test("every registry command is actually accepted by the switch", async () => {
-  // /exit and /quit return exit; everything else must not hit the unknown path.
-  for (const name of slashNames()) {
-    if (name === "exit" || name === "quit" || name === "help" || name === "clear") continue;
-    if (["models", "agents", "model", "agent", "tier", "audit", "doctor"].includes(name)) continue; // network-backed — wiring pinned by the switch itself
-    const out = new Capture();
-    await handleSlash(ctx, `/${name}`, out);
-    assert.ok(!out.text().includes("unknown command"), `/${name} fell through to unknown`);
+// Network-backed commands run against a stubbed fetch serving a two-item
+// catalog + an empty audit trail, so EVERY registry name goes through the
+// real switch — the anti-drift test with no skips.
+function catalogFetch(): typeof globalThis.fetch {
+  return (async (url: unknown) => {
+    const u = String(url);
+    const item = (id: string, kind: "model" | "orchestrator"): Record<string, unknown> => ({
+      id,
+      label: id,
+      kind,
+      provider: null,
+      context_window: null,
+      tier_min: "free",
+      enabled: true,
+      available: true,
+      monthly_uvt_cap: null,
+      is_default: false,
+    });
+    const json = u.includes("/audit/trail")
+      ? { entries: [], count: 0 }
+      : { models: [item("m1", "model"), item("neo", "orchestrator")], tier: "solo", default: "m1" };
+    return {
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "application/json" }),
+      json: async () => json,
+    } as unknown as Response;
+  }) as typeof globalThis.fetch;
+}
+
+test("every registry command is actually accepted by the switch (no skips)", async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = catalogFetch();
+  const { ApiClient } = await import("../src/core/transport.js");
+  const netCtx = {
+    cfg: { ...DEFAULT_CONFIG },
+    flags: {},
+    tokens: { get: async () => "aek_test" },
+    api: new ApiClient("https://stub.test", { get: async () => "aek_test" } as never),
+  } as unknown as AppContext;
+  try {
+    for (const name of slashNames()) {
+      if (name === "exit" || name === "quit") {
+        const res = await handleSlash(netCtx, `/${name}`, new Capture());
+        assert.equal(res.exit, true, `/${name} should exit`);
+        continue;
+      }
+      const out = new Capture();
+      const res = await handleSlash(netCtx, `/${name}`, out);
+      assert.equal(res.exit, false);
+      assert.ok(!out.text().includes("unknown command"), `/${name} fell through to unknown`);
+    }
+  } finally {
+    globalThis.fetch = real;
   }
 });
 
