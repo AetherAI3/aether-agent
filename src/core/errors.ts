@@ -31,3 +31,36 @@ export class HttpError extends Error {
     this.name = "HttpError";
   }
 }
+
+// Network-cause codes that mean "the server never answered" (undici surfaces
+// these on err.cause.code for fetch failures).
+const NETWORK_CODES = new Set([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "ECONNRESET",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+
+/**
+ * One actionable next step for a failed turn, or null when there is nothing
+ * better to say than the error itself. Pure — safe to unit test without a
+ * network or a TTY. Consumed under the ✗ line as a dim hint.
+ */
+export function errorHint(err: unknown, baseUrl: string): string | null {
+  if (err instanceof HttpError) {
+    if (err.status === 401 || err.status === 403) return "not authorized — run: aether auth login";
+    if (err.status === 429) return "rate/UVT limit hit — check your plan: /tier (or aether models)";
+    if (err.status >= 500) return `the server at ${baseUrl} had a problem — try again shortly`;
+    return null;
+  }
+  if (err instanceof Error) {
+    const code = (err.cause as { code?: string } | undefined)?.code ?? "";
+    if (NETWORK_CODES.has(code) || /fetch failed/i.test(err.message)) {
+      return `can't reach ${baseUrl} — offline? check with /doctor (or aether auth status)`;
+    }
+  }
+  return null;
+}

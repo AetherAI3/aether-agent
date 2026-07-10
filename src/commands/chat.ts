@@ -8,7 +8,7 @@ import { buildChatRequest } from "../core/envelope.js";
 import { CHAT_STREAM_PATH, CHAT_PATH } from "../core/transport.js";
 import { decodeSse } from "../core/stream.js";
 import { Renderer } from "../core/render.js";
-import { StreamUnavailableError } from "../core/errors.js";
+import { StreamUnavailableError, errorHint } from "../core/errors.js";
 import { appendCustody } from "../core/custody.js";
 import { handleSlash } from "./slash.js";
 import { userInfo } from "node:os";
@@ -61,7 +61,7 @@ export async function cmdChat(ctx: AppContext, prompt: string): Promise<number> 
       await runTurn(ctx, prompt);
       return 0;
     } catch (err) {
-      printError(err);
+      printError(err, ctx.cfg.baseUrl);
       return 1;
     }
   }
@@ -93,7 +93,7 @@ async function repl(ctx: AppContext): Promise<number> {
         const res = await handleSlash(ctx, t, process.stdout);
         if (res.exit) break;
       } catch (err) {
-        printError(err);
+        printError(err, ctx.cfg.baseUrl);
       }
       process.stdout.write(p);
       continue;
@@ -101,7 +101,7 @@ async function repl(ctx: AppContext): Promise<number> {
     try {
       await runTurn(ctx, t);
     } catch (err) {
-      printError(err);
+      printError(err, ctx.cfg.baseUrl);
     }
     process.stdout.write("\n" + p);
   }
@@ -110,7 +110,9 @@ async function repl(ctx: AppContext): Promise<number> {
   return 0;
 }
 
-function printError(err: unknown): void {
+function printError(err: unknown, baseUrl: string): void {
   const msg = err instanceof Error ? err.message : String(err);
   process.stderr.write(`\n${errTheme.red("✗")} ${msg}\n`);
+  const hint = errorHint(err, baseUrl);
+  if (hint) process.stderr.write(errTheme.dim(`  ⤷ ${hint}`) + "\n");
 }
