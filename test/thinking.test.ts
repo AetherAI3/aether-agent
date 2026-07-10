@@ -44,3 +44,13 @@ test("a pulse that never painted clears nothing on stop", () => {
   pulse.stop();
   assert.equal(sink.data, "");
 });
+
+test("onPaint fires after every repaint (lets the REPL re-sync its input line)", () => {
+  const sink = new Sink();
+  let paints = 0;
+  const pulse = new ThinkingPulse({ enabled: true, err: sink, intervalMs: 10_000, onPaint: () => paints++ });
+  pulse.start();
+  assert.equal(paints, 1);
+  pulse.stop();
+  assert.equal(paints, 1, "stop() must not itself trigger a paint");
+});

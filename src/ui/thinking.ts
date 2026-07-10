@@ -34,6 +34,10 @@ export interface ThinkingPulseOptions {
   err?: MinimalWriter;
   /** Off = zero bytes ever. Caller computes the TTY/json/NO_ANIM gate. */
   enabled: boolean;
+  /** Called after every paint. In the REPL this re-syncs readline's input
+   * line (same tty row), since a keystroke typed ahead during the pulse
+   * window otherwise gets stomped by the next `\r`-repaint. */
+  onPaint?: () => void;
 }
 
 export class ThinkingPulse {
@@ -41,6 +45,7 @@ export class ThinkingPulse {
   private readonly enabled: boolean;
   private readonly intervalMs: number;
   private readonly stallAfterMs: number;
+  private readonly onPaint?: () => void;
   private timer: ReturnType<typeof setInterval> | null = null;
   private tick = 0;
   private startedAt = 0;
@@ -51,6 +56,7 @@ export class ThinkingPulse {
     this.enabled = opts.enabled;
     this.intervalMs = opts.intervalMs ?? 120;
     this.stallAfterMs = opts.stallAfterMs ?? 10_000;
+    this.onPaint = opts.onPaint;
   }
 
   start(): void {
@@ -79,5 +85,6 @@ export class ThinkingPulse {
     const frame = thinkingFrame(this.tick++, stalled);
     this.err.write(CLR_LINE + errTheme.dim(frame));
     this.painted = true;
+    this.onPaint?.();
   }
 }

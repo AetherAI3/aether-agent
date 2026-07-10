@@ -33,8 +33,16 @@ interface ChatJsonResponse {
  * `signal` cancels the turn client-side (stream AND the fail-soft fallback) —
  * orchestrator runs inherit cancelability through this same seam. Returns
  * false if the server streamed an `error` frame, so callers can exit non-zero
- * instead of treating a rendered "✗ msg" as a successful turn. */
-export async function runTurn(ctx: AppContext, prompt: string, signal?: AbortSignal): Promise<boolean> {
+ * instead of treating a rendered "✗ msg" as a successful turn. `onPulsePaint`
+ * lets the REPL re-sync its input line after each thinking-pulse repaint (see
+ * ThinkingPulseOptions.onPaint) — typing ahead during the pre-first-token
+ * window would otherwise get stomped by the pulse's own `\r`-repaint. */
+export async function runTurn(
+  ctx: AppContext,
+  prompt: string,
+  signal?: AbortSignal,
+  onPulsePaint?: () => void,
+): Promise<boolean> {
   const req = buildChatRequest({
     prompt,
     model: ctx.flags.model ?? ctx.cfg.defaultModel,
@@ -47,6 +55,7 @@ export async function runTurn(ctx: AppContext, prompt: string, signal?: AbortSig
   const pulse = new ThinkingPulse({
     enabled:
       Boolean(process.stderr.isTTY) && !ctx.flags.json && process.env["AETHER_NO_ANIM"] !== "1",
+    onPaint: onPulsePaint,
   });
   pulse.start();
   try {
@@ -113,6 +122,14 @@ async function repl(ctx: AppContext): Promise<number> {
     removeHistoryDuplicates: true,
     completer: slashCompletions,
   });
+  // Re-sync readline's own input-line redraw after a thinking-pulse repaint
+  // (same tty row): otherwise a keystroke typed ahead during the pre-first-
+  // token window gets stomped by the pulse's next `\r`-clear. `_refreshLine`
+  // is undocumented but stable across current Node LTS; guarded, never
+  // throws if it's absent on some future runtime.
+  const redrawInput = (): void => {
+    (rl as unknown as { _refreshLine?: () => void })._refreshLine?.();
+  };
   // In terminal mode readline owns Ctrl+C (no process SIGINT is raised).
   // Mid-turn or mid-slash-command: cancel it, keep the session. Idle: leave
   // with a goodbye at exit 130 (the status_renderer/tui cleanup convention).
@@ -162,7 +179,7 @@ async function repl(ctx: AppContext): Promise<number> {
     }
     inflight = new AbortController();
     try {
-      await runTurn(ctx, t, inflight.signal);
+      await runTurn(ctx, t, inflight.signal, terminal ? redrawInput : undefined);
     } catch (err) {
       if (isAbortError(err)) {
         process.stderr.write("\n" + errTheme.dim("✗ canceled — turn discarded") + "\n");
