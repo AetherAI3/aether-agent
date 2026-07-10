@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderStatusBar, humanTokens, TOKENS_PER_GB } from "../src/ui/statusbar.js";
+import { KAOMOJI } from "../src/ui/kaomoji.js";
 
 test("denominator follows the selected pool size", () => {
   // 5 GB pool reach = 5 x 233M = 1.165B
@@ -26,6 +27,14 @@ test("an explicit poolCap overrides the derived denominator", () => {
 test("phase sets the label + kaomoji", () => {
   assert.match(renderStatusBar(1, 5, "grounding"), /grounding/);
   assert.match(renderStatusBar(1, 5, "scanning"), /scanning repo/);
+});
+
+test("phase faces come from the single kaomoji table", () => {
+  assert.ok(renderStatusBar(1, 5, "scanning").includes(KAOMOJI.scanning));
+  assert.ok(renderStatusBar(1, 5, "reasoning").includes(KAOMOJI.active));
+  assert.ok(renderStatusBar(1, 5, "grounding").includes(KAOMOJI.error));
+  assert.ok(renderStatusBar(1, 5, "anchoring").includes(KAOMOJI.logging));
+  assert.ok(renderStatusBar(1, 5, "paging").includes(KAOMOJI.idle));
 });
 
 test("humanTokens scales units", () => {
