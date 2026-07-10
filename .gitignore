@@ -10,3 +10,5 @@ dist/
 # editor
 .idea/
 .vscode/
+# scratch output (test redirects, etc.) — never a build or loop artifact
+_tmp/
