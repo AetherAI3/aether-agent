@@ -197,13 +197,47 @@ export class ToolExecutor {
     return { output: `[exit 0]\n${capHeadTail(hits.join("\n"), MAX_OUTPUT)}`, exitCode: 0 };
   }
 
+  /** Run a command via argv (no shell) — for git, where the message can
+   * contain shell metacharacters the string form of `run()` would interpret. */
+  private runArgv(argv: string[], timeoutMs = 900_000): ToolResult {
+    const [cmd, ...rest] = argv;
+    const r = spawnSync(cmd!, rest, {
+      cwd: this.root,
+      encoding: "utf8",
+      timeout: timeoutMs,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    if (r.error) {
+      const err = r.error as NodeJS.ErrnoException;
+      if (err.code === "ETIMEDOUT") {
+        return { output: `[timeout after ${Math.round(timeoutMs / 1000)}s]`, exitCode: 124 };
+      }
+      const code = err.code === "ENOENT" ? 127 : 1;
+      return { output: `[spawn error ${err.code ?? "UNKNOWN"}: ${err.message}]`, exitCode: code };
+    }
+    const code = r.status ?? 1;
+    const body = capHeadTail((r.stdout ?? "") + (r.stderr ?? ""), MAX_OUTPUT);
+    return { output: `[exit ${code}]\n${body}`, exitCode: code };
+  }
+
   private gitCommit(message: string): ToolResult {
     this.run("git add -A");
-    const r = this.run(`git commit -q -m ${JSON.stringify(message)} || echo "[nothing to commit]"`);
+    // argv form: the commit message reaches git as one real argument, never
+    // interpreted by a shell — `fix "cap & retry"` used to split at `&` and
+    // could execute what followed it.
+    const commit = this.runArgv(["git", "commit", "-q", "-m", message]);
+    const nothingToCommit = commit.exitCode !== 0 && /nothing to commit/i.test(commit.output);
+    if (commit.exitCode !== 0 && !nothingToCommit) {
+      // A real failure (hook rejection, unset user.name, etc.) — surface it
+      // as-is. Fetching HEAD here would report the PREVIOUS commit's sha as
+      // if this one had landed.
+      return commit;
+    }
     // Surface the new short sha so the brain can emit a checkpoint event.
-    const sha = this.run("git rev-parse --short HEAD");
+    const sha = this.runArgv(["git", "rev-parse", "--short", "HEAD"]);
     const head = sha.exitCode === 0 ? sha.output.replace(/^\[exit 0\]\n/, "").trim() : "";
-    return { output: capHeadTail(`${r.output}\n${head}`, MAX_OUTPUT), exitCode: r.exitCode };
+    const body = nothingToCommit ? "[nothing to commit]" : commit.output;
+    return { output: capHeadTail(`${body}\n${head}`, MAX_OUTPUT), exitCode: 0 };
   }
 }
 
