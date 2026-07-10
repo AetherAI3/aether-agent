@@ -18,7 +18,7 @@ import {
 } from "../core/worktree.js";
 import { renderDiff } from "../ui/diff.js";
 import { kaomoji } from "../ui/kaomoji.js";
-import { theme } from "../ui/theme.js";
+import { theme, errTheme } from "../ui/theme.js";
 import { TaskLedger } from "../ui/ledger.js";
 
 // The engine's fixed reasoning pipeline - seeded into the task ledger so the run
@@ -50,6 +50,38 @@ export function writeDiffLines(exec: ToolExecutor, args: Record<string, unknown>
   }
 
   return renderDiff(path, snap.text ?? "", content, { cols, isNew: !snap.existed, kaomoji: face });
+}
+
+/** `92s` / `3m12s` — the run-summary clock. */
+export function fmtDuration(secs: number): string {
+  const s = Math.max(0, Math.round(secs));
+  return s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s` : `${s}s`;
+}
+
+/**
+ * The one line a user actually needs at the end of `aether code` — verdict,
+ * blast radius, clock. The failing-test count was already computed by the
+ * verify gate but only ever shown to the log file; this surfaces it.
+ * `unverified` explains how to become verified.
+ */
+export function runSummary(
+  status: "ok" | "incomplete" | "unverified",
+  remaining: number,
+  filesChanged: number,
+  secs: number,
+): string {
+  const files = `${filesChanged} file${filesChanged === 1 ? "" : "s"} changed`;
+  const dur = fmtDuration(secs);
+  if (status === "ok") return `${errTheme.green("✓")} ok · ${files} · tests green · ${dur}`;
+  if (status === "incomplete") {
+    const failing =
+      remaining > 0 ? `${remaining} test${remaining === 1 ? "" : "s"} failing` : "tests failing";
+    return `${errTheme.red("✗")} incomplete · ${failing} · ${files} · ${dur}`;
+  }
+  return (
+    `${errTheme.dim("—")} unverified · ${files} · ${dur}  ` +
+    errTheme.dim('⤷ pass --test-cmd "npm test" to make the run prove itself')
+  );
 }
 
 export async function stageGate(brain: Brain, io: PromptIO, stage: string): Promise<void> {

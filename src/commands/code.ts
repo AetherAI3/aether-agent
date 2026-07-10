@@ -28,6 +28,7 @@ import {
   answerAgentQuestionIfPresent,
   applyToLedger,
   prepareWorkspace,
+  runSummary,
   stageGate,
   writeDiffLines,
 } from "./code_support.js";
@@ -126,6 +127,13 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   // looking from the first frame.
   const ledger = new TaskLedger(CODE_STAGES);
   const cols = process.stdout.columns && process.stdout.columns > 0 ? process.stdout.columns : 80;
+  // Blast radius for the end-of-run summary: every file the brain wrote.
+  const touched = new Set<string>();
+  const trackWrites = (ev: BrainEvent): void => {
+    if (ev.type === "tool_call" && ev.name === "write_file" && typeof ev.args["path"] === "string") {
+      touched.add(ev.args["path"] as string);
+    }
+  };
 
   let onEvent: (ev: BrainEvent) => void | Promise<void>;
   let teardown = (): void => {};
@@ -148,6 +156,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     onEvent = async (ev: BrainEvent): Promise<void> => {
       log?.event(ev, nowIso());
       applyToLedger(ledger, ev);
+      trackWrites(ev);
       // Intercept the whole-file write to render a live green/red diff into
       // scrollback — the old file is still on disk because hostLoop runs onEvent
       // BEFORE exec.execute. Skip feedBrain for it so we don't ALSO print the
@@ -182,6 +191,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     const renderer = new HostRenderer({ poolGb, quiet: opts.quiet, json: ctx.flags.json });
     onEvent = async (ev: BrainEvent): Promise<void> => {
       applyToLedger(ledger, ev);
+      trackWrites(ev);
       // Same diff interception for the non-animated path (pipes / NO_ANIM /
       // --quiet). Suppressed under --json so machine consumers still receive the
       // raw tool_call event, never the rendered diff.
@@ -199,6 +209,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     };
   }
 
+  const startedAt = Date.now();
   const code = await hostLoop(brain, exec, onEvent, taskCmd, onToolResult);
   teardown();
 
@@ -219,7 +230,13 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     }
   }
   log?.close(finalStatus, nowIso(), remaining);
-  if (log) process.stderr.write(`\n  ⤷ log: ${log.dir} · ${finalStatus}\n`);
+  // The verdict line — printed even with --no-log (which used to end with
+  // NOTHING); suppressed under --json (frames already carry the data).
+  if (!ctx.flags.json) {
+    const secs = (Date.now() - startedAt) / 1000;
+    process.stderr.write("\n  " + runSummary(finalStatus, remaining, touched.size, secs) + "\n");
+  }
+  if (log) process.stderr.write(`  ⤷ log: ${log.dir}\n`);
   return finalStatus === "incomplete" ? 1 : code;
 }
 
