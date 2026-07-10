@@ -48,5 +48,13 @@ function loadConfigFile(): AetherConfig {
 export function saveConfig(cfg: AetherConfig): void {
   const dir = configDir();
   mkdirSync(dir, { recursive: true });
-  writeFileSync(configPath(), JSON.stringify(cfg, null, 2) + "\n", "utf8");
+  // Never persist the AETHER_BASE_URL env override: a one-off
+  // `AETHER_BASE_URL=http://localhost aether models use x` must not rewrite
+  // config.json's baseUrl and silently point every future run at localhost.
+  const out = { ...cfg };
+  const envBase = process.env["AETHER_BASE_URL"];
+  if (envBase && out.baseUrl === envBase) {
+    out.baseUrl = loadConfigFile().baseUrl;
+  }
+  writeFileSync(configPath(), JSON.stringify(out, null, 2) + "\n", "utf8");
 }

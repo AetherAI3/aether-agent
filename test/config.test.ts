@@ -31,6 +31,26 @@ test("saveConfig then loadConfig round-trips", async () => {
   assert.equal(cfg.permissionMode, "skip");
 });
 
+// The env override must never leak into the persisted file: load-with-env
+// then save (what /effort and `models use` do) must keep the file's baseUrl.
+test("saveConfig does not persist the AETHER_BASE_URL override", async () => {
+  const { loadConfig, saveConfig, DEFAULT_CONFIG } = await import("../src/core/config.js");
+  saveConfig({ ...DEFAULT_CONFIG, baseUrl: "https://real.example" });
+  const prev = process.env["AETHER_BASE_URL"];
+  process.env["AETHER_BASE_URL"] = "http://localhost:1234";
+  try {
+    const cfg = loadConfig(); // baseUrl = env override
+    cfg.defaultEffort = "MAX"; // unrelated change, like /effort does
+    saveConfig(cfg);
+  } finally {
+    if (prev === undefined) delete process.env["AETHER_BASE_URL"];
+    else process.env["AETHER_BASE_URL"] = prev;
+  }
+  const after = loadConfig();
+  assert.equal(after.baseUrl, "https://real.example", "env override leaked into config.json");
+  assert.equal(after.defaultEffort, "MAX", "the real change must still persist");
+});
+
 // AETHER_BASE_URL is documented to override baseUrl — the CLI must actually
 // honor it (it used to be SDK-only, silently no-oping for the CLI).
 test("AETHER_BASE_URL overrides the config's baseUrl", async () => {
