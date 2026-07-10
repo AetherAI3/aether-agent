@@ -12,6 +12,7 @@ import type { Writable } from "node:stream";
 import type { StreamFrame } from "./stream.js";
 import { header, actionLine } from "../ui/agent.js";
 import { TaskLedger } from "../ui/ledger.js";
+import { errTheme } from "../ui/theme.js";
 
 export interface RenderOptions {
   json: boolean;
@@ -67,7 +68,9 @@ export class Renderer {
         this.ensureHeader();
         break;
       case "reasoning":
-        this.err.write(f.text); // thinking → stderr, keeps answer on stdout
+        // thinking → stderr (keeps the answer on stdout), dimmed so it reads
+        // as a different voice than the answer. errTheme: keyed off stderr.
+        this.err.write(errTheme.dim(f.text));
         break;
       case "delta":
         this.out.write(f.text);
@@ -131,7 +134,7 @@ export class Renderer {
   }
 
   private error(f: Extract<StreamFrame, { type: "error" }>): void {
-    this.err.write(`\n✗ ${f.msg}`);
+    this.err.write(`\n${errTheme.red("✗")} ${f.msg}`);
     if (f.errorCode) this.err.write(` [${f.errorCode}]`);
     if (f.refId) this.err.write(` (ref ${f.refId})`);
     this.err.write("\n");

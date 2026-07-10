@@ -14,6 +14,7 @@ import { handleSlash } from "./slash.js";
 import { userInfo } from "node:os";
 import { renderSplash } from "../ui/splash.js";
 import { promptPrefix } from "../ui/prompt.js";
+import { errTheme } from "../ui/theme.js";
 import { VERSION } from "../version.js";
 
 // the Aether API ChatResponse: { response, commitment_hash, verified, threat_level }.
@@ -107,5 +108,5 @@ async function repl(ctx: AppContext): Promise<number> {
 
 function printError(err: unknown): void {
   const msg = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`\n✗ ${msg}\n`);
+  process.stderr.write(`\n${errTheme.red("✗")} ${msg}\n`);
 }

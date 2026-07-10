@@ -17,6 +17,7 @@ import { cmdReceipt } from "./commands/receipt.js";
 import { cmdAudit } from "./commands/audit.js";
 import { cmdConfig } from "./commands/config.js";
 import { cmdCode } from "./commands/code.js";
+import { errTheme } from "./ui/theme.js";
 import { VERSION } from "./version.js";
 
 /** Coerce a parsed flag value to string | undefined. */
@@ -170,6 +171,6 @@ async function main(argv: string[]): Promise<number> {
 main(process.argv.slice(2))
   .then((code) => process.exit(code))
   .catch((err) => {
-    process.stderr.write(`\n✗ ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`\n${errTheme.red("✗")} ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);
   });
