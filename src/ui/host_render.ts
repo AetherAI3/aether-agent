@@ -5,7 +5,7 @@
 // never for machines parsing logs). See specs/neo_lite_terminal_personality.md.
 
 import type { Writable } from "node:stream";
-import { theme } from "./theme.js";
+import { theme, errTheme } from "./theme.js";
 import { renderStatusBar } from "./statusbar.js";
 import type { BrainEvent } from "../core/brain_protocol.js";
 
@@ -109,7 +109,7 @@ export class HostRenderer {
       }
       case "telemetry": {
         if (!this.opts.quiet && ev.tps > 0) {
-          this.err.write(theme.dim(`\r  └─ speed: ${ev.tps.toFixed(1)}k t/s · vram ${ev.vram}%   `));
+          this.err.write(errTheme.dim(`\r  └─ speed: ${ev.tps.toFixed(1)}k t/s · vram ${ev.vram}%   `));
           this.barLive = true;
         }
         break;
@@ -121,14 +121,14 @@ export class HostRenderer {
       }
       case "done": {
         this.breakBar();
-        const flag = ev.ok ? theme.cyan("[ OKAY ]") : "[ FAIL ]";
+        const flag = ev.ok ? theme.cyan("[ OKAY ]") : theme.red("[ FAIL ]");
         const mark = ev.ok ? "ᕙ(`▽`)ᕗ" : "o(TヘTo)";
         this.out.write("\n" + `${mark} ${ev.result || (ev.ok ? "done" : "stopped")} ` + flag + "\n");
         break;
       }
       case "error": {
         this.breakBar();
-        this.err.write("\n" + theme.bold("✗ ") + ev.msg + "\n");
+        this.err.write("\n" + errTheme.red("✗ ") + ev.msg + "\n");
         break;
       }
     }
