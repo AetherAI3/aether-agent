@@ -210,8 +210,14 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   }
 
   const startedAt = Date.now();
-  const code = await hostLoop(brain, exec, onEvent, taskCmd, onToolResult);
-  teardown();
+  let code: number;
+  try {
+    code = await hostLoop(brain, exec, onEvent, taskCmd, onToolResult);
+  } finally {
+    // A brain that throws mid-run must still clear the pinned status line and
+    // print the ledger recap — otherwise stale animation sits over the error.
+    teardown();
+  }
 
   // ── Final verification gate: ground truth, never the brain's self-report ──
   // The host runs the test command ITSELF and derives finalStatus from the exit
