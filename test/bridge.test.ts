@@ -65,6 +65,38 @@ test("done carries remaining + reason (ground-truth finalStatus)", () => {
   });
 });
 
+// agent_done's optional Tier-2/3 metrics (Finding E,
+// docs/specs/2026-07-10-workflow-viewer-agent-panel-design.md) — additive
+// fields per CONTRACTS.md's versioning rule. Absent must decode as
+// `undefined`, not 0, so the UI never renders a fabricated number.
+test("agent_done decodes optional tokens/tool_calls/duration_ms when present", () => {
+  const ev = parseEventLine(
+    '{"type":"agent_done","agent_id":"ag_1","phase_n":1,"summary":"ok","tokens":97600,"tool_calls":40,"duration_ms":266000}',
+  );
+  assert.deepEqual(ev, {
+    type: "agent_done",
+    agentId: "ag_1",
+    phaseN: 1,
+    summary: "ok",
+    tokens: 97600,
+    toolCalls: 40,
+    durationMs: 266000,
+  });
+});
+
+test("agent_done leaves tokens/toolCalls/durationMs undefined when the brain doesn't send them (old-brain compatibility)", () => {
+  const ev = parseEventLine('{"type":"agent_done","agent_id":"ag_1","phase_n":1,"summary":"ok"}');
+  assert.deepEqual(ev, {
+    type: "agent_done",
+    agentId: "ag_1",
+    phaseN: 1,
+    summary: "ok",
+    tokens: undefined,
+    toolCalls: undefined,
+    durationMs: undefined,
+  });
+});
+
 test("parseEventLine drops blanks and malformed lines", () => {
   assert.equal(parseEventLine(""), null);
   assert.equal(parseEventLine("   "), null);

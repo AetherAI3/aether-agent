@@ -61,7 +61,18 @@ export type StreamFrame =
   | { type: "phase_done"; phase_n: number; artifact_summary: string }
   | { type: "agent_spawn"; agent_id: string; phase_n: number; brief: string }
   | { type: "agent_progress"; agent_id: string; delta: string }
-  | { type: "agent_done"; agent_id: string; phase_n: number; summary: string }
+  | {
+      type: "agent_done";
+      agent_id: string;
+      phase_n: number;
+      summary: string;
+      // Tier-2/3 metrics (docs/specs/2026-07-10-workflow-viewer-agent-panel-design.md,
+      // Finding E) — additive/optional, undefined (not 0) when the backend hasn't
+      // sent them yet.
+      tokens?: number;
+      tool_calls?: number;
+      duration_ms?: number;
+    }
   | { type: "workflow_done"; synthesis: string; total_phases: number; total_agents: number };
 
 /** Normalize a parsed JSON object (snake_case wire → camelCase) into a frame. */
@@ -197,6 +208,9 @@ export function normalizeFrame(obj: Record<string, unknown>): StreamFrame | null
         agent_id: String(obj["agent_id"] ?? ""),
         phase_n: Number(obj["phase_n"] ?? 0),
         summary: String(obj["summary"] ?? ""),
+        tokens: numOrUndef(obj["tokens"]),
+        tool_calls: numOrUndef(obj["tool_calls"]),
+        duration_ms: numOrUndef(obj["duration_ms"]),
       };
     case "workflow_done":
       return {
@@ -256,7 +270,9 @@ export async function* decodeSse(
 }
 
 function numOrUndef(v: unknown): number | undefined {
-  return v == null ? undefined : Number(v);
+  if (v == null) return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
 }
 function strOrUndef(v: unknown): string | undefined {
   return v == null ? undefined : String(v);

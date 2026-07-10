@@ -66,7 +66,7 @@ Other `commands/` files unchanged: `audit.ts`, `auth.ts`, `chat.ts` (725 lines
   senses, same word — read context.
 - **stage** vs **phase** — `stage` (ui/animations.ts, ui/phase_verb.ts) means
   agent *activity* (recon/reasoning/execute/self-review/…). `phase`
-  (ui/goal_chain.ts `GoalPhase`, ui/task_chain.ts, ui/workflow_viewer.ts)
+  (ui/goal_chain.ts `GoalPhase`, ui/workflow_viewer.ts `PhaseEntry`)
   means workflow/goal *phase* (numbered, agent-grouping). Not interchangeable.
 - **workspace** vs **worktree** — near-homophones, different meanings.
   `core/workspace.ts` = the file-edit sandbox abstraction (`WorkspaceContext`,

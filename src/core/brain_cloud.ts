@@ -153,6 +153,9 @@ function mapFrame(f: StreamFrame): BrainEvent | null {
         agentId: f.agent_id,
         phaseN: f.phase_n,
         summary: f.summary,
+        tokens: f.tokens,
+        toolCalls: f.tool_calls,
+        durationMs: f.duration_ms,
       };
     case "workflow_done":
       return {

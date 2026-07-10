@@ -47,6 +47,13 @@ export interface AgentDoneFrame {
   agentId: string;
   phaseN: number;
   summary: string;
+  // Tier-2/3 metrics (docs/specs/2026-07-10-workflow-viewer-agent-panel-design.md,
+  // Finding E) — additive optional fields per CONTRACTS.md's versioning rule, so
+  // a brain that doesn't send them yet never breaks old (or new) consumers.
+  // undefined (not 0) when absent — the UI renders "—", never a fabricated number.
+  tokens?: number;
+  toolCalls?: number;
+  durationMs?: number;
 }
 export interface WorkflowDoneFrame {
   type: "workflow_done";
@@ -132,6 +139,16 @@ export type ToolName = (typeof TOOLS)[number];
 // --- decode (wire object -> BrainEvent) ------------------------------------
 const num = (v: unknown, d = 0): number => (v == null ? d : Number(v));
 const str = (v: unknown, d = ""): string => (v == null ? d : String(v));
+// Absent optional wire field -> undefined (not 0/false) — a missing Tier-2/3
+// metric must never be indistinguishable from a real zero (Finding E). A
+// non-numeric garbage value (e.g. tokens:"abc") must also decode as absent,
+// not NaN — NaN != null is true in JS, so a naive version would let it slip
+// through as "present" and render the literal string "NaN".
+const numOrUndef = (v: unknown): number | undefined => {
+  if (v == null) return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+};
 
 /** Normalize one parsed wire object into a typed BrainEvent (null = ignore). */
 export function decodeEvent(obj: Record<string, unknown>): BrainEvent | null {
@@ -228,6 +245,9 @@ export function decodeEvent(obj: Record<string, unknown>): BrainEvent | null {
         agentId: str(obj["agent_id"]),
         phaseN: num(obj["phase_n"]),
         summary: str(obj["summary"]),
+        tokens: numOrUndef(obj["tokens"]),
+        toolCalls: numOrUndef(obj["tool_calls"]),
+        durationMs: numOrUndef(obj["duration_ms"]),
       };
     case "workflow_done":
       return {

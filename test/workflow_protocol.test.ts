@@ -117,3 +117,26 @@ test("normalizeFrame passes through agent_spawn", () => {
   assert.ok(f !== null);
   assert.strictEqual(f!.type, "agent_spawn");
 });
+
+// This is the decoder the live chat popout (src/commands/chat.ts) actually
+// runs on — the CRITICAL gap the review workflow found was that Finding E's
+// tokens/toolCalls/durationMs only landed in brain_protocol.ts's separate
+// NDJSON decodeEvent(), which the interactive REPL never calls.
+test("normalizeFrame decodes agent_done's optional tokens/tool_calls/duration_ms when present", () => {
+  const f = normalizeFrame({
+    type: "agent_done", agent_id: "ag_7", phase_n: 1, summary: "ok",
+    tokens: 97600, tool_calls: 40, duration_ms: 266000,
+  });
+  assert.ok(f !== null && f.type === "agent_done");
+  assert.strictEqual(f.tokens, 97600);
+  assert.strictEqual(f.tool_calls, 40);
+  assert.strictEqual(f.duration_ms, 266000);
+});
+
+test("normalizeFrame leaves agent_done's tokens/tool_calls/duration_ms undefined when absent", () => {
+  const f = normalizeFrame({ type: "agent_done", agent_id: "ag_7", phase_n: 1, summary: "ok" });
+  assert.ok(f !== null && f.type === "agent_done");
+  assert.strictEqual(f.tokens, undefined);
+  assert.strictEqual(f.tool_calls, undefined);
+  assert.strictEqual(f.duration_ms, undefined);
+});
