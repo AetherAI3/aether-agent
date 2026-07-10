@@ -55,3 +55,14 @@ export function stripAnsi(s: string): string {
   // eslint-disable-next-line no-control-regex
   return s.replace(/\x1b\[[0-9;]*m/g, "");
 }
+
+/** Clip a PLAIN (unstyled) string to `n` chars, marking truncation with `…`.
+ * Splits on code points (`[...s]`), not UTF-16 code units — a plain `.slice`
+ * can cut a surrogate pair in half (an emoji at the boundary) and print a
+ * lone unpaired surrogate as `�`. */
+export function clipCodePoints(s: string, n: number): string {
+  const chars = [...s];
+  if (chars.length <= n) return s;
+  if (n <= 1) return chars.slice(0, Math.max(0, n)).join("");
+  return chars.slice(0, n - 1).join("") + "…";
+}

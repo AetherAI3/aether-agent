@@ -5,6 +5,7 @@
 // stream either way — NO protocol change (this is a presentation-only adapter).
 
 import type { BrainEvent } from "./brain_protocol.js";
+import { clipCodePoints } from "../ui/theme.js";
 
 // The UI's event vocabulary (smaller than BrainEvent — presentation slice).
 export type AgentEvent =
@@ -44,8 +45,7 @@ export function mapBrainEvent(ev: BrainEvent): AgentEvent | null {
 
 function argHint(args: Record<string, unknown>): string {
   const k = args["path"] ?? args["command"] ?? args["query"] ?? args["message"] ?? "";
-  const s = String(k);
-  return s.length > 60 ? s.slice(0, 57) + "…" : s;
+  return clipCodePoints(String(k), 60);
 }
 
 export interface AgentSource {

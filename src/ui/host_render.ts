@@ -5,7 +5,7 @@
 // never for machines parsing logs). See specs/neo_lite_terminal_personality.md.
 
 import type { Writable } from "node:stream";
-import { theme, errTheme } from "./theme.js";
+import { theme, errTheme, clipCodePoints } from "./theme.js";
 import { renderStatusBar } from "./statusbar.js";
 import type { BrainEvent } from "../core/brain_protocol.js";
 
@@ -148,6 +148,5 @@ export class HostRenderer {
 /** A short, single-line hint of a tool call's primary arg. */
 function argHint(args: Record<string, unknown>): string {
   const k = args["path"] ?? args["command"] ?? args["query"] ?? args["message"] ?? "";
-  const s = String(k);
-  return s.length > 60 ? s.slice(0, 57) + "…" : s;
+  return clipCodePoints(String(k), 60);
 }

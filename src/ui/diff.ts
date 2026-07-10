@@ -8,7 +8,7 @@
 // del-then-add fallback when the middle is huge (keeps it off the O(n²) path on
 // pathological rewrites). No external deps — just the theme for color.
 
-import { theme } from "./theme.js";
+import { theme, clipCodePoints } from "./theme.js";
 
 export type DiffTag = "eq" | "add" | "del";
 export interface DiffOp {
@@ -137,12 +137,7 @@ function sanitize(s: string): string {
   return s.replace(/\t/g, "  ").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
 }
 
-/** Clip a plain (unstyled) string to `cols`, marking truncation with `…`. */
-function clip(plain: string, cols: number): string {
-  if (plain.length <= cols) return plain;
-  if (cols <= 1) return plain.slice(0, Math.max(0, cols));
-  return plain.slice(0, cols - 1) + "…";
-}
+const clip = clipCodePoints;
 
 /**
  * Render a styled, width-bounded diff transcript. Returns an array of lines

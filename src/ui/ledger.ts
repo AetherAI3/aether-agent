@@ -8,7 +8,7 @@
 // state (done=green, failed=red, active=cyan + a live kaomoji), and the active
 // face keeps the ledger in sync with the animated status line.
 
-import { theme } from "./theme.js";
+import { theme, clipCodePoints } from "./theme.js";
 import { kaomoji } from "./kaomoji.js";
 
 export type StepState = "pending" | "active" | "done" | "failed" | "skipped";
@@ -26,12 +26,7 @@ export const GLYPH: Record<StepState, string> = {
   skipped: "◌",
 };
 
-/** Clip a plain (unstyled) string to `cols`, marking truncation with `…`. */
-function clip(plain: string, cols: number): string {
-  if (plain.length <= cols) return plain;
-  if (cols <= 1) return plain.slice(0, Math.max(0, cols));
-  return plain.slice(0, cols - 1) + "…";
-}
+const clip = clipCodePoints;
 
 export class TaskLedger {
   private readonly steps: LedgerStep[] = [];
