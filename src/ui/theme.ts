@@ -1,60 +1,59 @@
-// Terminal theme — ANSI colors, TTY/NO_COLOR aware.
+// Terminal theme — ANSI colors, enabled-flag aware.
 //
 // Honors NO_COLOR (https://no-color.org) and non-TTY output (pipes), so styled
 // strings degrade to plain text in CI, logs, and `--json` consumers.
 //
-// Two variants: `theme` keys off STDOUT's TTY-ness, `errTheme` off STDERR's.
-// Styling a stderr write with the stdout-keyed theme sprays ANSI into
-// `2>err.log` whenever stdout is a terminal — stderr writes use errTheme.
+// createTheme(enabled) is the factory (embedders like xterm.js call it
+// directly, e.g. createTheme(true), independent of process.stdout).
+// `theme` / `errTheme` are process-wide singletons built from it: `theme`
+// keyed off STDOUT's TTY-ness, `errTheme` off STDERR's — two variants because
+// styling a stderr write with the stdout-keyed theme sprays raw ANSI into
+// `2>err.log` whenever stdout happens to be a terminal.
+
+export interface Theme {
+  readonly enabled: boolean;
+  bold(s: string): string;
+  cyan(s: string): string;
+  iceBlue(s: string): string;
+  dim(s: string): string;
+  muted(s: string): string;
+  green(s: string): string;
+  red(s: string): string;
+  yellow(s: string): string;
+}
+
+function wrapper(enabled: boolean, code: string): (s: string) => string {
+  return (s: string): string => (enabled ? `\x1b[${code}m${s}\x1b[0m` : s);
+}
+
+/** Build a theme whose color output is gated by `enabled`. */
+export function createTheme(enabled: boolean): Theme {
+  return {
+    enabled,
+    bold: wrapper(enabled, "1"),
+    cyan: wrapper(enabled, "38;5;44"), // Aether cyan ≈ #1aa6b7
+    iceBlue: wrapper(enabled, "38;5;117"),
+    dim: wrapper(enabled, "90"), // dim grey
+    muted: wrapper(enabled, "38;5;240"), // muted grey (the prompt underline)
+    green: wrapper(enabled, "38;5;78"), // diff added (+)
+    red: wrapper(enabled, "38;5;203"), // diff removed (−)
+    yellow: wrapper(enabled, "38;5;221"), // diff meta / truncation notes
+  };
+}
 
 function enabledFor(stream: NodeJS.WriteStream): boolean {
   return Boolean(stream.isTTY) && !process.env["NO_COLOR"];
 }
 
-const ENABLED = enabledFor(process.stdout);
-const ERR_ENABLED = enabledFor(process.stderr);
+/** Process-wide singleton for stdout writes. Unchanged behavior. */
+export const theme: Theme = createTheme(enabledFor(process.stdout));
 
-function wrap(enabled: boolean, code: string): (s: string) => string {
-  return (s: string): string => (enabled ? `\x1b[${code}m${s}\x1b[0m` : s);
-}
+/** Process-wide singleton for stderr writes (status bars, errors, thinking
+ * indicators) — see file header for why this can't just reuse `theme`. */
+export const errTheme: Theme = createTheme(enabledFor(process.stderr));
 
-export interface Palette {
-  enabled: boolean;
-  bold: (s: string) => string;
-  cyan: (s: string) => string;
-  iceBlue: (s: string) => string;
-  dim: (s: string) => string;
-  muted: (s: string) => string;
-  green: (s: string) => string;
-  red: (s: string) => string;
-  yellow: (s: string) => string;
-}
-
-function palette(enabled: boolean): Palette {
-  return {
-    enabled,
-    bold: wrap(enabled, "1"),
-    cyan: wrap(enabled, "38;5;44"), // Aether cyan ≈ #1aa6b7
-    iceBlue: wrap(enabled, "38;5;117"),
-    dim: wrap(enabled, "90"), // dim grey
-    muted: wrap(enabled, "38;5;240"), // muted grey (the prompt underline)
-    green: wrap(enabled, "38;5;78"), // diff added (+)
-    red: wrap(enabled, "38;5;203"), // diff removed (−)
-    yellow: wrap(enabled, "38;5;221"), // diff meta / truncation notes
-  };
-}
-
-/** Styling for stdout writes. */
-export const theme = palette(ENABLED);
-
-/** Styling for stderr writes (status bars, errors, thinking indicators). */
-export const errTheme = palette(ERR_ENABLED);
-
-/** Strip ANSI escapes — for width math + tests. */
-export function stripAnsi(s: string): string {
-  // eslint-disable-next-line no-control-regex
-  return s.replace(/\x1b\[[0-9;]*m/g, "");
-}
+// Width math + tests use the shared, full-coverage stripper (SGR + CSI + OSC).
+export { stripAnsi } from "./text.js";
 
 /** Clip a PLAIN (unstyled) string to `n` chars, marking truncation with `…`.
  * Splits on code points (`[...s]`), not UTF-16 code units — a plain `.slice`

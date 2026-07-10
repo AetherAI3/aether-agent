@@ -1,25 +1,30 @@
-// worktree.ts — gh-gated isolated git worktrees + the gh<->Aether account link.
+// worktree.ts — two complementary worktree flows that both isolate a coding
+// run in a fresh `git worktree`, for different entry points:
 //
-// The 2.0 contract: before a coding run touches your tree, the host asks "are you
-// working in this repo?" (commands/code.ts owns that gate). If `gh` is
-// authenticated, we go one safer and run inside a REAL isolated git worktree on a
-// fresh `aether/<slug>` branch, so the agent's edits never land on your working
-// branch until you merge. If gh is NOT authed, the gate degrades to confirm-only
-// and the run happens in-place (with a nudge to `gh auth login`).
+//  1. Flag-driven (createWorktree / worktreeBranch / mergeHint): `aether agent
+//     --worktree "<task>"` (or --repo, which implies it). One flag, zero
+//     ceremony — throws with an actionable message on failure. Worktrees live
+//     under worktreesRoot(), OUTSIDE the repo, so they never pollute
+//     `git status`.
 //
-// Account linking: when the user is gh-authenticated we record the gh login
-// locally (configDir()/gh-link.json) so the terminal session knows which GitHub
-// account is in play. The server-side bind (linking that GitHub account to the
-// Aether account on aethersystems.net) is the website's job and is deliberately
-// NOT fabricated here — we expose the local record + a best-effort, no-op-unless-
-// configured sync hook, never an invented endpoint.
+//  2. Gate-driven (createGatedWorktree + the gh helpers): the 2.0 "are you
+//     working in this repo?" confirm gate (commands/code_support.ts owns the
+//     prompt). When `gh` is authenticated, the gate upgrades itself to a real
+//     isolated worktree on a fresh `aether/<slug>` branch automatically —
+//     no flag required. Every external process call goes through an injected
+//     Runner so this half is unit-testable with a fake and can avoid ALL side
+//     effects in non-interactive (pipe / CI / test) runs. Also owns the local
+//     gh<->Aether account-link record (configDir()/gh-link.json); the
+//     server-side bind is the website's job and is deliberately not
+//     fabricated here.
 //
-// Every external process call goes through an injected Runner, so the whole module
-// is unit-testable with a fake and the cmdCode gate can avoid ALL side effects in
-// non-interactive (pipe / CI / test) runs.
+// Both flows share slugify() (one branch-naming convention: `aether/<slug>`)
+// but otherwise don't overlap, so they're kept in one file rather than two
+// near-identical ones.
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { configDir } from "./config.js";
 
@@ -83,8 +88,9 @@ export function repoRoot(run: Runner, cwd: string): string | null {
   return top.length ? top : null;
 }
 
-// ── slug + worktree creation ──────────────────────────────────────────────────
-/** Turn a free-text task into a short, branch-safe slug. Deterministic + pure. */
+// ── slug ─────────────────────────────────────────────────────────────────────
+/** Turn a free-text task into a short, branch-safe slug. Deterministic + pure.
+ *  Shared by both worktree flows below — one branch-naming convention. */
 export function slugify(task: string, max = 32): string {
   const s = task
     .toLowerCase()
@@ -95,7 +101,74 @@ export function slugify(task: string, max = 32): string {
   return s || "task";
 }
 
-/** Where isolated worktrees live — OUTSIDE the repo, so they never dirty it. */
+// ── flow 1: flag-driven worktree (--worktree / --repo) ─────────────────────
+export interface Worktree {
+  /** Absolute path the agent runs in (the new worktree). */
+  dir: string;
+  /** The new branch checked out there. */
+  branch: string;
+  /** The repo the worktree was cut from. */
+  repoRoot: string;
+}
+
+/** Where flag-driven worktrees are parked. Override with AETHER_WORKTREES_DIR
+ *  (tests). Deliberately OUTSIDE the repo so they never dirty `git status`. */
+export function worktreesRoot(): string {
+  const base = process.env["AETHER_WORKTREES_DIR"];
+  return base ?? join(homedir(), ".aether-agent", "worktrees");
+}
+
+/** Build the auto branch name: `aether/<slug>-<id>`. Pure (id injected). */
+export function worktreeBranch(task: string, id: string): string {
+  return `aether/${slugify(task)}-${id}`;
+}
+
+/** git args to add a worktree on a new branch off current HEAD. Pure. */
+export function worktreeAddArgs(repoRoot: string, branch: string, dir: string): string[] {
+  return ["-C", repoRoot, "worktree", "add", "-b", branch, dir];
+}
+
+/** Resolve the repo root for `cwd`, or null if not inside a git repo.
+ *  Thin wrapper over repoRoot()/defaultRunner() — flow 1 doesn't take an
+ *  injected Runner (see the file header), so it can't call repoRoot() directly. */
+export function repoRootOf(cwd: string): string | null {
+  return repoRoot(defaultRunner(), cwd);
+}
+
+/**
+ * Create a worktree for `task` off `cwd`'s repo. Returns the worktree to run in.
+ * Throws with an actionable message if `cwd` isn't a git repo or git fails.
+ * `id` is injected (default: short base-36 timestamp) so tests are deterministic.
+ */
+export function createWorktree(cwd: string, task: string, id?: string): Worktree {
+  const repoRoot = repoRootOf(cwd);
+  if (!repoRoot) {
+    throw new Error("--worktree needs a git repo (run `git init` first, or drop the flag)");
+  }
+  const safeId = id ?? Date.now().toString(36);
+  const branch = worktreeBranch(task, safeId);
+  const dir = join(worktreesRoot(), branch.replace(/\//g, "-"));
+  const r = spawnSync("git", worktreeAddArgs(repoRoot, branch, dir), { encoding: "utf8" });
+  if (r.status !== 0) {
+    const why = ((r.stderr ?? "") + (r.stdout ?? "")).trim() || "git worktree add failed";
+    throw new Error(`could not create worktree: ${why}`);
+  }
+  return { dir, branch, repoRoot };
+}
+
+/** One-line "what now" footer shown after a --worktree/--repo run. Pure. */
+export function mergeHint(wt: Worktree): string {
+  return (
+    `\n  worktree: ${wt.dir}  (branch ${wt.branch})\n` +
+    `  merge it:   git -C ${wt.repoRoot} merge ${wt.branch}\n` +
+    `  discard it: git -C ${wt.repoRoot} worktree remove ${wt.dir} && git -C ${wt.repoRoot} branch -D ${wt.branch}\n`
+  );
+}
+
+// ── flow 2: gate-driven worktree (the 2.0 repo-confirm gate) ───────────────
+/** Where gate-driven worktrees live — OUTSIDE the repo, so they never dirty it.
+ *  Kept separate from worktreesRoot() (flow 1) since this half is gh-gated and
+ *  namespaced under the Aether config dir rather than the home dir directly. */
 export function worktreeBase(): string {
   return join(configDir(), "worktrees");
 }
@@ -111,11 +184,13 @@ export interface WorktreeResult {
 }
 
 /**
- * Create a real isolated worktree for `root` on a fresh `aether/<slug>` branch.
- * The worktree lives under worktreeBase() (outside the repo). On a branch/path
- * collision it retries with a numeric suffix a few times. Never throws.
+ * Create a real isolated worktree for `root` on a fresh `aether/<slug>` branch,
+ * for the gh-gated repo-confirm flow (code_support.ts's prepareWorkspace()).
+ * Never throws — unlike flow 1's createWorktree(), a failure here degrades to
+ * "run in place" rather than aborting the command. The worktree lives under
+ * worktreeBase(). On a branch/path collision it retries with a numeric suffix.
  */
-export function createWorktree(
+export function createGatedWorktree(
   run: Runner,
   root: string,
   slug: string,
@@ -161,7 +236,11 @@ export function ghLinkPath(): string {
  * gate). The server-side bind to the Aether account is performed by the website
  * during `gh auth` consent and is intentionally not invented here.
  */
-export function linkGhAccount(user: string, host = "github.com", now: () => string = () => new Date().toISOString()): GhLink | null {
+export function linkGhAccount(
+  user: string,
+  host = "github.com",
+  now: () => string = () => new Date().toISOString(),
+): GhLink | null {
   const link: GhLink = { gh_user: user, host, linked_at: now() };
   try {
     mkdirSync(configDir(), { recursive: true });

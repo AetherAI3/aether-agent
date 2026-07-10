@@ -18,6 +18,7 @@ import { buildChatRequest } from "./envelope.js";
 import { decodeSse, type StreamFrame } from "./stream.js";
 import { StreamUnavailableError } from "./errors.js";
 import { appendCustody } from "./custody.js";
+import { hintFor } from "./error_hints.js";
 
 export class CloudBrain implements Brain {
   private aborted = false;
@@ -66,10 +67,10 @@ export class CloudBrain implements Brain {
           queue.push({ type: "monologue", text: r.response ?? "", depth: 0 });
           queue.push({ type: "done", ok: true, result: r.response ?? "", remaining: 0, reason: "" });
         } catch (e2) {
-          queue.push({ type: "error", msg: e2 instanceof Error ? e2.message : String(e2) });
+          queue.push({ type: "error", msg: withHint(e2) });
         }
       } else {
-        queue.push({ type: "error", msg: err instanceof Error ? err.message : String(err) });
+        queue.push({ type: "error", msg: withHint(err) });
       }
     } finally {
       queue.end();
@@ -82,6 +83,14 @@ export class CloudBrain implements Brain {
   close(): void {
     this.aborted = true;
   }
+}
+
+/** Error message plus its recovery hint (if any), e.g. for a StreamTimeoutError:
+ *  "stream timed out after 120s with no data (the stream went quiet - retry, or /doctor to check connectivity)". */
+function withHint(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  const hint = hintFor(err);
+  return hint ? `${msg} (${hint})` : msg;
 }
 
 /** Map a universal SSE frame onto the bridge event vocabulary (null = ignore). */
@@ -101,6 +110,57 @@ function mapFrame(f: StreamFrame): BrainEvent | null {
       return { type: "error", msg: f.msg };
     case "done":
       return null; // the pump emits its own terminal done after the loop
+    case "memory": {
+      const { type: _, ...rest } = f;
+      return { type: "memory", ...rest };
+    }
+    case "workflow_start":
+      return {
+        type: "workflow_start",
+        workflowId: f.workflow_id,
+        phases: f.phases,
+        totalAgents: f.total_agents,
+      };
+    case "phase_start":
+      return {
+        type: "phase_start",
+        phaseN: f.phase_n,
+        phaseType: f.phase_type,
+        agentCount: f.agent_count,
+      };
+    case "phase_done":
+      return {
+        type: "phase_done",
+        phaseN: f.phase_n,
+        artifactSummary: f.artifact_summary,
+      };
+    case "agent_spawn":
+      return {
+        type: "agent_spawn",
+        agentId: f.agent_id,
+        phaseN: f.phase_n,
+        brief: f.brief,
+      };
+    case "agent_progress":
+      return {
+        type: "agent_progress",
+        agentId: f.agent_id,
+        delta: f.delta,
+      };
+    case "agent_done":
+      return {
+        type: "agent_done",
+        agentId: f.agent_id,
+        phaseN: f.phase_n,
+        summary: f.summary,
+      };
+    case "workflow_done":
+      return {
+        type: "workflow_done",
+        synthesis: f.synthesis,
+        totalPhases: f.total_phases,
+        totalAgents: f.total_agents,
+      };
     default:
       return null; // open/ping/usage/custody/etc. — not part of the agent view
   }

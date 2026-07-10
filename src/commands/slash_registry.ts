@@ -1,114 +1,190 @@
-// The ONE slash-command registry — pure data, zero imports, so any surface
-// (help, splash hints, tab-completion, did-you-mean) can consume it without
-// pulling transport/auth into the UI layer. A command that isn't in this table
-// doesn't exist; a surface that advertises one that is not here is lying.
+// src/commands/slash_registry.ts — the single source of truth for every slash
+// command: name, usage, one-line summary, help section. /help, `/help <cmd>`,
+// Tab completion, and did-you-mean suggestions all read THIS table, so a new
+// command added here is automatically discoverable everywhere. A test asserts
+// the table stays in sync with the handleSlash switch.
 
 export interface SlashCommand {
-  /** Canonical name, without the leading slash. */
   name: string;
-  /** Argument hint shown in help (e.g. "<n|id>"). */
+  /** Argument shape shown in help, e.g. "<n|id>". Empty = no args. */
   args?: string;
-  desc: string;
+  summary: string;
+  section: string;
+  /** Aliases dispatched by the same case (shown inline in help). */
   aliases?: string[];
+  /** Listed only in `/help <cmd>`, not the main help (niche/legacy). */
+  hidden?: boolean;
 }
+
+export const SLASH_SECTIONS = [
+  "Session",
+  "Agent Modes",
+  "Steering",
+  "Context & Limits",
+  "Goals & Workflows",
+  "Vault",
+  "Orchestra",
+  "UVT Tools",
+  "Media",
+  "HUD",
+] as const;
 
 export const SLASH_COMMANDS: SlashCommand[] = [
-  { name: "models", desc: "list chat models" },
-  { name: "model", args: "<n|id>", desc: "switch model" },
-  { name: "agents", desc: "list orchestrators (Neo/Kronus)" },
-  { name: "agent", args: "<n|id>", desc: "switch orchestrator" },
-  { name: "tier", desc: "plan tier + default" },
-  { name: "effort", args: "[tier|1-5]", desc: "effort dial (LOW→CODEPRO, drives aether code)" },
-  { name: "audit", args: "[n]", desc: "recent Aether audit trail" },
-  { name: "doctor", desc: "diagnose your setup" },
-  { name: "mcp", desc: "MCP servers (coming soon)" },
-  { name: "clear", desc: "clear screen" },
-  { name: "help", desc: "list commands" },
-  { name: "exit", desc: "leave", aliases: ["quit"] },
+  // ── Session ──
+  { name: "help", args: "[command]", summary: "this help, or detail for one command", section: "Session" },
+  { name: "models", summary: "interactive model picker", section: "Session" },
+  { name: "model", args: "<n|id>", summary: "switch model (no arg → picker)", section: "Session" },
+  { name: "agent", args: "<n|id>", summary: "switch orchestrator (or picker)", section: "Session" },
+  { name: "agents", summary: "active agent sessions + UVT", section: "Session" },
+  { name: "tier", summary: "plan tier + default model", section: "Session" },
+  // effort tier persists to config and rides TaskCommand.effort into every
+  // `aether code` run — see setEffort() in slash.ts for the wire contract.
+  { name: "effort", args: "[tier|1-5]", summary: "effort dial (LOW to CODEPRO), drives aether code", section: "Session" },
+  { name: "audit", args: "[n]", summary: "recent audit trail", section: "Session" },
+  { name: "doctor", summary: "diagnose your setup", section: "Session" },
+  { name: "clear", summary: "clear screen", section: "Session" },
+  { name: "exit", aliases: ["quit"], summary: "leave the REPL", section: "Session" },
+  { name: "mcp", summary: "manage MCP servers (connect, add, repair)", section: "Session" },
+
+  // ── Agent Modes (prompt rewrites) ──
+  { name: "autonomous-execution", args: "<task>", summary: "execute without asking", section: "Agent Modes" },
+  { name: "subagent-driven-execution", args: "<task>", summary: "decompose + delegate", section: "Agent Modes" },
+  { name: "self-review", summary: "review your own recent work", section: "Agent Modes" },
+  { name: "recon", args: "<topic>", summary: "deep reconnaissance", section: "Agent Modes" },
+  { name: "plan", args: "<topic>", summary: "write implementation plan", section: "Agent Modes" },
+  { name: "research", args: "<topic>", summary: "research-gather-summarize", section: "Agent Modes" },
+  { name: "review", summary: "full project review + summary", section: "Agent Modes" },
+  { name: "code-review", summary: "sweep: clean up + simplify", section: "Agent Modes" },
+  { name: "writing-skills", summary: "author reusable skills", section: "Agent Modes" },
+  { name: "writing-plans", args: "<topic>", summary: "write plan to .hermes/plans/", section: "Agent Modes" },
+
+  // ── Steering ──
+  { name: "queue", args: "<task>", summary: "queue a task (runs when current finishes)", section: "Steering" },
+  { name: "steer", args: "<guidance>", summary: "mid-task steering for the next turn", section: "Steering" },
+  { name: "btw", args: "<note>", summary: "contextual side note (accumulates)", section: "Steering" },
+
+  // ── Context & Limits ──
+  { name: "pin", args: "<path> [reason]", summary: "force file into persistent context (pin list)", section: "Context & Limits" },
+  { name: "drop", args: "<path>", summary: "evict file from context", section: "Context & Limits" },
+  { name: "snapshot", args: "[resume <id>]", summary: "save session state / reload a snapshot", section: "Context & Limits" },
+  { name: "limit", args: "<uvt>", summary: "cap UVT spend for this session", section: "Context & Limits" },
+  { name: "token-budget", args: "<uvt>", summary: "alias for /limit", section: "Context & Limits", hidden: true },
+  { name: "audit-receipt", args: "[n]", summary: "verified log of tool calls + UVT", section: "Context & Limits" },
+  { name: "rollback", args: "[n]", summary: "revert last n filesystem changes", section: "Context & Limits" },
+  { name: "logs-view", summary: "interactive session log browser", section: "Context & Limits" },
+  { name: "logs", args: "[n]", summary: "recent session logs", section: "Context & Limits" },
+
+  // ── Goals & Workflows ──
+  { name: "goal", args: "<desc|view|start|pause|resume|cancel|complete|note>", summary: "create/manage a goal (agent plans phases)", section: "Goals & Workflows" },
+  { name: "goals", args: "[id]", summary: "list saved goals / view one", section: "Goals & Workflows" },
+  { name: "workflow", summary: "workflow status", section: "Goals & Workflows" },
+  { name: "workflow-templates", summary: "list workflow templates", section: "Goals & Workflows" },
+  { name: "workflow-template", args: "<n>", summary: "load a workflow template", section: "Goals & Workflows" },
+
+  // ── Vault ──
+  { name: "vault", summary: "vault status", section: "Vault" },
+  { name: "vault-context", summary: "load vault context into the session", section: "Vault" },
+  { name: "vault-search", args: "<q>", summary: "search notes", section: "Vault" },
+  { name: "vault-recent", args: "[n]", summary: "recent notes", section: "Vault" },
+  { name: "vault-project", args: "<name>", summary: "project notes", section: "Vault" },
+  { name: "vault-tag", args: "<tag>", summary: "notes by tag", section: "Vault" },
+  { name: "vault-tree", summary: "vault folder tree", section: "Vault" },
+
+  // ── Orchestra ──
+  { name: "delegate", args: "<model> <task>", summary: "delegate a sub-task to a worker model", section: "Orchestra" },
+  { name: "tree", summary: "live orchestration hierarchy", section: "Orchestra" },
+  { name: "broadcast", args: '"<msg>"', summary: "inject a directive to all sub-agents", section: "Orchestra" },
+  { name: "gather", args: "<id|all>", summary: "merge completed work to staging", section: "Orchestra" },
+
+  // ── UVT Tools ──
+  { name: "scaffold", args: "<type> <name>", summary: "generate boilerplate (component|route|module)", section: "UVT Tools" },
+  { name: "port", args: "<file> <lang>", summary: "translate code to another language", section: "UVT Tools" },
+  { name: "test-drive", args: '"<target>"', summary: "auto-test: generate, run, fix, repeat", section: "UVT Tools" },
+  { name: "bench", args: "<target>", summary: "profile & optimize code", section: "UVT Tools" },
+  { name: "purge", summary: "flush transient context & temp files", section: "UVT Tools" },
+  { name: "stage-diff", summary: "unified diff + commit message", section: "UVT Tools" },
+  { name: "revert", args: "<file|step>", summary: "surgical rollback", section: "UVT Tools" },
+
+  // ── Media ──
+  { name: "photogen", args: "<prompt> [--model --aspect]", summary: "generate images", section: "Media" },
+  { name: "frame", args: "<prompt>", summary: "generate a single styled frame", section: "Media" },
+  { name: "re-frame", args: "<prompt>", summary: "re-run the last image with a new prompt", section: "Media" },
+  { name: "videogen", args: "<prompt> [--model --duration]", summary: "generate video", section: "Media" },
+  { name: "sequence", args: "<prompt>", summary: "cinematic multi-shot video", section: "Media" },
+  { name: "animate", args: "<prompt>", summary: "animate the last image", section: "Media" },
+  { name: "re-cut", args: "<prompt>", summary: "re-edit the last video", section: "Media" },
+  { name: "output", args: "[open|clean|list]", summary: "manage generated media files", section: "Media" },
+  { name: "storyboard", args: "<title>", summary: "multi-scene storyboard pipeline", section: "Media" },
+
+  // ── HUD ──
+  { name: "add", args: "<element>", summary: "add a HUD overlay (context-bar, timer, tools, help, health, status)", section: "HUD" },
+  { name: "hud", args: "remove|list|clear", summary: "manage HUD overlay elements", section: "HUD" },
 ];
 
-/** Every accepted spelling: canonical names + aliases. */
-export function slashNames(): string[] {
-  return SLASH_COMMANDS.flatMap((c) => [c.name, ...(c.aliases ?? [])]);
+/** Every dispatchable name (canonical + aliases). */
+export function allCommandNames(): string[] {
+  const names: string[] = [];
+  for (const c of SLASH_COMMANDS) {
+    names.push(c.name);
+    if (c.aliases) names.push(...c.aliases);
+  }
+  return names;
 }
 
-/** Top-level subcommands `aether <cmd>` accepts (mirrors main.ts's switch). */
-export const TOP_LEVEL_COMMANDS = [
-  "auth",
-  "login",
-  "logout",
-  "audit",
-  "models",
-  "agents",
-  "run",
-  "receipt",
-  "config",
-  "code",
-  "chat",
-  "help",
-];
+export function findCommand(name: string): SlashCommand | undefined {
+  const n = name.toLowerCase().replace(/^\//, "");
+  return SLASH_COMMANDS.find((c) => c.name === n || c.aliases?.includes(n));
+}
 
 /**
- * Damerau-Levenshtein distance (with adjacent transposition), so the classic
- * `auht` → `auth` typo counts as ONE edit. Dependency-free DP, fine for the
- * short command vocabulary this is used on.
+ * Tab completion for a partial slash input ("/mod" → "/model…").
+ * Returns the longest unambiguous completion plus all matches; `completed`
+ * includes a trailing space when exactly one command matches.
  */
-export function damerau(a: string, b: string): number {
-  const m = a.length;
-  const n = b.length;
-  if (m === 0) return n;
-  if (n === 0) return m;
-  const d: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
-  for (let i = 0; i <= m; i++) d[i]![0] = i;
-  for (let j = 0; j <= n; j++) d[0]![j] = j;
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      d[i]![j] = Math.min(d[i - 1]![j]! + 1, d[i]![j - 1]! + 1, d[i - 1]![j - 1]! + cost);
-      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
-        d[i]![j] = Math.min(d[i]![j]!, d[i - 2]![j - 2]! + 1);
-      }
-    }
+export function completeSlash(input: string): { completed: string | null; matches: string[] } {
+  if (!input.startsWith("/") || /\s/.test(input)) return { completed: null, matches: [] };
+  const partial = input.slice(1).toLowerCase();
+  const matches = allCommandNames().filter((n) => n.startsWith(partial)).sort();
+  if (matches.length === 0) return { completed: null, matches: [] };
+  if (matches.length === 1) return { completed: "/" + matches[0] + " ", matches };
+  let prefix = matches[0]!;
+  for (const m of matches) {
+    while (!m.startsWith(prefix)) prefix = prefix.slice(0, -1);
   }
-  return d[m]![n]!;
+  const completed = prefix.length > partial.length ? "/" + prefix : null;
+  return { completed, matches };
 }
 
-/** Closest candidate within `max` edits, or null. Ties go to the first (list order). */
-export function nearest(input: string, candidates: string[], max: number): string | null {
+/** Did-you-mean for an unknown command (edit distance ≤ 2, closest first). */
+export function suggestCommand(name: string): string | null {
+  const n = name.toLowerCase();
   let best: string | null = null;
-  let bestD = max + 1;
-  for (const c of candidates) {
-    const dd = damerau(input, c);
-    if (dd < bestD) {
-      bestD = dd;
-      best = c;
+  let bestD = 3;
+  for (const cand of allCommandNames()) {
+    const d = editDistance(n, cand, bestD);
+    if (d < bestD) {
+      bestD = d;
+      best = cand;
     }
   }
-  return bestD <= max ? best : null;
+  return best;
 }
 
-/**
- * Suggestion for a lone bare token at the top level (`aether auht`). Narrowed
- * per the arena verdict: exact-match tokens are never guarded (main.ts handles
- * them), short tokens (≤5 chars) only match at distance 1, longer at ≤2 —
- * keeping `auht`→auth and `moddels`→models while letting `hello` chat.
- */
-export function suggestTopLevel(token: string): string | null {
-  if (TOP_LEVEL_COMMANDS.includes(token)) return null;
-  const max = token.length <= 5 ? 1 : 2;
-  return nearest(token, TOP_LEVEL_COMMANDS, max);
-}
-
-/**
- * readline completer source for slash commands: completes `/mo` → /models,
- * /model. Only the command word (no args yet); non-slash lines get no hits.
- * Returns [completions, substringBeingCompleted] per the readline contract.
- */
-export function slashCompletions(line: string): [string[], string] {
-  if (!line.startsWith("/") || line.includes(" ")) return [[], line];
-  const partial = line.slice(1);
-  const hits = slashNames()
-    .filter((n) => n.startsWith(partial))
-    .map((n) => `/${n}`);
-  return [hits, line];
+/** Bounded Levenshtein — bails early past `max` (rows are monotonic in min). */
+function editDistance(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      const v = Math.min(prev[j]! + 1, cur[j - 1]! + 1, prev[j - 1]! + cost);
+      cur.push(v);
+      if (v < rowMin) rowMin = v;
+    }
+    if (rowMin > max) return max + 1;
+    prev = cur;
+  }
+  return prev[b.length]!;
 }

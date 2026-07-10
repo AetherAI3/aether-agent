@@ -2,11 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { progressBar } from "../src/ui/progress.js";
 import { kaomoji } from "../src/ui/kaomoji.js";
-import { statusLines } from "../src/ui/splash.js";
+import { statusLines, renderSplash, TIPS } from "../src/ui/splash.js";
 import { promptPrefix } from "../src/ui/prompt.js";
 import { actionLine, subActionLine } from "../src/ui/agent.js";
 import { stripAnsi } from "../src/ui/theme.js";
-import { slashNames } from "../src/commands/slash_registry.js";
+import { allCommandNames } from "../src/commands/slash_registry.js";
 
 test("progressBar fills/hashes by fraction with pct affixed right", () => {
   assert.equal(progressBar(0.5, 20), "|██████████##########| 50%");
@@ -23,22 +23,36 @@ test("kaomoji maps each agent state", () => {
   assert.equal(kaomoji("error"), "( Ò﹏Ó)✎");
 });
 
-test("status column = the four spec lines", () => {
+test("status column = version + model/effort + help line", () => {
   const s = statusLines({ version: "0.1.0", model: "sonnet", effort: "high" }).map(stripAnsi);
-  assert.equal(s[0], "AETHER CODE");
-  assert.equal(s[1], "v0.1.0");
-  assert.ok(s[2]?.includes("/model") && s[2].includes("sonnet"));
-  assert.ok(s[2]?.includes("/effort") && s[2].includes("high"));
-  assert.ok(s[3]?.includes("/help") && s[3].includes("/doctor"));
+  assert.equal(s[0], "v0.1.0");
+  assert.ok(s[1]?.includes("/model") && s[1].includes("sonnet"));
+  assert.ok(s[1]?.includes("/effort") && s[1].includes("high"));
+  assert.ok(s[2]?.includes("/help") && s[2].includes("/doctor"));
 });
 
+// The splash must never advertise a slash token that doesn't actually run —
+// both /model and /effort are real registry commands (confirmed via Cluster
+// B's merge of slash_registry.ts), so this pins that invariant going forward.
+// Checked across every rotating tip slot (statusLines picks one at random
+// when tipSlot is omitted; pinning each index in turn makes this deterministic
+// instead of only catching a bad tip 1-in-N runs).
 test("splash advertises only commands that exist in the registry", () => {
-  const s = statusLines({ version: "0.1.0", model: "auto", effort: "default" }).map(stripAnsi);
-  const advertised = s.join(" ").match(/\/[a-z]+/g) ?? [];
-  const real = new Set(slashNames());
-  for (const cmd of advertised) {
-    assert.ok(real.has(cmd.slice(1)), `splash advertises ${cmd}, which is not a real command`);
+  const real = new Set(allCommandNames());
+  for (let slot = 0; slot < TIPS.length; slot++) {
+    const s = statusLines({ version: "0.1.0", model: "auto", effort: "default" }, slot).map(stripAnsi);
+    const advertised = s.join(" ").match(/\/[a-z]+/g) ?? [];
+    for (const cmd of advertised) {
+      assert.ok(real.has(cmd.slice(1)), `splash advertises ${cmd}, which is not a real command`);
+    }
   }
+});
+
+test("renderSplash shows the AETHER wordmark and the cloud", () => {
+  const out = stripAnsi(renderSplash({ version: "1.2.3", model: "auto", effort: "default" }));
+  assert.match(out, /AETHER|█/);
+  assert.match(out, /v1\.2\.3/);
+  assert.match(out, /\/model/);
 });
 
 test("prompt prefix is [user]_:", () => {

@@ -3,25 +3,45 @@
 // stream, decode frames, render. The agent brain runs on Aether's servers.
 
 import { createInterface } from "node:readline";
-import type { AppContext } from "../core/context.js";
+import { StringDecoder } from "node:string_decoder";
+import type { AppContext, GlobalFlags } from "../core/context.js";
+import { theme, errTheme } from "../ui/theme.js";
 import { buildChatRequest } from "../core/envelope.js";
 import { CHAT_STREAM_PATH, CHAT_PATH } from "../core/transport.js";
 import { decodeSse } from "../core/stream.js";
 import { Renderer } from "../core/render.js";
 import { StreamUnavailableError, errorHint, isAbortError } from "../core/errors.js";
 import { appendCustody } from "../core/custody.js";
-import { handleSlash } from "./slash.js";
+import { handleSlash, primeCatalog } from "./slash.js";
+import { applyPromptMode } from "./prompt_modes.js";
 import { userInfo } from "node:os";
-import { join } from "node:path";
 import { renderSplash } from "../ui/splash.js";
 import { promptPrefix } from "../ui/prompt.js";
-import { errTheme } from "../ui/theme.js";
-import { KAOMOJI } from "../ui/kaomoji.js";
+import { InputBuffer } from "../ui/input_line.js";
+import { renderInputView } from "../ui/input_render.js";
+import { decodeKey, splitKeys } from "../ui/keys.js";
 import { ThinkingPulse } from "../ui/thinking.js";
-import { configDir } from "../core/config.js";
-import { loadHistory, appendHistory } from "./history.js";
-import { slashCompletions } from "./slash_registry.js";
+import { registerRestore } from "../ui/restore.js";
+import { completeSlash } from "./slash_registry.js";
+// history_store.ts (origin/main's own persistence + AETHER_NO_HISTORY opt-out)
+// supersedes the old readline-backed ./history.js — see chat.ts's resolution
+// report for why that file is now dead code pending a cleanup pass.
+import { loadHistory, appendHistory, historyPath, historyEnabled } from "../core/history_store.js";
 import { VERSION } from "../version.js";
+import { chooseBackend, type BackendPath } from "../core/backend.js";
+import { OllamaBrain } from "../core/brain_ollama.js";
+import { ToolExecutor } from "../core/tool_executor.js";
+import { HostRenderer } from "../ui/host_render.js";
+import type { TaskCommand } from "../core/brain.js";
+import { getRegistry } from "../core/context_registry.js";
+import { renderHud, timerLive } from "../core/hud.js";
+import { createViewerState, applyViewerFrame, moveCursor, renderCiTree } from "../ui/workflow_viewer.js";
+import type { WorkflowViewerState } from "../ui/workflow_viewer.js";
+import type { StreamFrame } from "../core/stream.js";
+
+// Key decoding lives in ui/keys.ts (shared with pickers/viewers); re-exported
+// here so existing imports keep working.
+export { decodeKey, type Key } from "../ui/keys.js";
 
 // the Aether API ChatResponse: { response, commitment_hash, verified, threat_level }.
 interface ChatJsonResponse {
@@ -29,20 +49,63 @@ interface ChatJsonResponse {
   commitment_hash?: string;
 }
 
+/** Thrown when a turn completes its stream but the server sent an `error`
+ *  frame instead of `done` — a rendered "✗ msg" is NOT a successful turn
+ *  (CONTRACTS.md invariant 5). runTurn is void+onFrame (orchestrator-style,
+ *  see resolveBackend below); this is how it still signals failure to the
+ *  one-shot `cmdChat` path without forcing a boolean-return shape onto every
+ *  onFrame call site. */
+export class ChatTurnError extends Error {
+  constructor(msg: string) {
+    super(msg);
+    this.name = "ChatTurnError";
+  }
+}
+
+/**
+ * Resolve which brain runs this turn. AETHER_BACKEND (env) wins, then the saved
+ * config, then 'auto'. 'auto' is local-first: cloud when signed in, else local
+ * Ollama. Exported so the REPL banner can show the same answer the turn uses.
+ */
+export async function resolveBackend(ctx: AppContext): Promise<BackendPath> {
+  const pref = (process.env["AETHER_BACKEND"] || ctx.cfg.backend || "auto").trim();
+  const authed = Boolean(await ctx.tokens.get());
+  return chooseBackend(pref, authed);
+}
+
 /** Run a single coding turn end to end. Exported for `run.ts` (orchestrators).
  * `signal` cancels the turn client-side (stream AND the fail-soft fallback) —
- * orchestrator runs inherit cancelability through this same seam. Returns
- * false if the server streamed an `error` frame, so callers can exit non-zero
- * instead of treating a rendered "✗ msg" as a successful turn. `onPulsePaint`
- * lets the REPL re-sync its input line after each thinking-pulse repaint (see
- * ThinkingPulseOptions.onPaint) — typing ahead during the pre-first-token
- * window would otherwise get stomped by the pulse's own `\r`-repaint. */
+ * orchestrator runs inherit cancelability through this same seam. Throws
+ * ChatTurnError if the server streamed an `error` frame, so callers can exit
+ * non-zero instead of treating a rendered "✗ msg" as a successful turn.
+ * `onPulsePaint` fires after every thinking-pulse repaint (see
+ * ThinkingPulseOptions.onPaint) so the REPL can re-sync its own input-line
+ * redraw — typing ahead during the pre-first-token window would otherwise
+ * get stomped by the pulse's own `\r`-repaint landing on the same tty row. */
 export async function runTurn(
   ctx: AppContext,
   prompt: string,
   signal?: AbortSignal,
+  onFrame?: (f: StreamFrame) => void,
   onPulsePaint?: () => void,
-): Promise<boolean> {
+): Promise<void> {
+  const backend = await resolveBackend(ctx);
+  if (backend === "local") {
+    await runLocalTurn(ctx, prompt);
+    return;
+  }
+  await runCloudTurn(ctx, prompt, signal, onFrame, onPulsePaint);
+}
+
+/** The cloud path — build an envelope, POST to the universal stream, render.
+ * Extracted so runTurn can fork local vs cloud. */
+async function runCloudTurn(
+  ctx: AppContext,
+  prompt: string,
+  signal?: AbortSignal,
+  onFrame?: (f: StreamFrame) => void,
+  onPulsePaint?: () => void,
+): Promise<void> {
   const req = buildChatRequest({
     prompt,
     model: ctx.flags.model ?? ctx.cfg.defaultModel,
@@ -50,17 +113,27 @@ export async function runTurn(
     // Only an explicit --model this invocation counts as a manual pick.
     manualModel: ctx.flags.model != null,
   });
-  const renderer = new Renderer({ json: ctx.flags.json, audit: ctx.flags.audit });
-  // Dead-air killer: pulse on stderr from submit until the first frame lands.
+  // Interactive TTY chat gets styled markdown + a pre-first-byte pulse;
+  // pipes/--json stay byte-identical raw streams. AETHER_NO_ANIM is the
+  // universal animation kill switch (status bar, splash, pulse all honor it).
+  const interactive =
+    Boolean(process.stdout.isTTY) && !ctx.flags.json && process.env["AETHER_NO_ANIM"] !== "1";
+  const renderer = new Renderer({ json: ctx.flags.json, audit: ctx.flags.audit, markdown: interactive });
+  // Pulse is presentation-only — like every other status/diagnostic writer in
+  // this codebase (StatusRenderer, HostRenderer's status/telemetry), it must
+  // target stderr so stdout stays byte-identical for redirection/piping, even
+  // when a still-TTY stdout is being captured (script(1), pty recorders).
+  const pulseInteractive =
+    Boolean(process.stderr.isTTY) && !ctx.flags.json && process.env["AETHER_NO_ANIM"] !== "1";
   const pulse = new ThinkingPulse({
-    enabled:
-      Boolean(process.stderr.isTTY) && !ctx.flags.json && process.env["AETHER_NO_ANIM"] !== "1",
+    enabled: pulseInteractive,
+    write: (s) => process.stderr.write(errTheme.dim(s)),
     onPaint: onPulsePaint,
   });
   pulse.start();
+  let sawError: string | null = null;
   try {
     const stream = await ctx.api.stream(CHAT_STREAM_PATH, req, signal);
-    let ok = true;
     for await (const frame of decodeSse(stream)) {
       // open/ping are handshake/keepalive — they render nothing. Stopping on
       // them re-created the dead air on keepalive-happy servers; only frames
@@ -69,10 +142,11 @@ export async function runTurn(
       // The server signs each turn and returns it; persist the signed receipt
       // locally (best-effort, never breaks the chat).
       if (frame.type === "custody") appendCustody(frame.custody);
-      if (frame.type === "error") ok = false;
+      if (frame.type === "error") sawError = frame.msg;
+      onFrame?.(frame);
       renderer.frame(frame);
     }
-    return ok;
+    if (sawError) throw new ChatTurnError(sawError);
   } catch (err) {
     if (err instanceof StreamUnavailableError) {
       // Contract fail-soft: fall back to the non-streaming request/response.
@@ -83,7 +157,7 @@ export async function runTurn(
       if (ctx.flags.audit && r.commitment_hash) {
         process.stderr.write(`  signed ✓ ${r.commitment_hash}\n`);
       }
-      return true;
+      return;
     }
     throw err;
   } finally {
@@ -91,13 +165,124 @@ export async function runTurn(
   }
 }
 
+/**
+ * The local path — drive an OllamaBrain through the SAME event/tool-exec loop
+ * the code command uses: the brain DECIDES (emits events), the host EXECUTES
+ * each tool_call (one path-guarded ToolExecutor) and replies, the HostRenderer
+ * draws every event. Identical UX to cloud, just an offline brain.
+ */
+async function runLocalTurn(ctx: AppContext, prompt: string): Promise<void> {
+  const cwd = ctx.flags.cwd;
+  const brain = new OllamaBrain(ctx.flags.model ? { model: ctx.flags.model } : {});
+  const exec = new ToolExecutor(cwd);
+  const renderer = new HostRenderer({ poolGb: 5, json: ctx.flags.json });
+  const task: TaskCommand = {
+    type: "task",
+    text: prompt,
+    cwd,
+    poolGb: 5,
+    ...(ctx.flags.model ? { model: ctx.flags.model } : {}),
+  };
+  let sawError: string | null = null;
+  try {
+    for await (const ev of brain.run(task)) {
+      renderer.event(ev);
+      if (ev.type === "error") sawError = ev.msg;
+      if (ev.type === "tool_call") {
+        // executeAsync so the two web tools (web_search/web_fetch) work too.
+        const result = await exec.executeAsync(ev.name, ev.args);
+        brain.sendToolResult(ev.id, result);
+      }
+    }
+  } finally {
+    brain.close();
+  }
+  // Mirror runCloudTurn/CONTRACTS.md invariant 5: a streamed error event is a
+  // failed turn, not a silently-successful one — the renderer already painted
+  // it, so callers (cmdChat/run.ts) special-case ChatTurnError to avoid a
+  // double print.
+  if (sawError) throw new ChatTurnError(sawError);
+}
+
+/** Apply a confirmed model/agent switch: set the new selection, clear the other,
+ * and let the caller start a fresh session (context cleared). */
+export function applyRestart(flags: GlobalFlags, r: { model?: string; agent?: string }): void {
+  if (r.model) {
+    flags.model = r.model;
+    flags.agent = undefined;
+  } else if (r.agent) {
+    flags.agent = r.agent;
+    flags.model = undefined;
+  }
+}
+
+/** Build a prompt with optional steering and btw context prepended.
+ *  Clears steering and btwNotes in the returned result so callers
+ *  can use single-shot semantics.  Exported for testing. */
+export function buildPromptContext(
+  base: string,
+  steering: string | null,
+  btwNotes: string[],
+): { prompt: string; steering: string | null; btwNotes: string[] } {
+  const ctxParts: string[] = [];
+  if (steering) ctxParts.push(`STEERING: ${steering}`);
+  if (btwNotes.length) ctxParts.push(`NOTE: ${btwNotes.join("; ")}`);
+  const prompt = ctxParts.length ? ctxParts.join("\n") + "\n\n" + base : base;
+  return { prompt, steering: null, btwNotes: [] };
+}
+
+/** One composer repaint: clear the row, draw the cursor-windowed view, and put
+ *  the hardware cursor at the caret's real column. Pure — unit-tested. */
+export function repaintString(prompt: string, value: string, cursor: number, cols: number): string {
+  const v = renderInputView(prompt, value, cursor, cols);
+  return "\r\x1b[2K" + v.text + `\x1b[${v.cursorCol}G`;
+}
+
+/** What one Ctrl+C should do, given the REPL's state. A state machine, not a
+ *  kill switch:
+ *    mid-paste           → exit (a stuck paste must never brick raw mode)
+ *    turn streaming      → abort the TURN, session lives (again → quit)
+ *    draft in the buffer → clear the line
+ *    idle, empty buffer  → press twice within the window to quit
+ *  Pure — unit-tested. */
+export type CtrlCAction = "exit" | "abort-turn" | "arm-quit" | "clear-line" | "arm-exit";
+export function ctrlCDecision(s: {
+  pasting: boolean;
+  busy: boolean;
+  abortable: boolean;
+  hasDraft: boolean;
+  armed: boolean;
+}): CtrlCAction {
+  if (s.pasting) return "exit";
+  if (s.busy) {
+    if (s.abortable) return "abort-turn";
+    return s.armed ? "exit" : "arm-quit";
+  }
+  if (s.hasDraft) return "clear-line";
+  return s.armed ? "exit" : "arm-exit";
+}
+
+/** Truncate a queued-prompt preview to 55 chars for the "⏳ Queued" echo lines. */
+function previewLine(s: string): string {
+  return s.length > 55 ? s.slice(0, 55) + "…" : s;
+}
+
+// A trailing partial escape sequence (CSI/SS3/OSC intro with no final byte) —
+// held back until the next stdin chunk so markers/arrows split across chunk
+// boundaries reassemble instead of degrading into garbage or a stuck paste.
+// A BARE trailing ESC is NOT held: that's the Esc key (or an Alt chord whose
+// tail lands in the same chunk), and holding it would delay it forever.
+const PARTIAL_ESC_RE = /\x1b(?:\[[0-9;:<=>?]*[ -/]*|O|\])$/;
+
 export async function cmdChat(ctx: AppContext, prompt: string): Promise<number> {
   if (prompt.trim()) {
     try {
-      const ok = await runTurn(ctx, prompt);
-      return ok ? 0 : 1;
+      await runTurn(ctx, prompt);
+      return 0;
     } catch (err) {
-      printError(err, ctx.cfg.baseUrl);
+      // ChatTurnError: the Renderer already painted "✗ <msg>" for the
+      // server's error frame — printError would double it.
+      if (!(err instanceof ChatTurnError)) printError(err, ctx.cfg.baseUrl);
       return 1;
     }
   }
@@ -106,43 +291,6 @@ export async function cmdChat(ctx: AppContext, prompt: string): Promise<number> 
 
 async function repl(ctx: AppContext): Promise<number> {
   const username = userInfo().username || "you";
-  const p = promptPrefix(username);
-  // Real terminal readline: up-arrow history (persisted across sessions),
-  // tab-completion for slash commands, and an owned prompt. Non-TTY keeps
-  // today's exact byte behavior (rl.prompt() writes the plain prompt string).
-  const historyPath = join(configDir(), "history");
-  const terminal = Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal,
-    prompt: p,
-    historySize: 200,
-    history: loadHistory(historyPath),
-    removeHistoryDuplicates: true,
-    completer: slashCompletions,
-  });
-  // Re-sync readline's own input-line redraw after a thinking-pulse repaint
-  // (same tty row): otherwise a keystroke typed ahead during the pre-first-
-  // token window gets stomped by the pulse's next `\r`-clear. `_refreshLine`
-  // is undocumented but stable across current Node LTS; guarded, never
-  // throws if it's absent on some future runtime.
-  const redrawInput = (): void => {
-    (rl as unknown as { _refreshLine?: () => void })._refreshLine?.();
-  };
-  // In terminal mode readline owns Ctrl+C (no process SIGINT is raised).
-  // Mid-turn or mid-slash-command: cancel it, keep the session. Idle: leave
-  // with a goodbye at exit 130 (the status_renderer/tui cleanup convention).
-  let inflight: AbortController | null = null;
-  rl.on("SIGINT", () => {
-    if (inflight) {
-      inflight.abort();
-      return;
-    }
-    process.stderr.write(`\n${KAOMOJI.idle}  bye\n`);
-    rl.close();
-    process.exit(130);
-  });
   const model = ctx.flags.model ?? ctx.cfg.defaultModel ?? "auto";
   process.stdout.write(
     renderSplash({
@@ -151,20 +299,510 @@ async function repl(ctx: AppContext): Promise<number> {
       effort: ctx.cfg.defaultEffort || "default",
     }) + "\n\n",
   );
+  // One-line dim banner: which brain serves turns this session (local-first).
+  const backend = await resolveBackend(ctx);
+  const where = backend === "local" ? "local Ollama (offline)" : "cloud (Aether API)";
+  process.stdout.write(theme.dim(`backend: ${where}`) + "\n");
   process.stdout.write("Type a prompt, or /help for commands. /exit to quit.\n\n");
-  rl.prompt();
+  if (!process.stdin.isTTY) return replLines(ctx);
+  void primeCatalog(ctx); // non-blocking warm; first /models is then instant
+
+  const buf = new InputBuffer();
+  const histPath = historyPath();
+  if (historyEnabled()) buf.loadHistory(loadHistory(histPath));
+  const remember = (line: string): void => {
+    if (historyEnabled()) appendHistory(line, histPath);
+  };
+  const prompt = promptPrefix(username);
+  // A turn/slash is async; Node still delivers stdin 'data' events while we
+  // await. While busy, the buffer still ACCUMULATES (type-ahead, /steer, /queue)
+  // but repaint is suppressed — a mid-stream "\r\x1b[2K" would stomp the line
+  // the answer is currently streaming onto.
+  let busy = false;
+  const renderHudLine = (): void => {
+    if (!process.stdout.isTTY) return;
+    const reg = getRegistry();
+    if (reg.hudElements.length === 0) return;
+    const cols = process.stdout.columns ?? 80;
+    const live = timerLive(reg.hudTimer);
+    const state = {
+      tokensUsed: reg.uvtSpent,
+      tokensCap: reg.uvtCap ?? 1_000_000_000,
+      sessionMs: live.userMs + live.agentMs,
+      timer: reg.hudTimer,
+      streamedTokens: 0,
+      uvtUsed: reg.uvtSpent,
+      uvtCap: reg.uvtCap ?? 0,
+    };
+    const line = renderHud(reg.hudElements, state, cols);
+    if (line) process.stdout.write("\n" + line);
+  };
+  const repaint = (): void => {
+    if (busy) return;
+    process.stdout.write(repaintString(prompt, buf.value, buf.pos, process.stdout.columns ?? 80));
+  };
+  // Unlike repaint(), this does NOT gate on busy: it's the thinking-pulse's
+  // onPaint hook, fired from inside the pulse's own \r-repaint on stderr
+  // (which happens precisely DURING the busy window). The pulse and the
+  // input line share the same tty row, so every pulse frame must be
+  // followed by re-drawing whatever the user has typed ahead, or their
+  // in-progress keystrokes get stomped by the pulse's next `\r\x1b[2K`.
+  const redrawInput = (): void => {
+    process.stdout.write(repaintString(prompt, buf.value, buf.pos, process.stdout.columns ?? 80));
+  };
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdout.write("\x1b[?2004h"); // bracketed paste ON
+  // Crash-safe: even an uncaught throw restores cooked mode + paste-off.
+  const unregisterRestore = registerRestore(() => {
+    process.stdout.write("\x1b[?2004l\x1b[?25h");
+    try {
+      process.stdin.setRawMode(false);
+    } catch {
+      /* terminal already gone */
+    }
+  });
+  repaint();
+
+  let pasting = false;
+  let pasteAcc = "";
+  let carry = ""; // partial escape sequence held across chunk boundaries
+  const queue: string[] = [];
+  let steering: string | null = null;
+  const btwNotes: string[] = [];
+  let turnAbort: AbortController | null = null; // live while a cloud turn streams
+  // Live while a slash command (e.g. /audit, /doctor) is in flight — kept
+  // separate from turnAbort so Ctrl+C cancels only the network call actually
+  // running, not a chat turn that isn't (fixes: Ctrl+C during a slow slash
+  // command used to fall through to the double-press "quit" prompt instead
+  // of canceling it, since turnAbort was null).
+  let slashAbort: AbortController | null = null;
+  let ctrlCArmedAt = 0; // double-press window for quitting
+  const CTRL_C_WINDOW_MS = 1500;
+  // Workflow swarm viewer — updated as workflow_* frames arrive during a turn.
+  let viewerState: WorkflowViewerState = createViewerState();
+  let viewerOpen = false;
+  return await new Promise<number>((resolve) => {
+    const onResize = (): void => repaint();
+    const cleanup = (): void => {
+      process.stdout.write("\x1b[?2004l\x1b[?25h"); // paste off + cursor shown
+      try {
+        process.stdin.setRawMode(false);
+      } catch {
+        /* terminal already gone */
+      }
+      unregisterRestore();
+      process.stdin.pause();
+      process.stdin.removeListener("data", onData);
+      process.stdout.removeListener("resize", onResize);
+    };
+    const finish = (code: number): void => {
+      cleanup();
+      process.stdout.write("\n");
+      resolve(code);
+    };
+
+    /** Run one turn. Returns true when the user aborted it (Ctrl+C). */
+    const runQueuedTurn = async (text: string): Promise<boolean> => {
+      const built = buildPromptContext(text, steering, btwNotes);
+      steering = built.steering;
+      btwNotes.length = 0;
+      viewerState = createViewerState();
+      viewerOpen = false;
+      turnAbort = new AbortController();
+      try {
+        await runTurn(ctx, built.prompt, turnAbort.signal, (f) => {
+          switch (f.type) {
+            case "workflow_start":
+              viewerState = applyViewerFrame(viewerState, { type: "workflow_start", workflowId: f.workflow_id, phases: f.phases, totalAgents: f.total_agents });
+              break;
+            case "phase_start":
+              viewerState = applyViewerFrame(viewerState, { type: "phase_start", phaseN: f.phase_n, phaseType: f.phase_type, agentCount: f.agent_count });
+              break;
+            case "phase_done":
+              viewerState = applyViewerFrame(viewerState, { type: "phase_done", phaseN: f.phase_n, artifactSummary: f.artifact_summary });
+              break;
+            case "agent_spawn":
+              viewerState = applyViewerFrame(viewerState, { type: "agent_spawn", agentId: f.agent_id, phaseN: f.phase_n, brief: f.brief });
+              break;
+            case "agent_progress":
+              viewerState = applyViewerFrame(viewerState, { type: "agent_progress", agentId: f.agent_id, delta: f.delta });
+              break;
+            case "agent_done":
+              viewerState = applyViewerFrame(viewerState, { type: "agent_done", agentId: f.agent_id, phaseN: f.phase_n, summary: f.summary });
+              break;
+            case "workflow_done":
+              viewerState = applyViewerFrame(viewerState, { type: "workflow_done", synthesis: f.synthesis, totalPhases: f.total_phases, totalAgents: f.total_agents });
+              viewerOpen = false;
+              break;
+          }
+        }, redrawInput);
+        return false;
+      } catch (err) {
+        if (isAbortError(err)) {
+          // User said stop: drop the queued follow-ups too.
+          queue.length = 0;
+          process.stdout.write("\n" + theme.dim("✗ turn aborted") + "\n");
+          return true;
+        }
+        // ChatTurnError means the Renderer already painted "✗ <msg>" for the
+        // server's error frame (frame() runs before runTurn throws) — only
+        // genuinely unrendered failures (network, fallback-leg errors) need
+        // printError's own "✗" line, or the user sees the error twice.
+        if (!(err instanceof ChatTurnError)) printError(err, ctx.cfg.baseUrl);
+        return false;
+      } finally {
+        turnAbort = null;
+      }
+    };
+
+    const onCtrlC = (): void => {
+      const now = Date.now();
+      const armed = now - ctrlCArmedAt <= CTRL_C_WINDOW_MS && ctrlCArmedAt > 0;
+      const active = turnAbort ?? slashAbort;
+      const action = ctrlCDecision({
+        pasting,
+        busy,
+        abortable: active != null && !active.signal.aborted,
+        hasDraft: buf.value.length > 0,
+        armed,
+      });
+      switch (action) {
+        case "exit":
+          finish(0);
+          return;
+        case "abort-turn":
+          active!.abort();
+          ctrlCArmedAt = now;
+          return;
+        case "arm-quit":
+          ctrlCArmedAt = now;
+          process.stdout.write("\n" + theme.dim("(ctrl+c again to quit)") + "\n");
+          return;
+        case "clear-line":
+          buf.clear();
+          ctrlCArmedAt = 0;
+          repaint();
+          return;
+        case "arm-exit":
+          ctrlCArmedAt = now;
+          process.stdout.write("\n" + theme.dim("(ctrl+c again to exit)") + "\n");
+          repaint();
+          return;
+      }
+    };
+
+    const onSubmit = async (): Promise<void> => {
+      let t = buf.value.trim();
+      // ── mid-turn Enter: bypass commands + type-ahead queueing ──
+      if (busy) {
+        if (t.startsWith("/steer ")) {
+          steering = t.slice(7).trim() || steering;
+          remember(buf.value);
+          buf.commit(buf.value);
+          if (steering) process.stdout.write(`\n🎯 Steering set: "${steering}"\n`);
+          return;
+        }
+        if (t.startsWith("/btw ")) {
+          const note = t.slice(5).trim();
+          remember(buf.value);
+          buf.commit(buf.value);
+          if (note) {
+            btwNotes.push(note);
+            process.stdout.write(`\n📝 Noted: "${note}"\n`);
+          }
+          return;
+        }
+        if (t.startsWith("/queue ")) t = t.slice(7).trim();
+        remember(buf.value);
+        buf.commit(buf.value);
+        if (!t || t.startsWith("/")) return; // other slashes wait for the turn
+        queue.push(t);
+        process.stdout.write(`\n⏳ Queued (${queue.length}): "${previewLine(t)}"\n`);
+        return;
+      }
+
+      process.stdout.write("\n");
+      remember(buf.value);
+      buf.commit(buf.value);
+      if (!t) {
+        repaint();
+        return;
+      }
+      // ── /steer /btw /queue — stateful, stay inline ──
+      if (t.startsWith("/steer ") || t === "/steer") {
+        const guidance = t.slice(6).trim();
+        if (!guidance) { process.stdout.write("usage: /steer <guidance>\n"); repaint(); return; }
+        steering = guidance;
+        process.stdout.write(`🎯 Steering set: "${guidance}"\n`);
+        repaint(); return;
+      }
+      if (t.startsWith("/btw ") || t === "/btw") {
+        const note = t.slice(4).trim();
+        if (!note) { process.stdout.write("usage: /btw <note>\n"); repaint(); return; }
+        btwNotes.push(note);
+        process.stdout.write(`📝 Noted: "${note}"\n`);
+        repaint(); return;
+      }
+      if (t.startsWith("/queue ") || t === "/queue") {
+        const task = t.slice(6).trim();
+        if (!task) { process.stdout.write("usage: /queue <task>\n"); repaint(); return; }
+        // not busy — run immediately as a normal turn
+        process.stdout.write(`⏳ Running: "${task}"\n`);
+        t = task;
+      }
+      // ── stateless prompt-rewrite modes (/recon, /plan, /research, …) ──
+      const mode = applyPromptMode(t);
+      if (mode.handled) {
+        if (mode.error) { process.stdout.write(mode.error + "\n"); repaint(); return; }
+        process.stdout.write(mode.notice + "\n");
+        t = mode.prompt!;
+      }
+      busy = true;
+      if (t.startsWith("/")) {
+        slashAbort = new AbortController();
+        try {
+          const res = await handleSlash(ctx, t, process.stdout, slashAbort.signal);
+          if (res.exit) {
+            cleanup();
+            resolve(0);
+            return;
+          }
+          if (res.restart) {
+            applyRestart(ctx.flags, res.restart);
+            process.stdout.write(theme.dim("session restarted — context cleared.\n"));
+          }
+        } catch (err) {
+          if (isAbortError(err)) {
+            process.stdout.write(theme.dim("✗ canceled") + "\n");
+          } else {
+            printError(err, ctx.cfg.baseUrl);
+          }
+        } finally {
+          busy = false;
+          slashAbort = null;
+        }
+        renderHudLine();
+        repaint();
+        return;
+      }
+      try {
+        getRegistry().startAgentTimer();
+        // An aborted turn skips the drain entirely — even an item that slipped
+        // into the queue during abort teardown must not auto-run.
+        let aborted = await runQueuedTurn(t);
+        while (!aborted && queue.length > 0) {
+          const next = queue.shift()!;
+          process.stdout.write(`\n→ Queued: "${previewLine(next)}"\n`);
+          aborted = await runQueuedTurn(next);
+        }
+      } finally {
+        busy = false;
+        getRegistry().startUserTimer();
+      }
+      renderHudLine();
+      repaint();
+    };
+
+    // Clear the row and redraw the swarm viewer tree at its current cursor
+    // position, then restore the input line below it.
+    const redrawViewerTree = (): void => {
+      process.stdout.write("\r\x1b[2K");
+      process.stdout.write(renderCiTree(viewerState) + "\n");
+      repaint();
+    };
+
+    // SYNC on purpose: every key is fully processed before the next token, so
+    // out-of-order edits are impossible. Submits are fired un-awaited — the
+    // busy flag is set synchronously inside onSubmit before its first await,
+    // so later tokens correctly land in the type-ahead path.
+    const processSeq = (seq: string): void => {
+      // Ctrl-C is handled BEFORE paste accumulation so a stuck paste or hung
+      // stream can never hard-lock the terminal in raw mode.
+      if (seq === "\x03") {
+        onCtrlC();
+        return;
+      }
+      if (pasting) {
+        const k = decodeKey(seq);
+        if (k.kind === "paste-end") {
+          buf.paste(pasteAcc);
+          pasteAcc = "";
+          pasting = false;
+          repaint();
+        } else {
+          pasteAcc += seq; // raw bytes — pasted content may legitimately contain escapes
+        }
+        return;
+      }
+      const k = decodeKey(seq);
+      switch (k.kind) {
+        case "paste-start":
+          pasting = true;
+          pasteAcc = "";
+          return;
+        case "char":
+          buf.insert(k.value);
+          repaint();
+          return;
+        case "backspace":
+          buf.backspace();
+          repaint();
+          return;
+        case "delete":
+          buf.deleteForward();
+          repaint();
+          return;
+        case "word-delete":
+          buf.deleteWord();
+          repaint();
+          return;
+        case "kill-end":
+          buf.killToEnd();
+          repaint();
+          return;
+        case "kill-start":
+          buf.killToStart();
+          repaint();
+          return;
+        case "left":
+          buf.left();
+          repaint();
+          return;
+        case "right":
+          buf.right();
+          repaint();
+          return;
+        case "word-left":
+          buf.wordLeft();
+          repaint();
+          return;
+        case "word-right":
+          buf.wordRight();
+          repaint();
+          return;
+        case "tab": {
+          // Slash-command completion: complete to the unambiguous prefix, or
+          // show the candidates. Plain text Tab is ignored (no file paths yet).
+          if (busy) return;
+          const v = buf.value;
+          if (v.startsWith("/") && !/\s/.test(v) && buf.pos === [...v].length) {
+            const r = completeSlash(v);
+            if (r.completed) {
+              buf.clear();
+              buf.insert(r.completed);
+            } else if (r.matches.length > 1) {
+              const shown = r.matches.slice(0, 12).map((m) => "/" + m).join("  ");
+              const more = r.matches.length > 12 ? `  … +${r.matches.length - 12} more` : "";
+              process.stdout.write("\n" + theme.dim(shown + more) + "\n");
+            }
+            repaint();
+          }
+          return;
+        }
+        case "clear-screen":
+          if (!busy) {
+            process.stdout.write("\x1b[2J\x1b[H");
+            repaint();
+          }
+          return;
+        case "home":
+          buf.home();
+          repaint();
+          return;
+        case "end":
+          buf.end();
+          repaint();
+          return;
+        case "up":
+          if (viewerOpen) {
+            viewerState = moveCursor(viewerState, -1);
+            redrawViewerTree();
+          } else {
+            buf.historyUp();
+            repaint();
+          }
+          return;
+        case "down":
+          if (viewerState.visible && !viewerOpen) {
+            viewerOpen = true;
+            redrawViewerTree();
+          } else if (viewerOpen) {
+            viewerState = moveCursor(viewerState, 1);
+            redrawViewerTree();
+          } else {
+            buf.historyDown();
+            repaint();
+          }
+          return;
+        case "interrupt":
+          onCtrlC();
+          return;
+        case "eof":
+          if (!buf.value) finish(0);
+          return;
+        case "submit":
+          void onSubmit().catch((err) => printError(err, ctx.cfg.baseUrl));
+          return;
+        case "escape":
+          if (viewerOpen) {
+            viewerOpen = false;
+            process.stdout.write("\r\x1b[2K");
+            repaint();
+          }
+          return;
+        default:
+          return; // ignore
+      }
+    };
+
+    // StringDecoder: a multibyte UTF-8 char split across chunks must not be
+    // decoded as two replacement chars.
+    const decoder = new StringDecoder("utf8");
+    const onData = (chunk: Buffer): void => {
+      let data = carry + decoder.write(chunk);
+      carry = "";
+      const partial = PARTIAL_ESC_RE.exec(data);
+      if (partial && partial[0].length > 0 && partial.index + partial[0].length === data.length) {
+        carry = partial[0];
+        data = data.slice(0, partial.index);
+      }
+      for (const seq of splitKeys(data)) {
+        processSeq(seq);
+      }
+    };
+    process.stdin.on("data", onData);
+    process.stdout.on("resize", onResize);
+  });
+}
+
+/** Non-TTY fallback (pipes / CI): a line-oriented readline loop — no raw-mode
+ *  key decoding since there's no real terminal to own. `inflight` still wires
+ *  Ctrl+C to cancel the current turn/slash-command rather than killing the
+ *  whole process (a bare non-TTY session, e.g. `ssh host aether`, still gets
+ *  SIGINT delivered normally since readline isn't in terminal mode here). */
+async function replLines(ctx: AppContext): Promise<number> {
+  const rl = createInterface({ input: process.stdin });
+  const p = promptPrefix(userInfo().username || "you");
+  let inflight: AbortController | null = null;
+  process.on("SIGINT", () => inflight?.abort());
+  process.stdout.write(p);
   for await (const line of rl) {
     const t = line.trim();
     if (!t) {
-      rl.prompt();
+      process.stdout.write(p);
       continue;
     }
-    appendHistory(historyPath, t);
+    if (historyEnabled()) appendHistory(t);
     if (t.startsWith("/")) {
       inflight = new AbortController();
       try {
         const res = await handleSlash(ctx, t, process.stdout, inflight.signal);
         if (res.exit) break;
+        if (res.restart) {
+          applyRestart(ctx.flags, res.restart);
+          process.stdout.write(theme.dim("session restarted — context cleared.\n\n"));
+        }
       } catch (err) {
         if (isAbortError(err)) {
           process.stderr.write(errTheme.dim("✗ canceled\n"));
@@ -174,23 +812,23 @@ async function repl(ctx: AppContext): Promise<number> {
       } finally {
         inflight = null;
       }
-      rl.prompt();
+      process.stdout.write(p);
       continue;
     }
     inflight = new AbortController();
     try {
-      await runTurn(ctx, t, inflight.signal, terminal ? redrawInput : undefined);
+      await runTurn(ctx, t, inflight.signal);
     } catch (err) {
       if (isAbortError(err)) {
         process.stderr.write("\n" + errTheme.dim("✗ canceled — turn discarded") + "\n");
-      } else {
+      } else if (!(err instanceof ChatTurnError)) {
+        // ChatTurnError: Renderer already painted the "✗ <msg>" error line.
         printError(err, ctx.cfg.baseUrl);
       }
     } finally {
       inflight = null;
     }
-    process.stdout.write("\n");
-    rl.prompt();
+    process.stdout.write("\n" + p);
   }
   rl.close();
   process.stdout.write("\n");

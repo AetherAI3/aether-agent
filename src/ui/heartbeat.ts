@@ -27,10 +27,22 @@ export class HeartbeatIndicator {
     this.onFrame = opts.onFrame ?? ((): void => {});
   }
 
-  /** Trigger one beat. Called on each real heartbeat event. */
+  /** Trigger one beat. Called on each real heartbeat event. A beat that
+   *  arrives while the envelope is still playing is absorbed — restarting
+   *  mid-pulse snaps the glyph back to "·" and reads as stutter. */
   beat(): void {
     this.stalled = false;
-    this.beats += 1;
+    this.beats += 1; // count every real heartbeat, even absorbed ones — the
+    // thinking timer's ♥ counter should track true liveness, not paint frames.
+    if (this.timer) {
+      // pulse in flight — liveness is already visible; restarting mid-pulse
+      // would snap the glyph back to "·" and read as stutter. Still report
+      // the updated beat count so a caller tracking liveness (the thinking
+      // timer's ♥ counter) sees every beat, not just the ones that happen to
+      // land between animation frames.
+      this.onFrame(this.glyph(), this.beats);
+      return;
+    }
     this.idx = 0;
     this.step();
   }

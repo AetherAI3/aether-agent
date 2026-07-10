@@ -1,15 +1,46 @@
-// status_renderer.ts — single stdout authority for the one-shot `aether code`.
+// status_renderer.ts — single output authority for the one-shot `aether agent`.
 // Scrollback above (meaningful events) + ONE pinned, animated status line below.
 // log() clears the pinned line, writes the event, repaints the status. No
 // alt-screen (that's TuiLayout, for the persistent REPL) — just a `\r`-pinned
 // line, which is the right shape for a run-to-completion command.
 //
-// PRESENTATION ONLY + TTY-GATED. Non-TTY (pipes, triage_log.py, CI) -> plain
-// lines, never `\r`/ANSI. Honors NO_COLOR and AETHER_NO_ANIM=1. This isolation is
-// what keeps the §8 emission logs clean.
+// PRESENTATION ONLY. Writes through an injected RenderSink (StdoutSink for the
+// CLI; an xterm-backed sink for the desktop/web embed; a StringSink for tests).
+// Color + TTY come from the sink, never from process globals — that is what lets
+// an Electron renderer get full ANSI. Non-tty sink -> plain lines, never `\r`/ANSI.
+// Honors AETHER_NO_ANIM=1 (animation off). The §8 emission logs stay clean.
 
-import { theme, stripAnsi } from "./theme.js";
+import { createTheme, type Theme } from "./theme.js";
 import { humanTokens } from "./statusbar.js";
+import { formatElapsed } from "./elapsed.js";
+import { sliceVisible } from "./text.js";
+import { StdoutSink, type RenderSink } from "./sink.js";
+
+/** Structural shape that StatusRenderer.memoryEvent accepts — matches both
+ *  StreamFrame's memory variant and BrainEvent's memory variant. */
+export interface MemoryFrameShape {
+  type: "memory";
+  subtype: string;
+  text?: string;
+  kind?: string;
+  confidence?: number;
+  skill?: string;
+  narrative?: string;
+  factCount?: number;
+  beforeTokens?: number;
+  afterTokens?: number;
+  freedPct?: number;
+  dimension?: string;
+  from?: number;
+  to?: number;
+  direction?: string;
+  // behavioral skill fields
+  skill_name?: string;
+  description?: string;
+  triggers?: string[];
+  action?: string;
+  category?: string;
+}
 
 const ESC = "\x1b[";
 const CLR_LINE = "\r" + ESC + "2K"; // carriage-return + clear-to-EOL
@@ -18,46 +49,67 @@ const SHOW = ESC + "?25h";
 
 export interface StatusRendererOptions {
   quiet?: boolean;
-  /** "local" hides the UVT figure (local has no UVT); "api" shows used/cap. */
+  /** "local" hides the UVT figure; "api" shows used/cap. */
   mode?: "local" | "api";
+  /** Injected clock (ms). Defaults to Date.now — overridden in tests. */
+  now?: () => number;
+  /** Where rendered output goes. Defaults to a StdoutSink (CLI). */
+  sink?: RenderSink;
+  /** Color theme. Defaults to createTheme(sink.colorEnabled). */
+  theme?: Theme;
+  /** Install process exit/SIGINT cursor-restore handlers. CLI=true, embed=false. Default true. */
+  ownsProcess?: boolean;
 }
 
 export class StatusRenderer {
+  private readonly sink: RenderSink;
+  private readonly theme: Theme;
+  private readonly ownsProcess: boolean;
   private readonly tty: boolean;
   private readonly mode: "local" | "api";
+  private readonly now: () => number;
   private hb = "·";
-  private stage = "";
-  private art = "";
+  private anim = "";
+  private verb = "Working";
+  private kao = "";
+  private streamed = 0; // output tokens streamed this run (the ↑ figure)
   private used = 0;
   private cap = 0;
   private tasks = ""; // pre-styled multi-task counter (e.g. "3/7"); "" hides it
-  private startedAt = 0; // wall-clock start of the run (thinking timer)
   private beats = 0; // heartbeat pulses so far (the live "tracking each beat")
+  private startedMs: number;
+  private ticker: ReturnType<typeof setInterval> | null = null;
   private cleanupBound = false;
+  private onExit: (() => void) | null = null;
+  private onSigint: (() => void) | null = null;
 
   constructor(opts: StatusRendererOptions = {}) {
-    this.tty =
-      Boolean(process.stdout.isTTY) &&
-      !opts.quiet &&
-      process.env["AETHER_NO_ANIM"] !== "1";
+    this.sink = opts.sink ?? new StdoutSink();
+    this.theme = opts.theme ?? createTheme(this.sink.colorEnabled);
+    this.ownsProcess = opts.ownsProcess ?? true;
+    this.tty = this.sink.isTTY && !opts.quiet && process.env["AETHER_NO_ANIM"] !== "1";
     this.mode = opts.mode ?? "local";
+    this.now = opts.now ?? (() => Date.now());
+    this.startedMs = this.now();
   }
 
   start(): void {
-    this.startedAt = Date.now(); // begin the thinking timer (even off-TTY: harmless)
+    this.startedMs = this.now(); // begin the thinking timer (even off-TTY: harmless)
     if (!this.tty) return;
-    process.stdout.write(HIDE);
+    try { this.sink.write(HIDE); } catch { /* terminal already gone */ }
     this.installCleanup();
+    this.ticker = setInterval(() => this.repaint(), 1000);
+    if (typeof this.ticker.unref === "function") this.ticker.unref();
     this.repaint();
   }
 
   /** A meaningful scrollback line (tool call, checkpoint, monologue, result). */
   log(line: string): void {
     if (!this.tty) {
-      process.stdout.write(line + "\n");
+      this.sink.write(line + "\n");
       return;
     }
-    process.stdout.write(CLR_LINE + line + "\n");
+    this.sink.write(CLR_LINE + line + "\n");
     this.repaint();
   }
 
@@ -70,9 +122,20 @@ export class StatusRenderer {
     this.beats = n;
     this.repaint();
   }
-  setStage(stage: string, art: string): void {
-    this.stage = stage;
-    this.art = art;
+  /** Set the activity word + kaomoji (from phaseVerb). */
+  setVerb(verb: string, kao: string): void {
+    this.verb = verb;
+    this.kao = kao;
+    this.repaint();
+  }
+  /** Cumulative output tokens streamed this run (telemetry.tokens). */
+  setStreamed(n: number): void {
+    this.streamed = n;
+    this.repaint();
+  }
+  /** Current stage-animation frame (from AnimationController.onFrame). */
+  setAnim(art: string): void {
+    this.anim = art;
     this.repaint();
   }
   setProgress(used: number, cap: number): void {
@@ -86,52 +149,92 @@ export class StatusRenderer {
     this.repaint();
   }
 
+  /** Called when a memory frame arrives. Logs a formatted line + briefly
+   *  switches the status verb to the matching memory phase. */
+  memoryEvent(frame: MemoryFrameShape): void {
+    switch (frame.subtype) {
+      case "extract": {
+        const pct = frame.confidence ? `  ${this.theme.dim(`(${Math.round(frame.confidence * 100)}%)`)}` : "";
+        this.log(`${this.theme.iceBlue("🧠")}  ${this.theme.bold("memory:")} "${frame.text}"${pct}`);
+        this.setVerb("Extracting memory", "(◕‿◕)✎");
+        break;
+      }
+      case "skill": {
+        const pct = frame.confidence ? `  ${this.theme.dim(`(${Math.round(frame.confidence * 100)}%)`)}` : "";
+        this.log(`${this.theme.cyan("🎯")}  ${this.theme.bold("skill learned:")} ${frame.skill} — "${frame.text}"${pct}`);
+        this.setVerb("Learning skill", "🧠✨");
+        break;
+      }
+      case "behavioral": {
+        const name = frame.skill_name ?? "unknown";
+        const pct = frame.confidence ? `  ${this.theme.dim(`(${Math.round(frame.confidence * 100)}%)`)}` : "";
+        this.log(`${this.theme.iceBlue("🧠")}  ${this.theme.bold("new skill created:")} ${name}${pct}`);
+        this.setVerb("Learning workflow", "🧠✨");
+        break;
+      }
+      case "compacting": {
+        const before = humanTokens(frame.beforeTokens ?? 0);
+        const after = humanTokens(frame.afterTokens ?? 0);
+        const pct = frame.freedPct != null ? ` ${this.theme.dim(`(${frame.freedPct}% freed)`)}` : "";
+        this.log(`${this.theme.dim("📦")}  ${this.theme.dim("Compacting context ·")} ${before} → ${after} tokens${pct}`);
+        this.setVerb("Compacting context", "(；・∀・)📦");
+        break;
+      }
+      case "dream": {
+        this.log(`${this.theme.iceBlue("💭")}  ${this.theme.bold("dream:")} ${frame.narrative?.slice(0, 120) ?? ""}`);
+        this.setVerb("Consolidating", "(￣～￣;)💭");
+        break;
+      }
+      case "style": {
+        this.log(
+          `${this.theme.cyan("🎨")}  ${this.theme.bold("style:")} ` +
+          `${frame.dimension} ${this.theme.dim(`${frame.from?.toFixed(2)} → ${frame.to?.toFixed(2)}`)} ` +
+          `(${frame.direction})`
+        );
+        this.setVerb("Adapting style", "(｡•̀ᴗ-)✧");
+        break;
+      }
+    }
+  }
+
   /** Tear down: clear the pinned line, restore the cursor. */
   end(): void {
+    if (this.ticker) {
+      clearInterval(this.ticker);
+      this.ticker = null;
+    }
+    this.disposeProcessHandlers();   // H2: always clean listeners
     if (!this.tty) return;
-    process.stdout.write(CLR_LINE + SHOW);
+    try { this.sink.write(CLR_LINE + SHOW); } catch { /* terminal already gone */ }
   }
 
   private repaint(): void {
     if (!this.tty) return;
-    process.stdout.write(CLR_LINE + this.compose());
+    try { this.sink.write(CLR_LINE + this.composeLine()); } catch { /* terminal already gone */ }
   }
 
-  private compose(): string {
-    const hb = theme.cyan(this.hb);
-    const stage = this.stage ? theme.bold("* " + this.stage) : "";
-    const art = theme.iceBlue(this.art);
-    const tasksSeg = this.tasks ? "  " + this.tasks : ""; // pre-styled counter
-    const timerSeg = this.startedAt ? "  " + theme.dim(this.timer()) : "";
-    const fill =
+  /** The pinned status line. Reads the injected clock — public for tests.
+   *  Clamped to the sink width via sliceVisible: a wrapped pinned line breaks
+   *  the \r+2K repaint and strands a junk row every tick (10-20 repaints/sec
+   *  with the heartbeat, so an unclamped wrap floods the screen fast). */
+  composeLine(): string {
+    const hb = this.theme.cyan(this.hb);
+    const anim = this.anim ? `${this.theme.cyan(this.anim)}  ` : "";
+    const kao = this.kao ? this.theme.dim(this.kao) + " " : "";
+    const head = `${kao}${this.theme.bold(this.verb)}…`;
+    const tasksSeg = this.tasks ? "  " + this.tasks : ""; // pre-styled "n/7" counter
+    const elapsed = formatElapsed(this.now() - this.startedMs);
+    const up = this.streamed > 0 ? ` · ↑ ${humanTokens(this.streamed)} tokens` : "";
+    // The heartbeat count rides alongside elapsed time so the thinking timer
+    // visibly ticks on every beat, not just once a second.
+    const beatsSeg = this.beats > 0 ? ` ♥${this.beats}` : "";
+    const uvt =
       this.mode === "api" && this.cap > 0
-        ? `  ${humanTokens(this.used)}/${humanTokens(this.cap)} ${this.bar()}`
-        : this.cap > 0
-          ? `  ${this.bar()}`
-          : "";
-    // A pinned \r-line that wraps leaves one stale row PER REPAINT (10-20/s
-    // with the heartbeat) — clamp to the terminal by shedding the least
-    // important segments first, hard-clipping the stage as the last resort.
-    const cols = (process.stdout.columns && process.stdout.columns > 0 ? process.stdout.columns : 80) - 1;
-    const candidates = [
-      `${hb}  ${stage} ${art}${tasksSeg}${timerSeg}${theme.dim(fill)}`,
-      `${hb}  ${stage} ${art}${tasksSeg}${timerSeg}`,
-      `${hb}  ${stage} ${art}${tasksSeg}`,
-      `${hb}  ${stage} ${art}`,
-    ];
-    for (const c of candidates) {
-      if (stripAnsi(c).length <= cols) return c;
-    }
-    const plainStage = this.stage ? "* " + this.stage : "";
-    return `${hb}  ${theme.bold(plainStage.slice(0, Math.max(0, cols - 3)))}`;
-  }
-
-  /** The thinking timer: elapsed wall-clock + the running heartbeat count. Loops
-   * (repaints) on every beat, so while the agent thinks it visibly ticks. */
-  private timer(): string {
-    const secs = Math.max(0, Math.floor((Date.now() - this.startedAt) / 1000));
-    const t = secs >= 60 ? `${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, "0")}s` : `${secs}s`;
-    return `⏱ ${t} ♥${this.beats}`;
+        ? `  ${this.theme.dim(`UVT ${humanTokens(this.used)}/${humanTokens(this.cap)} ${this.bar()}`)}`
+        : "";
+    const line =
+      `${hb}  ${anim}${head}${tasksSeg} ${this.theme.dim(`(${elapsed}${beatsSeg}${up})`)}${uvt}`;
+    return sliceVisible(line, Math.max(20, this.sink.columns - 1));
   }
 
   private bar(width = 12): string {
@@ -140,21 +243,34 @@ export class StatusRenderer {
     return "▓".repeat(f) + "░".repeat(Math.max(0, width - f));
   }
 
+  /** Guarded cursor-restore for SIGINT only (see onSigint below). Public-ish for tests. */
+  _restoreOnSignalForTest(): void {
+    try { this.sink.write(SHOW); } catch { /* terminal already gone */ }
+    try { this.sink.write("\n"); } catch { /* terminal already gone */ }
+  }
+
   private installCleanup(): void {
-    if (this.cleanupBound) return;
+    if (!this.ownsProcess || this.cleanupBound) return;
     this.cleanupBound = true;
+    // Plain exit: just show the cursor. No trailing "\n" here — unlike SIGINT,
+    // a normal exit isn't interrupting a still-pinned line mid-repaint.
     const restore = (): void => {
-      try {
-        process.stdout.write(SHOW);
-      } catch {
-        /* terminal already gone */
-      }
+      try { this.sink.write(SHOW); } catch { /* terminal already gone */ }
     };
-    process.on("exit", restore);
-    process.on("SIGINT", () => {
-      restore();
-      process.stdout.write("\n");
+    const onSigint = (): void => {
+      this._restoreOnSignalForTest();   // H1: both writes guarded
       process.exit(130);
-    });
+    };
+    this.onExit = restore;
+    this.onSigint = onSigint;
+    process.on("exit", restore);
+    process.on("SIGINT", onSigint);
+  }
+
+  /** H2: remove the process listeners installed by installCleanup(). */
+  private disposeProcessHandlers(): void {
+    if (this.onExit) { process.off("exit", this.onExit); this.onExit = null; }
+    if (this.onSigint) { process.off("SIGINT", this.onSigint); this.onSigint = null; }
+    this.cleanupBound = false;
   }
 }

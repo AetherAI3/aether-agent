@@ -3,7 +3,7 @@
 // frames which the renderer surfaces.
 
 import type { AppContext } from "../core/context.js";
-import { runTurn } from "./chat.js";
+import { ChatTurnError, runTurn } from "./chat.js";
 
 export async function cmdRun(
   ctx: AppContext,
@@ -20,11 +20,15 @@ export async function cmdRun(
   }
   ctx.flags.agent = agent;
   try {
-    const ok = await runTurn(ctx, task);
-    return ok ? 0 : 1;
+    await runTurn(ctx, task);
+    return 0;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`\n✗ ${msg}\n`);
+    // ChatTurnError: the Renderer already painted "✗ <msg>" for the streamed
+    // error frame; printing it again here would double it (see chat.ts).
+    if (!(err instanceof ChatTurnError)) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`\n✗ ${msg}\n`);
+    }
     return 1;
   }
 }

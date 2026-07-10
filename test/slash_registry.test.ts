@@ -1,139 +1,86 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Writable } from "node:stream";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   SLASH_COMMANDS,
-  slashNames,
-  damerau,
-  nearest,
-  suggestTopLevel,
-  slashCompletions,
+  SLASH_SECTIONS,
+  allCommandNames,
+  findCommand,
+  completeSlash,
+  suggestCommand,
 } from "../src/commands/slash_registry.js";
-import { handleSlash } from "../src/commands/slash.js";
-import { DEFAULT_CONFIG } from "../src/core/config.js";
-import type { AppContext } from "../src/core/context.js";
 
-class Capture extends Writable {
-  private readonly chunks: string[] = [];
+const here = dirname(fileURLToPath(import.meta.url));
 
-  override _write(chunk: unknown, _encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
-    this.chunks.push(String(chunk));
-    callback();
-  }
-
-  text(): string {
-    return this.chunks.join("");
-  }
+/** The case labels of the handleSlash switch, parsed from source. */
+function switchCases(): string[] {
+  // Compiled tests run from dist/test/ — the .ts source lives two levels up.
+  const src = readFileSync(join(here, "..", "..", "src", "commands", "slash.ts"), "utf8");
+  const start = src.indexOf("export async function handleSlash");
+  const end = src.indexOf("\n}", start);
+  const body = src.slice(start, end);
+  const out: string[] = [];
+  for (const m of body.matchAll(/^\s{4}case "([a-z0-9-]*)":/gm)) out.push(m[1]!);
+  return out;
 }
 
-// help/default/effort-dial paths only read cfg — a cfg-only stub is safe here.
-const ctx = { cfg: { ...DEFAULT_CONFIG } } as unknown as AppContext;
-
-test("damerau counts the transposition typo as one edit", () => {
-  assert.equal(damerau("auht", "auth"), 1);
-  assert.equal(damerau("model", "model"), 0);
-  assert.equal(damerau("modle", "model"), 1);
-  assert.equal(damerau("hello", "help"), 2);
-  assert.equal(damerau("", "abc"), 3);
+test("registry ↔ handleSlash switch stay in sync (no /help drift, ever again)", () => {
+  const cases = new Set(switchCases().filter((c) => c !== "")); // "" = bare-slash help alias
+  const registered = new Set(allCommandNames());
+  const missingFromRegistry = [...cases].filter((c) => !registered.has(c));
+  const missingFromSwitch = [...registered].filter((c) => !cases.has(c));
+  assert.deepEqual(missingFromRegistry, [], `cases not in registry: ${missingFromRegistry.join(", ")}`);
+  assert.deepEqual(missingFromSwitch, [], `registry entries with no case: ${missingFromSwitch.join(", ")}`);
 });
 
-test("nearest respects the max-distance budget", () => {
-  assert.equal(nearest("modle", slashNames(), 2), "model");
-  assert.equal(nearest("qit", slashNames(), 2), "quit");
-  assert.equal(nearest("zzzzzz", slashNames(), 2), null);
-});
-
-test("suggestTopLevel: short tokens need distance 1, longer allow 2", () => {
-  assert.equal(suggestTopLevel("auht"), "auth"); // transposition, d=1
-  assert.equal(suggestTopLevel("confg"), "config"); // d=1
-  assert.equal(suggestTopLevel("moddels"), "models"); // d=1
-  assert.equal(suggestTopLevel("recipt"), "receipt"); // d=1
-  assert.equal(suggestTopLevel("hello"), null); // help is d=2 but token ≤5 chars
-  assert.equal(suggestTopLevel("auth"), null); // exact commands are never guarded
-  assert.equal(suggestTopLevel("xyzzy"), null);
-});
-
-test("slashCompletions completes the command word only", () => {
-  assert.deepEqual(slashCompletions("/mo"), [["/models", "/model"], "/mo"]);
-  assert.deepEqual(slashCompletions("/q"), [["/quit"], "/q"]);
-  assert.deepEqual(slashCompletions("/model son"), [[], "/model son"]);
-  assert.deepEqual(slashCompletions("hi"), [[], "hi"]);
-});
-
-test("/help lists every registry command (help cannot drift from the switch)", async () => {
-  const out = new Capture();
-  await handleSlash(ctx, "/help", out);
-  const text = out.text();
+test("every command has a summary and a known section", () => {
   for (const c of SLASH_COMMANDS) {
-    assert.ok(text.includes(`/${c.name}`), `/help is missing /${c.name}`);
-    for (const a of c.aliases ?? []) {
-      assert.ok(text.includes(`/${a}`), `/help is missing alias /${a}`);
-    }
+    assert.ok(c.summary.length > 0, `/${c.name} missing summary`);
+    assert.ok((SLASH_SECTIONS as readonly string[]).includes(c.section), `/${c.name} bad section ${c.section}`);
   }
 });
 
-// Network-backed commands run against a stubbed fetch serving a two-item
-// catalog + an empty audit trail, so EVERY registry name goes through the
-// real switch — the anti-drift test with no skips.
-function catalogFetch(): typeof globalThis.fetch {
-  return (async (url: unknown) => {
-    const u = String(url);
-    const item = (id: string, kind: "model" | "orchestrator"): Record<string, unknown> => ({
-      id,
-      label: id,
-      kind,
-      provider: null,
-      context_window: null,
-      tier_min: "free",
-      enabled: true,
-      available: true,
-      monthly_uvt_cap: null,
-      is_default: false,
-    });
-    const json = u.includes("/audit/trail")
-      ? { entries: [], count: 0 }
-      : { models: [item("m1", "model"), item("neo", "orchestrator")], tier: "solo", default: "m1" };
-    return {
-      ok: true,
-      status: 200,
-      headers: new Headers({ "content-type": "application/json" }),
-      json: async () => json,
-    } as unknown as Response;
-  }) as typeof globalThis.fetch;
-}
-
-test("every registry command is actually accepted by the switch (no skips)", async () => {
-  const real = globalThis.fetch;
-  globalThis.fetch = catalogFetch();
-  const { ApiClient } = await import("../src/core/transport.js");
-  const netCtx = {
-    cfg: { ...DEFAULT_CONFIG },
-    flags: {},
-    tokens: { get: async () => "aek_test" },
-    api: new ApiClient("https://stub.test", { get: async () => "aek_test" } as never),
-  } as unknown as AppContext;
-  try {
-    for (const name of slashNames()) {
-      if (name === "exit" || name === "quit") {
-        const res = await handleSlash(netCtx, `/${name}`, new Capture());
-        assert.equal(res.exit, true, `/${name} should exit`);
-        continue;
-      }
-      const out = new Capture();
-      const res = await handleSlash(netCtx, `/${name}`, out);
-      assert.equal(res.exit, false);
-      assert.ok(!out.text().includes("unknown command"), `/${name} fell through to unknown`);
-    }
-  } finally {
-    globalThis.fetch = real;
-  }
+test("findCommand resolves names and aliases, with or without slash", () => {
+  assert.equal(findCommand("model")!.name, "model");
+  assert.equal(findCommand("/quit")!.name, "exit");
+  assert.equal(findCommand("QUIT")!.name, "exit");
+  assert.equal(findCommand("nope"), undefined);
 });
 
-test("unknown slash command gets a did-you-mean", async () => {
-  const out = new Capture();
-  await handleSlash(ctx, "/modle", out);
-  assert.match(out.text(), /unknown command: \/modle — did you mean \/model\?/);
-  const out2 = new Capture();
-  await handleSlash(ctx, "/zzzzzz", out2);
-  assert.match(out2.text(), /unknown command: \/zzzzzz {2}\(\/help lists commands\)/);
+test("completeSlash: unique → full completion with trailing space", () => {
+  const r = completeSlash("/doct");
+  assert.equal(r.completed, "/doctor ");
+  assert.deepEqual(r.matches, ["doctor"]);
+});
+
+test("completeSlash: ambiguous → longest common prefix, then candidates", () => {
+  const r = completeSlash("/wo");
+  assert.equal(r.completed, "/workflow"); // workflow, workflow-templates, workflow-template
+  const r2 = completeSlash("/workflow");
+  assert.equal(r2.completed, null); // no progress possible
+  assert.ok(r2.matches.length >= 3);
+});
+
+test("completeSlash ignores non-slash input and lines with args", () => {
+  assert.equal(completeSlash("model").completed, null);
+  assert.equal(completeSlash("/model x").completed, null);
+});
+
+test("suggestCommand catches close typos, rejects garbage", () => {
+  // "modle" is distance 2 from both model and models — either is a good save.
+  assert.ok(["model", "models"].includes(suggestCommand("modle")!));
+  assert.equal(suggestCommand("vautl"), "vault");
+  assert.equal(suggestCommand("zzzzzzzzz"), null);
+});
+
+// /effort (LOW..CODEPRO dial that drives `aether code` runs) has no origin/main
+// counterpart — pin its registry entry so a future registry rewrite can't
+// silently drop the only place this command is discoverable from.
+test("effort is registered in the Session section with a tier|1-5 arg hint", () => {
+  const c = findCommand("effort");
+  assert.ok(c, "/effort missing from registry");
+  assert.equal(c!.section, "Session");
+  assert.equal(c!.args, "[tier|1-5]");
 });

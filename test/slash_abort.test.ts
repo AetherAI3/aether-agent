@@ -29,7 +29,7 @@ test("a network-backed slash command's signal reaches fetch (so SIGINT can cance
       ok: true,
       status: 200,
       headers: new Headers({ "content-type": "application/json" }),
-      json: async () => ({ models: [], tier: "solo", default: "" }),
+      json: async () => ({ entries: [], count: 0 }),
     } as unknown as Response;
   }) as typeof globalThis.fetch;
   try {
@@ -40,7 +40,12 @@ test("a network-backed slash command's signal reaches fetch (so SIGINT can cance
       api: new ApiClient("https://stub.test", tokens),
     } as unknown as AppContext;
     const ac = new AbortController();
-    await handleSlash(ctx, "/tier", new Capture(), ac.signal);
+    // /audit (fetchTrail) always calls api.getJson fresh — unlike /tier, it is
+    // never served from slash.ts's process-lifetime models/orchestrators
+    // catalog cache, so this assertion can't be defeated by an earlier test
+    // (e.g. "/model switch...") having already warmed that cache under
+    // --test-isolation=none.
+    await handleSlash(ctx, "/audit", new Capture(), ac.signal);
     assert.equal(captured.signal, ac.signal);
   } finally {
     globalThis.fetch = real;
@@ -50,6 +55,4 @@ test("a network-backed slash command's signal reaches fetch (so SIGINT can cance
 // Platform behavior for an already-aborted signal reaching fetch() is proven
 // generically in abort.test.ts (ApiClient.stream/postJson); this file only
 // needs to prove handleSlash's OWN plumbing threads a signal through — which
-// the test above does. (slash.ts caches the catalog for the process
-// lifetime by design, so a second network-call assertion here would be
-// order-dependent on other test files under --test-isolation=none.)
+// the test above does.

@@ -11,7 +11,49 @@
 // Bump on ANY breaking change to the message shapes below. The Python mirror
 // (aether_agent/protocol.py) MUST carry the same number; the conformance fixture
 // (test/fixtures/bridge_conformance.json) pins both. Canonical: docs/CONTRACTS.md.
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
+
+// --- workflow swarm frame interfaces ---------------------------------------
+export interface WorkflowStartFrame {
+  type: "workflow_start";
+  workflowId: string;
+  phases: Array<{ n: number; type: string; agents: number }>;
+  totalAgents: number;
+}
+export interface PhaseStartFrame {
+  type: "phase_start";
+  phaseN: number;
+  phaseType: string;
+  agentCount: number;
+}
+export interface PhaseDoneFrame {
+  type: "phase_done";
+  phaseN: number;
+  artifactSummary: string;
+}
+export interface AgentSpawnFrame {
+  type: "agent_spawn";
+  agentId: string;
+  phaseN: number;
+  brief: string;
+}
+export interface AgentProgressFrame {
+  type: "agent_progress";
+  agentId: string;
+  delta: string;
+}
+export interface AgentDoneFrame {
+  type: "agent_done";
+  agentId: string;
+  phaseN: number;
+  summary: string;
+}
+export interface WorkflowDoneFrame {
+  type: "workflow_done";
+  synthesis: string;
+  totalPhases: number;
+  totalAgents: number;
+}
 
 // --- brain -> host events --------------------------------------------------
 export type BrainEvent =
@@ -35,7 +77,38 @@ export type BrainEvent =
   // ok is derived from a real final test run; remaining = failing tests when not ok;
   // reason ∈ "" | "stalled" | "no-progress" | "max-turns" | "unverified".
   | { type: "done"; ok: boolean; result: string; remaining: number; reason: string }
-  | { type: "error"; msg: string };
+  | { type: "error"; msg: string }
+  // memory bridge — QOPC memory frames forwarded as events
+  | {
+      type: "memory";
+      subtype: string;
+      text?: string;
+      kind?: string;
+      confidence?: number;
+      skill?: string;
+      narrative?: string;
+      factCount?: number;
+      beforeTokens?: number;
+      afterTokens?: number;
+      freedPct?: number;
+      dimension?: string;
+      from?: number;
+      to?: number;
+      direction?: string;
+      // behavioral skill fields (subtype "behavioral")
+      skill_name?: string;
+      description?: string;
+      triggers?: string[];
+      action?: string;
+      category?: string;
+    }
+  | WorkflowStartFrame
+  | PhaseStartFrame
+  | PhaseDoneFrame
+  | AgentSpawnFrame
+  | AgentProgressFrame
+  | AgentDoneFrame
+  | WorkflowDoneFrame;
 
 // --- host -> brain commands ------------------------------------------------
 export type HostCommand =
@@ -51,6 +124,8 @@ export const TOOLS = [
   "run_tests",
   "repo_search",
   "git_commit",
+  "web_search",
+  "web_fetch",
 ] as const;
 export type ToolName = (typeof TOOLS)[number];
 
@@ -114,6 +189,53 @@ export function decodeEvent(obj: Record<string, unknown>): BrainEvent | null {
       };
     case "error":
       return { type: "error", msg: str(obj["msg"]) };
+    case "workflow_start":
+      return {
+        type: "workflow_start",
+        workflowId: str(obj["workflow_id"]),
+        phases: (Array.isArray(obj["phases"]) ? obj["phases"] : []) as Array<{ n: number; type: string; agents: number }>,
+        totalAgents: num(obj["total_agents"]),
+      };
+    case "phase_start":
+      return {
+        type: "phase_start",
+        phaseN: num(obj["phase_n"]),
+        phaseType: str(obj["phase_type"]),
+        agentCount: num(obj["agent_count"]),
+      };
+    case "phase_done":
+      return {
+        type: "phase_done",
+        phaseN: num(obj["phase_n"]),
+        artifactSummary: str(obj["artifact_summary"]),
+      };
+    case "agent_spawn":
+      return {
+        type: "agent_spawn",
+        agentId: str(obj["agent_id"]),
+        phaseN: num(obj["phase_n"]),
+        brief: str(obj["brief"]),
+      };
+    case "agent_progress":
+      return {
+        type: "agent_progress",
+        agentId: str(obj["agent_id"]),
+        delta: str(obj["delta"]),
+      };
+    case "agent_done":
+      return {
+        type: "agent_done",
+        agentId: str(obj["agent_id"]),
+        phaseN: num(obj["phase_n"]),
+        summary: str(obj["summary"]),
+      };
+    case "workflow_done":
+      return {
+        type: "workflow_done",
+        synthesis: str(obj["synthesis"]),
+        totalPhases: num(obj["total_phases"]),
+        totalAgents: num(obj["total_agents"]),
+      };
     default:
       return null; // unknown event type — ignore per contract
   }

@@ -12,6 +12,13 @@
 //   /audit [n]            recent Aether audit trail
 //   /clear                clear the screen
 //   /exit | /quit         leave the REPL
+//
+// Command handlers live in sibling slash_*.ts files, grouped by concern
+// (context, git tools, codegen, HUD, vault/workflow, orchestra, media) to
+// keep each file under the repo's ~800-line convention. This file owns the
+// dispatcher switch, the models/orchestrators catalog cache, and the
+// session-level handlers (picker, doctor, help) that need direct access to
+// that cache.
 
 import type { Writable } from "node:stream";
 import type { AppContext } from "../core/context.js";
@@ -19,12 +26,36 @@ import type { CatalogItem, CatalogResponse } from "../types.js";
 import { MODELS_PATH } from "../core/transport.js";
 import { fetchTrail } from "../core/audit.js";
 import { isApiToken } from "./auth.js";
-import { SLASH_COMMANDS, slashNames, nearest } from "./slash_registry.js";
+import { theme } from "../ui/theme.js";
+import { SLASH_COMMANDS, SLASH_SECTIONS, findCommand, suggestCommand } from "./slash_registry.js";
 import { EFFORT_TIERS, normalizeEffort, renderEffortSlider, renderCodeProArt } from "../ui/effort.js";
 import { saveConfig } from "../core/config.js";
+import { handleGoal, handleGoals } from "./goals.js";
+import { box } from "../ui/box.js";
+import { sliceVisible } from "../ui/text.js";
+import { pickModel } from "../ui/model_picker.js";
+import { runLogsViewer } from "../ui/logs_viewer.js";
+
+import { pinSlash, dropSlash, snapshotSlash, limitSlash, auditReceiptSlash, purgeSlash } from "./slash_context.js";
+import { rollbackSlash, revertSlash, stageDiffSlash } from "./slash_git_tools.js";
+import { scaffoldSlash, portSlash, testDriveSlash, benchSlash } from "./slash_codegen.js";
+import { addSlash, hudSlash } from "./slash_hud.js";
+import {
+  vaultStatusSlash, vaultContextSlash, vaultSearchSlash, vaultRecentSlash,
+  vaultProjectSlash, vaultTagSlash, vaultTreeSlash,
+  workflowSlash, workflowTemplatesSlash, workflowTemplateSlash,
+} from "./slash_vault_workflow.js";
+import { agentsSlash, delegateSlash, treeSlash, broadcastSlash, gatherSlash } from "./slash_orchestra.js";
+import {
+  photogenSlash, reframeSlash, videogenSlash, animateSlash, recutSlash,
+  outputSlash, storyboardSlash,
+} from "./slash_media.js";
 
 export interface SlashResult {
   exit: boolean;
+  /** Set when the user confirmed a model/agent switch: the REPL must restart
+   * the brain + clear context with the new selection. */
+  restart?: { model?: string; agent?: string };
 }
 
 type Kind = "model" | "orchestrator";
@@ -48,6 +79,16 @@ async function getCatalog(ctx: AppContext, force = false, signal?: AbortSignal):
   return _catalog;
 }
 
+/** Warm the catalog cache in the background. Fail-soft: a rejected fetch is
+ * swallowed so the prompt is never blocked and the user sees no error. */
+export async function primeCatalog(ctx: AppContext): Promise<void> {
+  try {
+    await getCatalog(ctx, true);
+  } catch {
+    /* offline / token not ready — /models will retry lazily */
+  }
+}
+
 function byKind(cat: CatalogResponse, kind: Kind): CatalogItem[] {
   return cat.models.filter((m) => m.kind === kind);
 }
@@ -68,20 +109,31 @@ export async function handleSlash(
       return { exit: true };
     case "help":
     case "":
-      printHelp(out);
+      printHelp(out, arg);
       break;
     case "models":
-      await showList(ctx, out, "model", signal);
+      await showPicker(ctx, out, "model", signal);
       break;
-    case "agents":
-      await showList(ctx, out, "orchestrator", signal);
+    case "model": {
+      if (!arg) {
+        const r = await showPicker(ctx, out, "model", signal);
+        if (r) return { exit: false, restart: r };
+        break;
+      }
+      const r = await select(ctx, out, arg, "model", signal);
+      if (r) return { exit: false, restart: r };
       break;
-    case "model":
-      await select(ctx, out, arg, "model", signal);
+    }
+    case "agent": {
+      if (!arg) {
+        const r = await showPicker(ctx, out, "orchestrator", signal);
+        if (r) return { exit: false, restart: r };
+        break;
+      }
+      const r = await select(ctx, out, arg, "orchestrator", signal);
+      if (r) return { exit: false, restart: r };
       break;
-    case "agent":
-      await select(ctx, out, arg, "orchestrator", signal);
-      break;
+    }
     case "tier":
       await showTier(ctx, out, signal);
       break;
@@ -91,37 +143,266 @@ export async function handleSlash(
     case "audit":
       await showAudit(ctx, out, arg, signal);
       break;
+    case "vault": {
+      await vaultStatusSlash(ctx, out);
+      break;
+    }
+    case "vault-context": {
+      await vaultContextSlash(ctx, out);
+      break;
+    }
+    case "vault-search": {
+      await vaultSearchSlash(ctx, out, arg);
+      break;
+    }
+    case "vault-recent": {
+      await vaultRecentSlash(ctx, out, arg);
+      break;
+    }
+    case "vault-project": {
+      await vaultProjectSlash(ctx, out, arg);
+      break;
+    }
+    case "vault-tag": {
+      await vaultTagSlash(ctx, out, arg);
+      break;
+    }
+    case "vault-tree": {
+      await vaultTreeSlash(ctx, out);
+      break;
+    }
+    case "workflow": {
+      await workflowSlash(ctx, out);
+      break;
+    }
+    case "workflow-templates": {
+      await workflowTemplatesSlash(ctx, out);
+      break;
+    }
+    case "workflow-template": {
+      await workflowTemplateSlash(ctx, out, arg);
+      break;
+    }
+    case "goal": {
+      const parts = arg.split(/\s+/);
+      const subcmd = parts[0] ?? "";
+      const rest = parts.slice(1).join(" ");
+      await handleGoal(ctx, out, subcmd.toLowerCase(), rest);
+      break;
+    }
+    case "goals": {
+      await handleGoals(ctx, out, arg);
+      break;
+    }
+    case "agents": {
+      await agentsSlash(ctx, out);
+      break;
+    }
     case "doctor":
       await doctor(ctx, out, signal);
       break;
-    case "mcp":
-      out.write("MCP servers — coming soon. Aether Code will manage MCP tools here.\n");
+    case "mcp": {
+      if (!process.stdin.isTTY) {
+        out.write("MCP manager needs an interactive terminal — run `aether mcp`.\n");
+        break;
+      }
+      const { mcpFromRepl } = await import("./mcp.js");
+      await mcpFromRepl(ctx);
       break;
+    }
+    case "delegate": {
+      await delegateSlash(ctx, out, arg);
+      break;
+    }
+    case "tree": {
+      await treeSlash(ctx, out);
+      break;
+    }
+    case "broadcast": {
+      await broadcastSlash(ctx, out, arg);
+      break;
+    }
+    case "gather": {
+      await gatherSlash(ctx, out, arg);
+      break;
+    }
+    case "photogen":
+    case "frame": {
+      await photogenSlash(ctx, out, arg, cmd === "frame");
+      break;
+    }
+    case "re-frame": {
+      await reframeSlash(ctx, out, arg);
+      break;
+    }
+    case "videogen":
+    case "sequence": {
+      await videogenSlash(ctx, out, arg, cmd === "sequence");
+      break;
+    }
+    case "animate": {
+      await animateSlash(ctx, out, arg);
+      break;
+    }
+    case "re-cut": {
+      await recutSlash(ctx, out, arg);
+      break;
+    }
+    case "output": {
+      await outputSlash(ctx, out, arg);
+      break;
+    }
+    case "storyboard": {
+      await storyboardSlash(ctx, out, arg);
+      break;
+    }
+    case "test-drive": {
+      await testDriveSlash(ctx, out, arg);
+      break;
+    }
+    case "bench": {
+      await benchSlash(ctx, out, arg);
+      break;
+    }
     case "clear":
       out.write("\x1b[2J\x1b[H");
       break;
+    case "queue":
+    case "steer":
+    case "btw":
+    case "writing-plans":
+    case "subagent-driven-execution":
+    case "self-review":
+    case "recon":
+    case "plan":
+    case "writing-skills":
+    case "autonomous-execution":
+    case "research":
+    case "review":
+    case "code-review":
+      out.write(`/${cmd} is handled directly in the interactive REPL.\n`);
+      break;
+    case "pin":
+      await pinSlash(ctx, out, arg, line);
+      break;
+    case "drop":
+      await dropSlash(ctx, out, arg);
+      break;
+    case "snapshot":
+      await snapshotSlash(ctx, out, arg);
+      break;
+    case "limit":
+    case "token-budget": // alias — same handler, not a leftover duplicate
+      await limitSlash(ctx, out, arg);
+      break;
+    case "audit-receipt":
+      await auditReceiptSlash(ctx, out, arg);
+      break;
+    case "rollback":
+      await rollbackSlash(ctx, out, arg);
+      break;
+    case "logs-view":
+    case "logs": {
+      out.write("\x1b[?25l"); // Hide cursor
+      await runLogsViewer(out);
+      break;
+    }
+    case "scaffold": {
+      await scaffoldSlash(ctx, out, arg);
+      break;
+    }
+    case "port": {
+      await portSlash(ctx, out, arg);
+      break;
+    }
+    case "purge": {
+      await purgeSlash(ctx, out);
+      break;
+    }
+    case "stage-diff": {
+      await stageDiffSlash(ctx, out);
+      break;
+    }
+    case "revert": {
+      await revertSlash(ctx, out, arg);
+      break;
+    }
+    case "add":
+      await addSlash(ctx, out, arg);
+      break;
+    case "hud":
+      await hudSlash(ctx, out, arg);
+      break;
     default: {
-      const near = nearest(cmd, slashNames(), 2);
-      const hint = near ? ` — did you mean /${near}?` : "";
-      out.write(`unknown command: /${cmd}${hint}  (/help lists commands)\n`);
+      const near = suggestCommand(cmd);
+      const hint = near ? `did you mean ${theme.cyan("/" + near)}?  ` : "";
+      out.write(`unknown command: /${cmd}  ${hint}${theme.dim("(/help, or Tab to complete)")}\n`);
     }
   }
   return { exit: false };
 }
 
-// Help derives from the registry, so it can never drift from what the switch
-// above actually accepts (the old hand-written list had lost /quit).
-function printHelp(out: Writable): void {
-  const lines = SLASH_COMMANDS.map((c) => {
-    const names = [c.name, ...(c.aliases ?? [])].map((n) => `/${n}`).join(" | ");
-    const left = c.args ? `${names} ${c.args}` : names;
-    return `${left.padEnd(18)} ${c.desc}`;
-  });
-  out.write(lines.join("\n") + "\n");
+// /help is generated from SLASH_COMMANDS (slash_registry.ts) — a command added
+// to the registry is automatically listed here, Tab-completable, and
+// did-you-mean'd. test/slash_registry.test.ts pins registry ↔ switch sync.
+const SECTION_ICONS: Record<string, string> = {
+  "Session": "☁",
+  "Agent Modes": "⚡",
+  "Steering": "🎯",
+  "Context & Limits": "🧠",
+  "Goals & Workflows": "🗺",
+  "Vault": "📁",
+  "Orchestra": "🎻",
+  "UVT Tools": "🛠",
+  "Media": "🎬",
+  "HUD": "🖥",
+};
+
+const USAGE_COL = 30;
+function printHelp(out: Writable, arg = ""): void {
+  const name = arg.trim().replace(/^\//, "").toLowerCase();
+  if (name) {
+    printCommandHelp(out, name);
+    return;
+  }
+  const BOX = 74;
+  const inner = BOX - 8; // box() padding + a one-column safety margin
+  for (const section of SLASH_SECTIONS) {
+    const cmds = SLASH_COMMANDS.filter((c) => c.section === section && !c.hidden);
+    if (cmds.length === 0) continue;
+    const lines: string[] = ["", theme.iceBlue(SECTION_ICONS[section] ?? "·") + "  " + theme.bold(section), ""];
+    for (const c of cmds) {
+      const plain = `/${c.name}${c.args ? " " + c.args : ""}${c.aliases?.length ? " | /" + c.aliases.join(" | /") : ""}`;
+      const styled =
+        theme.dim("/" + c.name) +
+        (c.args ? " " + c.args : "") +
+        (c.aliases?.length ? theme.dim(" | /" + c.aliases.join(" | /")) : "");
+      const pad = " ".repeat(Math.max(2, USAGE_COL - plain.length));
+      // Clamp to the box interior — an overlong row would spill past the border.
+      lines.push(sliceVisible(styled + pad + c.summary, inner));
+    }
+    lines.push("");
+    out.write(box(lines, { width: BOX }) + "\n\n");
+  }
+  out.write("  " + theme.dim("/help <command> for detail · Tab completes /commands.") + "\n");
+  out.write("  " + theme.dim("/model or /agent with no arg opens the interactive picker.") + "\n\n");
+}
+
+function printCommandHelp(out: Writable, name: string): void {
+  const c = findCommand(name);
+  if (!c) {
+    const near = suggestCommand(name);
+    out.write(`no such command: /${name}${near ? `  — did you mean ${theme.cyan("/" + near)}?` : ""}\n`);
+    return;
+  }
+  out.write("\n  " + theme.bold(`/${c.name}${c.args ? " " + c.args : ""}`) + "\n");
+  out.write("  " + c.summary + "\n");
+  if (c.aliases?.length) out.write("  " + theme.dim("aliases: " + c.aliases.map((a) => "/" + a).join("  /")) + "\n");
+  out.write("  " + theme.dim(`section: ${c.section}`) + "\n\n");
 }
 
 async function doctor(ctx: AppContext, out: Writable, signal?: AbortSignal): Promise<void> {
-  out.write("Aether Code · doctor\n");
+  out.write("Aether Agent · doctor\n");
   out.write(`  api:    ${ctx.cfg.baseUrl}\n`);
   const t = await ctx.tokens.get();
   if (!t) {
@@ -137,18 +418,39 @@ async function doctor(ctx: AppContext, out: Writable, signal?: AbortSignal): Pro
   }
 }
 
-async function showList(ctx: AppContext, out: Writable, kind: Kind, signal?: AbortSignal): Promise<void> {
+/** Launch interactive picker, then show the standard warning + confirm. */
+async function showPicker(
+  ctx: AppContext,
+  out: Writable,
+  kind: Kind,
+  signal?: AbortSignal,
+): Promise<{ model?: string; agent?: string } | null> {
   const cat = await getCatalog(ctx, false, signal);
   const items = byKind(cat, kind);
-  const current =
-    kind === "model" ? ctx.flags.model ?? ctx.cfg.defaultModel ?? cat.default : ctx.flags.agent;
-  out.write(`tier: ${cat.tier}\n`);
-  items.forEach((m, i) => {
-    const mark = m.id === current ? "›" : m.available ? " " : "🔒";
-    const cap = m.monthly_uvt_cap != null ? `  cap ${m.monthly_uvt_cap}` : "";
-    out.write(`${mark} ${String(i + 1).padStart(2)}. ${m.id}\t${m.label}${cap}\n`);
-  });
-  out.write(kind === "model" ? "switch: /model <n|id>\n" : "switch: /agent <n|id>\n");
+
+  const picked = await pickModel(items, out);
+  if (!picked) {
+    // pickModel returned null — either cancelled (Esc) or non-TTY fallback.
+    // If non-TTY, render a flat numbered list so the user can still /model <n>.
+    if (!process.stdin.isTTY) {
+      const current =
+        kind === "model"
+          ? ctx.flags.model ?? ctx.cfg.defaultModel ?? cat.default
+          : ctx.flags.agent;
+      out.write(`tier: ${cat.tier}\n`);
+      items.forEach((m, i) => {
+        const mark = m.id === current ? "›" : m.available ? " " : "🔒";
+        const cap = m.monthly_uvt_cap != null ? `  cap ${m.monthly_uvt_cap}` : "";
+        out.write(`${mark} ${String(i + 1).padStart(2)}. ${m.id}\t${m.label}${cap}\n`);
+      });
+      out.write(kind === "model" ? "switch: /model <n|id>\n" : "switch: /agent <n|id>\n");
+    } else {
+      out.write("kept current session.\n");
+    }
+    return null;
+  }
+
+  return confirmSwitch(ctx, out, picked, kind, cat.tier);
 }
 
 async function select(
@@ -157,30 +459,45 @@ async function select(
   arg: string,
   kind: Kind,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<{ model?: string; agent?: string } | null> {
   if (!arg) {
     out.write(`usage: /${kind === "model" ? "model" : "agent"} <n|id>\n`);
-    return;
+    return null;
   }
   const cat = await getCatalog(ctx, false, signal);
   const item = resolveSelection(byKind(cat, kind), arg);
   if (!item) {
     out.write(`no such ${kind}: ${arg}\n`);
-    return;
+    return null;
   }
+  return confirmSwitch(ctx, out, item, kind, cat.tier);
+}
+
+/** Shared by showPicker/select once a target item is resolved: lock check,
+ * restart warning, and the y/N gate that produces the caller's restart signal. */
+async function confirmSwitch(
+  ctx: AppContext,
+  out: Writable,
+  item: CatalogItem,
+  kind: Kind,
+  tier: string,
+): Promise<{ model?: string; agent?: string } | null> {
   if (!item.available) {
-    out.write(`${item.id} is locked on tier ${cat.tier}\n`);
-    return;
+    out.write(`${item.id} is locked on tier ${tier}\n`);
+    return null;
   }
-  if (kind === "orchestrator") {
-    ctx.flags.agent = item.id;
-    ctx.flags.model = undefined;
-    out.write(`agent → ${item.label}\n`);
-  } else {
-    ctx.flags.model = item.id;
-    ctx.flags.agent = undefined;
-    out.write(`model → ${item.label}\n`);
+  out.write(
+    theme.dim(
+      `⚠ Switching ${kind === "model" ? "model" : "orchestrator"} to ${item.label} will ` +
+        `restart the session and clear context.\n`,
+    ),
+  );
+  const ok = ctx.flags.yes || (await ctx.confirm("Continue? [y/N] "));
+  if (!ok) {
+    out.write("kept current session.\n");
+    return null;
   }
+  return kind === "model" ? { model: item.id } : { agent: item.id };
 }
 
 /** `/effort` — show the dial; `/effort <tier|1-5>` — set it. The tier persists

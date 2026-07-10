@@ -105,3 +105,90 @@ test("decodeSse handles a frame split across chunks", async () => {
   for await (const f of decodeSse(bytes())) frames.push(f);
   assert.deepEqual(frames, [{ type: "delta", text: "split" }]);
 });
+
+test("memory extract frame parses with subtype, text, kind, confidence", () => {
+  const frame = normalizeFrame({
+    type: "memory",
+    subtype: "extract",
+    text: "User prefers TypeScript",
+    kind: "preference",
+    confidence: 0.87,
+  });
+  assert.equal(frame?.type, "memory");
+  if (frame?.type === "memory") {
+    assert.equal(frame.subtype, "extract");
+    assert.equal(frame.text, "User prefers TypeScript");
+    assert.equal(frame.kind, "preference");
+    assert.equal(frame.confidence, 0.87);
+  }
+});
+
+test("memory skill frame parses with subtype, skill, confidence", () => {
+  const frame = normalizeFrame({
+    type: "memory",
+    subtype: "skill",
+    text: "User runs pytest -q --tb=short",
+    skill: "test_runner_preference",
+    confidence: 0.92,
+  });
+  assert.equal(frame?.type, "memory");
+  if (frame?.type === "memory") {
+    assert.equal(frame.subtype, "skill");
+    assert.equal(frame.skill, "test_runner_preference");
+    assert.equal(frame.confidence, 0.92);
+    assert.equal(frame.text, "User runs pytest -q --tb=short");
+  }
+});
+
+test("memory frame with unknown subtype is still parsed (forward-compat)", () => {
+  const frame = normalizeFrame({
+    type: "memory",
+    subtype: "future_thing",
+    text: "some data",
+  });
+  assert.equal(frame?.type, "memory");
+  if (frame?.type === "memory") {
+    assert.equal(frame.subtype, "future_thing");
+    assert.equal(frame.text, "some data");
+  }
+});
+
+test("memory compacting frame parses with beforeTokens, afterTokens, freedPct", () => {
+  const frame = normalizeFrame({
+    type: "memory",
+    subtype: "compacting",
+    before_tokens: 1165000000,
+    after_tokens: 932000000,
+    freed_pct: 20,
+  });
+  assert.equal(frame?.type, "memory");
+  if (frame?.type === "memory") {
+    assert.equal(frame.subtype, "compacting");
+    assert.equal(frame.beforeTokens, 1165000000);
+    assert.equal(frame.afterTokens, 932000000);
+    assert.equal(frame.freedPct, 20);
+  }
+});
+
+test("behavioral memory frame parses with skill fields", () => {
+  const frame = normalizeFrame({
+    type: "memory",
+    subtype: "behavioral",
+    skill_name: "writing-plans",
+    description: "Write detailed implementation plans",
+    triggers: ["invoke writing-plans", "write a plan", "plan mode"],
+    action: "Load the plan skill and write a detailed plan.",
+    category: "software-development",
+    confidence: 0.88,
+  });
+  assert.equal(frame?.type, "memory");
+  if (frame?.type === "memory") {
+    assert.equal(frame.subtype, "behavioral");
+    assert.equal(frame.skill_name, "writing-plans");
+    assert.equal(frame.description, "Write detailed implementation plans");
+    assert.deepEqual(frame.triggers, ["invoke writing-plans", "write a plan", "plan mode"]);
+    assert.equal(frame.action, "Load the plan skill and write a detailed plan.");
+    assert.equal(frame.category, "software-development");
+    assert.equal(frame.confidence, 0.88);
+  }
+});

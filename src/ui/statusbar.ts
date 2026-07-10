@@ -18,8 +18,16 @@ const PHASES: Record<string, [string, string]> = {
   anchoring: ["anchoring context", KAOMOJI.logging],
   scanning: ["scanning repo", KAOMOJI.scanning],
   reasoning: REASONING,
+  // grounding/paging reuse faces from the shared kaomoji table (error/idle
+  // are close enough in spirit) so there's one source of truth to edit.
   grounding: ["grounding", KAOMOJI.error],
   paging: ["paging", KAOMOJI.idle],
+  // These three states have no equivalent in kaomoji.ts (agent-state faces
+  // only cover active/scanning/logging/idle/error) — origin/main's QOPC
+  // memory bridge introduced them, so they keep their own literal faces.
+  "memory-extract": ["extracting memory", "(◕‿◕)✎"],
+  "memory-skill": ["learning skill", "🧠✨"],
+  compacting: ["compacting context", "(；・∀・)📦"],
 };
 
 export function humanTokens(n: number): string {

@@ -1,18 +1,21 @@
-// Shared types for the Aether Code CLI.
+// Shared types for the Aether Agent CLI.
 // The CLI is a thin front door: it never enforces UVT or signs anything.
 // Aether's servers do enforcement and signing. The client only
 // builds requests, streams frames, renders, and applies edits locally.
 
 export type PermissionMode = "ask" | "auto" | "skip";
 
+/** Brain selection: 'auto' = cloud when signed in, local Ollama when not. */
+export type BackendPref = "auto" | "local" | "cloud";
+
 export interface AetherConfig {
   /** the Aether API base URL. The only host the CLI talks to. */
   baseUrl: string;
   /** Default model id when --model is not passed (server smart-routes if empty). */
   defaultModel: string;
-  /** Edit/command gating. Mirrors Aether Code desktop "skip-perms" setting. */
+  /** Edit/command gating. Mirrors Aether Agent desktop "skip-perms" setting. */
   permissionMode: PermissionMode;
-  /** Auto-apply streamed edits without per-edit prompt. Mirrors Aether Code. */
+  /** Auto-apply streamed edits without per-edit prompt. Mirrors Aether Agent. */
   autoApply: boolean;
   /** Anonymous usage telemetry opt-in. */
   telemetry: boolean;
@@ -20,6 +23,9 @@ export interface AetherConfig {
    * Shared with the AetherCloud backend: rides TaskCommand.effort into the
    * cloud brain on every `aether code` run when --effort is not passed. */
   defaultEffort: string;
+  /** Which brain runs a turn. 'auto' is local-first: cloud when authed, else
+   * local Ollama. Overridden per-process by the AETHER_BACKEND env var. */
+  backend: BackendPref;
 }
 
 // Wire DTO from GET /models (snake_case mirrors the server catalog). A single

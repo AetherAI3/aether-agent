@@ -3,12 +3,13 @@
 // `aether config set <key> <value>` — set + persist one value
 
 import type { AppContext } from "../core/context.js";
-import type { AetherConfig, PermissionMode } from "../types.js";
+import type { AetherConfig, BackendPref, PermissionMode } from "../types.js";
 import { saveConfig } from "../core/config.js";
 import { EFFORT_TIERS, normalizeEffort } from "../ui/effort.js";
 
 const BOOL_KEYS = new Set<keyof AetherConfig>(["autoApply", "telemetry"]);
 const PERMISSION_MODES: PermissionMode[] = ["ask", "auto", "skip"];
+const BACKEND_PREFS: BackendPref[] = ["auto", "local", "cloud"];
 
 export async function cmdConfig(ctx: AppContext, argv: string[]): Promise<number> {
   const sub = argv[0] ?? "show";
@@ -48,6 +49,12 @@ export async function cmdConfig(ctx: AppContext, argv: string[]): Promise<number
         return 2;
       }
       ctx.cfg.defaultEffort = tier;
+    } else if (key === "backend") {
+      if (!BACKEND_PREFS.includes(value as BackendPref)) {
+        process.stderr.write(`backend must be one of: ${BACKEND_PREFS.join(", ")}\n`);
+        return 2;
+      }
+      ctx.cfg.backend = value as BackendPref;
     } else if (BOOL_KEYS.has(key)) {
       (ctx.cfg[key] as boolean) = value === "true" || value === "1";
     } else {

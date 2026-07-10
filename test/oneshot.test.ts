@@ -37,6 +37,10 @@ test("one-shot turn exits 0 promptly with the response on stdout", async () => {
         AETHER_CONFIG_DIR: cfgDir,
         AETHER_NO_ANIM: "1",
         NO_COLOR: "1",
+        // resolveBackend is local-first when unauthenticated ("auto" picks
+        // Ollama unless a session is signed in — see chat.ts); force the
+        // cloud leg so this fixture server is actually exercised.
+        AETHER_BACKEND: "cloud",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

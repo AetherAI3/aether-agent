@@ -2,14 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ThinkingPulse, thinkingFrame } from "../src/ui/thinking.js";
 
-class Sink {
-  data = "";
-  write(s: string): boolean {
-    this.data += s;
-    return true;
-  }
-}
-
 test("thinkingFrame cycles dots and turns honest when stalled", () => {
   assert.equal(thinkingFrame(0, false), "(⌨_⌨) thinking·  ");
   assert.equal(thinkingFrame(1, false), "(⌨_⌨) thinking·· ");
@@ -18,39 +10,68 @@ test("thinkingFrame cycles dots and turns honest when stalled", () => {
   assert.match(thinkingFrame(0, true), /still waiting · Ctrl\+C cancels the turn/);
 });
 
+test("start paints immediately; stop clears the line exactly once", () => {
+  let out = "";
+  const p = new ThinkingPulse({ write: (s) => (out += s), intervalMs: 60_000 }); // interval never fires in-test
+  p.start();
+  assert.ok(out.includes("thinking"), "first frame painted synchronously");
+  const before = out;
+  p.stop();
+  assert.equal(out, before + "\r\x1b[2K", "stop clears the pinned line");
+  const after = out;
+  p.stop(); // idempotent
+  assert.equal(out, after);
+});
+
+test("start is idempotent while running", () => {
+  let frames = 0;
+  const p = new ThinkingPulse({
+    write: () => {
+      frames += 1;
+    },
+    intervalMs: 60_000,
+  });
+  p.start();
+  p.start();
+  assert.equal(frames, 1);
+  p.stop();
+});
+
+test("stop before any paint writes nothing", () => {
+  let out = "";
+  const p = new ThinkingPulse({ write: (s) => (out += s), intervalMs: 60_000 });
+  p.stop();
+  assert.equal(out, "");
+});
+
+test("frame gains the stall suffix after stallAfterMs of silence", async () => {
+  let out = "";
+  // 5ms cadence, 20ms stall threshold — fast enough for a real-time test.
+  const p = new ThinkingPulse({ write: (s) => (out += s), intervalMs: 5, stallAfterMs: 20 });
+  p.start();
+  await new Promise((r) => setTimeout(r, 40));
+  p.stop();
+  assert.match(out, /still waiting · Ctrl\+C cancels the turn/);
+});
+
 test("disabled pulse writes zero bytes, ever", () => {
-  const sink = new Sink();
-  const pulse = new ThinkingPulse({ enabled: false, err: sink });
-  pulse.start();
-  pulse.stop();
-  assert.equal(sink.data, "");
-});
-
-test("enabled pulse paints immediately and clears on stop", () => {
-  const sink = new Sink();
-  const pulse = new ThinkingPulse({ enabled: true, err: sink, intervalMs: 10_000 });
-  pulse.start();
-  assert.match(sink.data, /thinking/);
-  pulse.stop();
-  assert.ok(sink.data.endsWith("\r\x1b[2K"), "stop must clear the pinned line");
-  const len = sink.data.length;
-  pulse.stop(); // idempotent
-  assert.equal(sink.data.length, len);
-});
-
-test("a pulse that never painted clears nothing on stop", () => {
-  const sink = new Sink();
-  const pulse = new ThinkingPulse({ enabled: true, err: sink, intervalMs: 10_000 });
-  pulse.stop();
-  assert.equal(sink.data, "");
+  let out = "";
+  const p = new ThinkingPulse({ write: (s) => (out += s), enabled: false });
+  p.start();
+  p.stop();
+  assert.equal(out, "");
 });
 
 test("onPaint fires after every repaint (lets the REPL re-sync its input line)", () => {
-  const sink = new Sink();
+  let out = "";
   let paints = 0;
-  const pulse = new ThinkingPulse({ enabled: true, err: sink, intervalMs: 10_000, onPaint: () => paints++ });
-  pulse.start();
+  const p = new ThinkingPulse({
+    write: (s) => (out += s),
+    intervalMs: 60_000,
+    onPaint: () => paints++,
+  });
+  p.start();
   assert.equal(paints, 1);
-  pulse.stop();
+  p.stop();
   assert.equal(paints, 1, "stop() must not itself trigger a paint");
 });

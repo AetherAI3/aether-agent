@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,7 @@ import {
   encodeCommand,
   parseEventLine,
   PROTOCOL_VERSION,
+  TOOLS,
   type BrainEvent,
 } from "../src/core/brain_protocol.js";
 import { ToolExecutor, capHeadTail } from "../src/core/tool_executor.js";
@@ -176,6 +177,7 @@ test("repo_search caps matches at 40 hits", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
 test("capHeadTail keeps the END (pytest summary) when output is over the cap", () => {
   // simulate pytest: tracebacks first, the count summary LAST
   const big = "TRACEBACK\n".repeat(2000) + "\n23 failed, 1 passed in 1.2s";
@@ -239,6 +241,31 @@ test("hostLoop executes a tool_call and feeds the result back", async () => {
     assert.equal(brain.toolResults[0]?.exitCode, 0);
     assert.equal(readFileSync(join(dir, "x.txt"), "utf8"), "hi");
     assert.deepEqual(seen, ["stage", "tool_call", "done"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("hostLoop gate denies a tool_call: not executed, brain gets a refusal result", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "aether-gate-"));
+  try {
+    const brain = new FakeBrain(); // emits write_file id=c1 then done on result
+    const exec = new ToolExecutor(dir);
+    // Deny every gated call (simulates `ask` mode on a non-TTY → fail closed).
+    const gate = async (): Promise<boolean> => false;
+    const code = await hostLoop(
+      brain,
+      exec,
+      () => {},
+      { type: "task", text: "write x.txt", cwd: dir, poolGb: 5 },
+      undefined,
+      gate,
+    );
+    assert.equal(code, 0); // the run still completes; the call was just refused
+    assert.equal(brain.toolResults.length, 1);
+    assert.equal(brain.toolResults[0]?.exitCode, 1);
+    assert.match(brain.toolResults[0]?.output ?? "", /denied/);
+    assert.equal(existsSync(join(dir, "x.txt")), false); // never written
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -316,15 +343,18 @@ test("path-guard rejects traversal, absolute, and symlink escapes", () => {
 
 // --- probe 3: shell hardening (non-zero exit + stderr reach the brain) ------
 test("run_shell surfaces a non-zero exit code and captures stderr", (t) => {
-  const ex = new ToolExecutor(process.cwd());
-  const command =
-    process.platform === "win32" ? 'cmd.exe /d /s /c "echo boom 1>&2 & exit /b 3"' : "printf boom >&2; exit 3";
-  const r = ex.execute("run_shell", { command });
-  if (r.output.includes("[spawn error EPERM:")) {
-    t.skip("sandbox blocks shell process spawn");
+  // `node -e` (not a platform-specific shell one-liner) so this passes
+  // identically on Windows and POSIX without a win32/posix branch, and runs
+  // in an isolated tmpdir so it can't leave stray output under process.cwd().
+  const ex = new ToolExecutor(mkdtempSync(join(tmpdir(), "aether-sh-")));
+  const r = ex.execute("run_shell", {
+    command: `node -e "process.stderr.write('boom'); process.exit(3)"`,
+  });
+  if (/spawn error EPERM/.test(r.output)) {
+    t.skip("sandbox blocks child process spawning");
     return;
   }
-  assert.equal(r.exitCode, 3, r.output);
+  assert.equal(r.exitCode, 3);
   assert.match(r.output, /^\[exit 3\]/);
   assert.match(r.output, /boom/);
 });
@@ -333,6 +363,31 @@ test("run_shell surfaces a non-zero exit code and captures stderr", (t) => {
 test("PROTOCOL_VERSION matches the shared fixture", () => {
   const fx = JSON.parse(readFileSync(FIXTURE, "utf8"));
   assert.equal(fx.protocol_version, PROTOCOL_VERSION);
+});
+
+test("PROTOCOL_VERSION is 3 (web tools landed; mirror of aether_agent.protocol)", () => {
+  assert.equal(PROTOCOL_VERSION, 3);
+});
+
+test("TOOLS is the canonical 8-tool set including the web tools", () => {
+  assert.deepEqual(
+    [...TOOLS],
+    [
+      "read_file",
+      "write_file",
+      "run_shell",
+      "run_tests",
+      "repo_search",
+      "git_commit",
+      "web_search",
+      "web_fetch",
+    ],
+  );
+});
+
+test("fixture tool list mirrors the canonical TOOLS array exactly", () => {
+  const fx = JSON.parse(readFileSync(FIXTURE, "utf8"));
+  assert.deepEqual(fx.tools, [...TOOLS], "fixture tools drift from brain_protocol.TOOLS");
 });
 
 test("every fixture event decodes to its declared type", () => {
@@ -396,8 +451,8 @@ test("--swarm > 1 is refused with exit 2 and never spawns a brain", async () => 
   try {
     const code = await cmdCode(ctx, "fix all the things", { local: true, pool: 5, quiet: true, swarm: 4 });
     assert.equal(code, 2);
-    assert.match(captured, /--swarm is gated/);
-    assert.match(captured, /SWARM_PLAN\.md/);
+    assert.match(captured, /--swarm is not enabled/);
+    assert.match(captured, /emission fraying/);
   } finally {
     process.stderr.write = orig;
   }

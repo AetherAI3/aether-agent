@@ -1,15 +1,8 @@
-// Startup splash — the Aether cloud (left) + system status column (right),
-// status vertically centered against the art.
+// Startup splash — the AETHER brand (cloud + gradient wordmark) above a compact
+// system-status column. The brand is the single source of truth in logo.ts.
 
 import { theme } from "./theme.js";
-
-const CLOUD = [
-  "   ▄▄███▄▄   ",
-  "  ▄█████████▄ ",
-  "  ███▄███▄███ ",
-  "  ▀████▄████▀ ",
-  "    ▀ ▀ ▀ ▀   ",
-];
+import { composeBrand } from "./logo.js";
 
 export interface SplashInfo {
   version: string;
@@ -17,30 +10,37 @@ export interface SplashInfo {
   effort: string; // effort level
 }
 
+/** Rotating power-feature tips — one shows per launch. Exported for tests. */
+export const TIPS: readonly string[] = [
+  "Tab completes any slash command",
+  "/steer redirects the agent mid-turn",
+  "/queue lines up the next task while one runs",
+  "Ctrl+→/← jumps words · Ctrl+L clears the screen",
+  "↑ recalls history across sessions",
+  "Ctrl+C once aborts the turn — twice quits",
+];
+
+/** The tip line for slot `i` (wraps). Deterministic — caller picks the slot. */
+export function tipLine(i: number): string {
+  const tip = TIPS[((i % TIPS.length) + TIPS.length) % TIPS.length]!;
+  return theme.dim(`tip: ${tip}`);
+}
+
 /** Plain status lines (no art) — exposed for testing the content. Every
- * slash token shown here must exist in the command registry (pinned by test):
- * the splash advertises only commands that actually run. /effort earned its
- * place back when it became a real command (the effort dial). */
-export function statusLines(info: SplashInfo): string[] {
+ * slash token shown here must exist in the command registry (pinned by
+ * test/ui.test.ts): the splash advertises only commands that actually run.
+ * /effort earned its place back once it became a real command (the effort
+ * dial) — see the slash registry. */
+export function statusLines(info: SplashInfo, tipSlot?: number): string[] {
   return [
-    theme.bold(theme.cyan("AETHER CODE")),
     theme.dim(`v${info.version}`),
-    `[ ${theme.cyan("/model")} - ${info.model} ]  [ ${theme.cyan("/effort")} ${info.effort} ]`,
-    theme.dim("/help for commands · need to fix aether code? run /doctor"),
+    `[ ${theme.cyan("/model")} ${info.model} ]  [ ${theme.cyan("/effort")} ${info.effort} ]`,
+    theme.dim("/help for commands · /doctor if something's off"),
+    tipLine(tipSlot ?? Math.floor(Math.random() * TIPS.length)),
   ];
 }
 
-/** The full splash: cloud art beside the status column. */
-export function renderSplash(info: SplashInfo): string {
-  const status = statusLines(info);
-  const offset = Math.max(0, Math.floor((CLOUD.length - status.length) / 2));
-  const gap = "  ";
-  const out: string[] = [];
-  for (let i = 0; i < CLOUD.length; i++) {
-    const art = theme.iceBlue(CLOUD[i] ?? "");
-    const si = i - offset;
-    const right = si >= 0 && si < status.length ? status[si] : "";
-    out.push(`${art}${gap}${right ?? ""}`.replace(/\s+$/, ""));
-  }
-  return out.join("\n");
+/** The full splash: the brand banner, then the status column beneath it. */
+export function renderSplash(info: SplashInfo, tipSlot?: number): string {
+  return [...composeBrand(), "", ...statusLines(info, tipSlot)].join("\n");
 }

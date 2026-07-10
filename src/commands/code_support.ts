@@ -12,7 +12,7 @@ import {
   isGitRepo,
   repoRoot,
   slugify,
-  createWorktree,
+  createGatedWorktree,
   linkGhAccount,
   type Runner,
 } from "../core/worktree.js";
@@ -139,7 +139,7 @@ export async function prepareWorkspace(
     }
     if (isGitRepo(run, root)) {
       io.note("Spinning up an isolated worktree so your branch stays untouched…");
-      const wt = createWorktree(run, root, slugify(task));
+      const wt = createGatedWorktree(run, root, slugify(task));
       if (wt.ok && wt.path) {
         io.note(`⟢ ${wt.branch} ready  ·  ${wt.path}`);
         return { cwd: wt.path, proceed: true };

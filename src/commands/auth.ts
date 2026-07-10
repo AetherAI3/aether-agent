@@ -2,10 +2,16 @@
 // One credential authenticates the CLI, desktop, and web against the Aether
 // account. Logging in mints/pastes an API token (or browser OAuth via the
 // platform); `status` shows who you are; `token` prints it for scripts.
+//
+// Bare `aether auth` (no subcommand) shows a branded status panel with a
+// clickable login link.
 
 import type { AppContext } from "../core/context.js";
 import { cmdLogin, cmdLogout, type LoginOpts } from "./login.js";
 import { MODELS_PATH, REFRESH_PATH } from "../core/transport.js";
+import { box, titledBox, hyperlink, orange, green, darkBlue, brightWhite, lightBlue } from "../ui/box.js";
+import { CLOUD } from "../ui/logo.js";
+import { theme } from "../ui/theme.js";
 
 /** A long-lived API token (PAT) starts with `aek_`; otherwise it's a session token. */
 export function isApiToken(token: string | null | undefined): boolean {
@@ -13,22 +19,130 @@ export function isApiToken(token: string | null | undefined): boolean {
 }
 
 function mask(t: string): string {
-  return t.length <= 12 ? "•".repeat(Math.max(4, t.length)) : `${t.slice(0, 8)}…${t.slice(-4)}`;
+  return t.length <= 12 ? "\u2022".repeat(Math.max(4, t.length)) : `${t.slice(0, 8)}\u2026${t.slice(-4)}`;
 }
+
+// ── Shared cloud glyph (centered above the box) ──
+
+const BOX_W = 64;
+const CLOUD_W = CLOUD[1]!.length; // widest row
+
+function centeredCloud(): string {
+  const pad = Math.floor((BOX_W - CLOUD_W) / 2);
+  const s = " ".repeat(Math.max(0, pad));
+  return CLOUD.map((l) => s + theme.iceBlue(l)).join("\n");
+}
+
+// ── Branded status panel ──
+
+async function renderAuthBox(ctx: AppContext): Promise<string> {
+  const t = await ctx.tokens.get();
+  if (!t) return renderLoggedOut();
+
+  // Fetch tier info for display
+  let tier = "";
+  let defaultModel = "";
+  try {
+    const cat = await ctx.api.getJson<{ tier?: string; default?: string }>(MODELS_PATH);
+    tier = cat.tier ?? "";
+    defaultModel = cat.default ?? "";
+  } catch {
+    // Server unreachable — still show what we know locally.
+  }
+
+  const kind = isApiToken(t) ? "API key" : "session token";
+  const lines: string[] = [
+    "",
+    theme.iceBlue("\u2601") + "  " + theme.bold("Aether Agent \u2014 Authenticated"),
+    "",
+    "  " + theme.dim("Account:") + "  " + theme.bold("(fetching\u2026)"),
+    "  " + theme.dim("Token:") + "    " + theme.bold(mask(t)) + "  " + theme.dim(`(${kind})`),
+    "  " + theme.dim("API:") + "      " + ctx.cfg.baseUrl.replace("https://", ""),
+  ];
+
+  if (tier) {
+    lines.push("  " + theme.dim("Tier:") + "     " + (tier === "free" ? theme.dim(tier) : theme.cyan(tier)));
+  }
+  if (defaultModel) {
+    lines.push("  " + theme.dim("Default:") + "  " + defaultModel);
+  }
+
+  lines.push(
+    "",
+    "  " + theme.dim("Commands:"),
+    "  " + theme.dim("aether auth status") + "        Show this screen",
+    "  " + theme.dim("aether auth token") + "         Print token (CI/scripts)",
+    "  " + theme.dim("aether auth refresh") + "       Refresh session token",
+    "  " + theme.dim("aether auth logout") + "        Sign out",
+    "",
+  );
+
+  return [centeredCloud(), "", titledBox(lines, "Authenticated", { width: BOX_W })].join("\n");
+}
+
+// ── Logged-out welcome panel ──
+
+const PLATFORM_URL = process.env["AETHER_LOGIN_URL"] ?? "https://aethersystems.net/platform/device";
+
+function renderLoggedOut(): string {
+  // Per-model brand colors
+  const fleet = [
+    orange("Claude"),
+    green("GPT"),
+    darkBlue("DeepSeek"),
+    brightWhite("Kimi"),
+    lightBlue("Gemma"),
+    theme.dim("& more"),
+  ].join(" \u00b7 ");
+
+  const orch = theme.dim("Aether orchestrators: ") +
+    theme.cyan("Neo") + theme.dim(", ") +
+    theme.cyan("Kronus") + theme.dim(", & more");
+
+  const lines = [
+    "",
+    theme.iceBlue("\u2601") + "  " + theme.bold("Welcome to Aether Agent"),
+    "",
+    theme.dim("Sign in to unlock the full model fleet:"),
+    "  " + fleet,
+    "  " + orch,
+    "",
+    "  " + theme.bold(theme.cyan("aether auth login")),
+    "",
+    theme.dim("Opens ") + hyperlink(PLATFORM_URL, theme.cyan("aethersystems.net/platform")),
+    theme.dim("in your browser \u2192 click Approve \u2192 done."),
+    "",
+    "  " + theme.dim("No browser? Head to:"),
+    "  " + hyperlink(PLATFORM_URL, theme.cyan("aethersystems.net/platform/device")),
+    "",
+    theme.dim("Quick:"),
+    theme.dim("  aether auth login              Sign in via browser"),
+    theme.dim("  aether auth login --no-browser      Print URL instead"),
+    theme.dim("  aether auth --help             All auth commands"),
+    "",
+  ];
+
+  return [centeredCloud(), "", box(lines, { width: BOX_W })].join("\n");
+}
+
+// ── Command dispatch ──
 
 export async function cmdAuth(
   ctx: AppContext,
   argv: string[],
   loginOpts: LoginOpts,
 ): Promise<number> {
-  const sub = (argv[0] ?? "status").toLowerCase();
+  const sub = (argv[0] ?? "").toLowerCase();
   switch (sub) {
     case "login":
       return cmdLogin(ctx, loginOpts);
     case "logout":
       return cmdLogout(ctx);
-    case "status":
-      return authStatus(ctx);
+    case "status": {
+      const panel = await renderAuthBox(ctx);
+      process.stdout.write(panel + "\n");
+      return 0;
+    }
     case "token":
       return authToken(ctx);
     case "refresh":
@@ -36,10 +150,17 @@ export async function cmdAuth(
     case "help":
       printAuthHelp();
       return 0;
-    default:
-      process.stderr.write(`unknown subcommand: aether auth ${sub}\n`);
+    default: {
+      // Bare `aether auth` — show the branded panel.
+      if (sub === "") {
+        const panel = await renderAuthBox(ctx);
+        process.stdout.write("\n" + panel + "\n\n");
+        return 0;
+      }
+      process.stderr.write(`unknown: aether auth ${sub}\n`);
       printAuthHelp();
       return 2;
+    }
   }
 }
 
@@ -56,26 +177,9 @@ function printAuthHelp(): void {
   );
 }
 
-async function authStatus(ctx: AppContext): Promise<number> {
-  const t = await ctx.tokens.get();
-  if (!t) {
-    process.stdout.write("Not logged in.\n  Run: aether auth login\n");
-    return 1;
-  }
-  const kind = isApiToken(t) ? "API token" : "session token";
-  process.stdout.write(`aethersystems.net\n  ✓ Logged in (${kind})  ${mask(t)}\n  api: ${ctx.cfg.baseUrl}\n`);
-  try {
-    const cat = await ctx.api.getJson<{ tier?: string; default?: string }>(MODELS_PATH);
-    if (cat.tier) {
-      process.stdout.write(`  tier: ${cat.tier}${cat.default ? `  default: ${cat.default}` : ""}\n`);
-    }
-    return 0;
-  } catch {
-    process.stderr.write("  ⚠ token not accepted by the server — run: aether auth login\n");
-    return 1;
-  }
-}
-
+// NOTE: HEAD had a plain-text authStatus() here; origin/main's `status` case
+// now renders the branded renderAuthBox() panel instead (see cmdAuth above),
+// which supersedes it — dropped to avoid dead code.
 async function authToken(ctx: AppContext): Promise<number> {
   const t = await ctx.tokens.get();
   if (!t) {
@@ -106,7 +210,7 @@ async function authRefresh(ctx: AppContext): Promise<number> {
     process.stderr.write("✗ Refresh failed — try: aether auth login\n");
     return 1;
   } catch (err) {
-    process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`\u2717 ${err instanceof Error ? err.message : String(err)}\n`);
     return 1;
   }
 }

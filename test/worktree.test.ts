@@ -8,9 +8,12 @@ import {
   isGitRepo,
   repoRoot,
   slugify,
-  createWorktree,
+  createGatedWorktree,
   linkGhAccount,
   readGhLink,
+  worktreeBranch,
+  worktreeAddArgs,
+  mergeHint,
   type Runner,
   type RunResult,
 } from "../src/core/worktree.js";
@@ -77,12 +80,12 @@ test("slugify is branch-safe and bounded", () => {
   assert.equal(slugify("a".repeat(80)).length <= 32, true);
 });
 
-// --- createWorktree --------------------------------------------------------
-test("createWorktree runs `git worktree add` on an aether/<slug> branch", () => {
+// --- createGatedWorktree (the gh-gated repo-confirm flow) ------------------
+test("createGatedWorktree runs `git worktree add` on an aether/<slug> branch", () => {
   const base = mkdtempSync(join(tmpdir(), "aether-wt-"));
   try {
     const run = runnerFrom(() => ok());
-    const res = createWorktree(run, "/home/u/myrepo", "fix-tests", base);
+    const res = createGatedWorktree(run, "/home/u/myrepo", "fix-tests", base);
     assert.equal(res.ok, true);
     assert.equal(res.branch, "aether/fix-tests");
     assert.equal(res.path, join(base, "myrepo-fix-tests"));
@@ -95,7 +98,7 @@ test("createWorktree runs `git worktree add` on an aether/<slug> branch", () => 
   }
 });
 
-test("createWorktree retries with a numeric suffix on collision", () => {
+test("createGatedWorktree retries with a numeric suffix on collision", () => {
   const base = mkdtempSync(join(tmpdir(), "aether-wt-"));
   try {
     let first = true;
@@ -106,7 +109,7 @@ test("createWorktree retries with a numeric suffix on collision", () => {
       }
       return ok();
     });
-    const res = createWorktree(run, "/home/u/myrepo", "dup", base);
+    const res = createGatedWorktree(run, "/home/u/myrepo", "dup", base);
     assert.equal(res.ok, true);
     assert.equal(res.branch, "aether/dup-2");
   } finally {
@@ -146,4 +149,36 @@ test("readGhLink returns null when there is no record", () => {
     else process.env["AETHER_CONFIG_DIR"] = prev;
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// --- flow 1: flag-driven worktree helpers (--worktree / --repo) ------------
+test("slugify makes a branch-safe token", () => {
+  assert.equal(slugify("Fix the failing tests!"), "fix-the-failing-tests");
+  assert.equal(slugify("  multiple   spaces  "), "multiple-spaces");
+  assert.equal(slugify(""), "task");
+  assert.equal(slugify("$$$"), "task");
+});
+
+test("slugify caps length and trims trailing dashes", () => {
+  const s = slugify("a".repeat(50));
+  assert.ok(s.length <= 32);
+  assert.doesNotMatch(s, /-$/);
+});
+
+test("worktreeBranch composes aether/<slug>-<id>", () => {
+  assert.equal(worktreeBranch("Add login page", "abc123"), "aether/add-login-page-abc123");
+});
+
+test("worktreeAddArgs builds the git invocation", () => {
+  assert.deepEqual(
+    worktreeAddArgs("/repo", "aether/x-1", "/wt/aether-x-1"),
+    ["-C", "/repo", "worktree", "add", "-b", "aether/x-1", "/wt/aether-x-1"],
+  );
+});
+
+test("mergeHint names the branch, merge, and discard paths", () => {
+  const hint = mergeHint({ dir: "/wt/x", branch: "aether/x-1", repoRoot: "/repo" });
+  assert.match(hint, /aether\/x-1/);
+  assert.match(hint, /merge aether\/x-1/);
+  assert.match(hint, /worktree remove \/wt\/x/);
 });

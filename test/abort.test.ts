@@ -42,8 +42,18 @@ test("the abort signal reaches fetch on the streaming leg", async () => {
     const api = new ApiClient("https://example.test", tokens);
     const ac = new AbortController();
     // content-type json → StreamUnavailableError, but the signal was passed first.
+    // Note: stream() wires the caller's signal to its OWN internal `net`
+    // AbortController rather than passing `ac.signal` straight through to
+    // fetch — timeout and user-abort are raced as two independent promises
+    // (see transport.ts's `raceAgainst`) so a timeout can never be mistaken
+    // for the user's own Ctrl+C. So we assert the behavioral guarantee
+    // (aborting the caller's controller aborts whatever signal fetch got),
+    // not reference identity of the AbortSignal object — see
+    // transport_stream.test.ts for full coverage of that abort-racing design.
     await assert.rejects(api.stream(CHAT_STREAM_PATH, {}, ac.signal));
-    assert.equal(capture.signal, ac.signal);
+    assert.ok(capture.signal, "fetch should have received a signal");
+    ac.abort();
+    assert.equal(capture.signal?.aborted, true);
   } finally {
     globalThis.fetch = real;
   }

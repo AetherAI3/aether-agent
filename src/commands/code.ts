@@ -1,4 +1,4 @@
-// `aether code [--local] "<task>"` — the hybrid coding terminal. One host loop
+// `aether agent [--local] "<task>"` — the hybrid coding terminal. One host loop
 // drives a pluggable brain: cloud (Aether API, UVT-metered) by default, or the
 // local Python/Ollama brain with --local. Same host, same render, same tools,
 // same commands — only the brain transport differs (specs/aethercode_bridge.md).
@@ -18,10 +18,13 @@ import { stdioPrompt } from "../ui/interact.js";
 import { defaultRunner } from "../core/worktree.js";
 import { HostRenderer } from "../ui/host_render.js";
 import { SessionLog } from "../core/session_log.js";
+import { finalVerify, type BrainDone } from "../core/verify_gate.js";
 import { StatusRenderer } from "../ui/status_renderer.js";
 import { AnimationController } from "../ui/animations.js";
 import { HeartbeatIndicator } from "../ui/heartbeat.js";
 import { LocalAgentSource, bindEventSource } from "../core/agent_events.js";
+import { phaseVerb } from "../ui/phase_verb.js";
+import { lineDiff, renderDiff } from "../ui/diff_render.js";
 import { TaskLedger } from "../ui/ledger.js";
 import {
   CODE_STAGES,
@@ -32,8 +35,17 @@ import {
   stageGate,
   writeDiffLines,
 } from "./code_support.js";
+import { loadSession, replayLines } from "../core/session_resume.js";
+import { resumeHint } from "./resume.js";
+import { createWorktree, mergeHint, type Worktree } from "../core/worktree.js";
+import { parseRepoSpec, ensureLocalClone, prCreateHint, type RepoSpec } from "../core/repo.js";
+import { chooseBackend } from "../core/backend.js";
+import { decideGate } from "../core/autonomy.js";
 
 export { prepareWorkspace } from "./code_support.js";
+
+/** Approve (or refuse) one brain-emitted tool call before the host executes it. */
+export type ToolGate = (call: { name: string; args: Record<string, unknown> }) => Promise<boolean>;
 
 export interface CodeOpts {
   /** Use the local Python/Ollama brain instead of the cloud API. */
@@ -52,26 +64,75 @@ export interface CodeOpts {
   noLog?: boolean;
   /** Number of swarm workers (gated — see the swarm guard below). */
   swarm?: number;
+  /** Resume a prior local session id: replay its transcript before this run. */
+  resume?: string;
+  /** Isolate the run in a fresh git worktree on an auto-named branch. */
+  worktree?: boolean;
+  /** Work on a GitHub repo (owner/name): clone via gh/git, then worktree it. */
+  repo?: string;
 }
 
 const nowIso = (): string => new Date().toISOString();
 
+/** Map a BrainEvent onto the pinned status line (verb + streamed tokens).
+ * Exported so the wiring is unit-testable without a real brain. */
+export function applyEventToStatus(
+  sr: { setVerb(v: string, k: string): void; setStreamed(n: number): void },
+  ev: BrainEvent,
+  tick: number,
+): void {
+  if (ev.type === "stage") {
+    const v = phaseVerb(ev.name, tick);
+    sr.setVerb(v.verb, v.kao);
+  } else if (ev.type === "telemetry") {
+    sr.setStreamed(ev.tokens);
+  }
+}
+
+/** Colorized diff preview for a write_file edit, or null if not an edit.
+ * Reads through ToolExecutor.snapshot() so preview reads share the same
+ * workspace guard as the eventual write. */
+export function editPreview(exec: ToolExecutor, ev: BrainEvent): string | null {
+  if (ev.type !== "tool_call" || ev.name !== "write_file") return null;
+  const path = String(ev.args["path"] ?? "");
+  const next = String(ev.args["content"] ?? "");
+  if (!path) return null;
+  const before = exec.snapshot(path);
+  if (before.reason === "unsafe") return null;
+  if (before.existed && before.text === null) {
+    const kind = before.reason === "binary" ? "binary" : "large file";
+    return `  ✎ ${path}  (${kind}, wrote ${Buffer.byteLength(next)} b)`;
+  }
+  const ops = lineDiff(before.text ?? "", next);
+  if (ops.length === 0) return null;
+  return renderDiff(path, ops);
+}
+
+/** Replay a prior local session's transcript into the active surface. Fail-soft:
+ * a missing/unreadable session prints a note and does not abort the new run. */
+function replaySession(id: string, emit: (line: string) => void): void {
+  try {
+    const prior = loadSession(id);
+    for (const line of replayLines(prior.events)) emit(line);
+  } catch (err) {
+    process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+  }
+}
+
 export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Promise<number> {
   if (!task.trim()) {
-    process.stderr.write('✗ nothing to do — try: aether code "fix the failing tests"\n');
+    process.stderr.write('✗ nothing to do — try: aether agent "fix the failing tests"\n');
     return 1;
   }
-  // Swarm is GATED on purpose. The brainstorm sequences it last: "never swarm an
-  // unproven loop — you'd multiply the failure." It is also LOCAL-ONLY (the cloud
-  // path has its own orchestration). The runtime is specified in docs/SWARM_PLAN.md
-  // and is built only after single-agent emission is proven (TESTING_HANDOFF §8).
+  // Swarm is GATED on purpose: never swarm an unproven loop — N agents multiply
+  // the #1 failure (tool-call emission fraying). It is also LOCAL-ONLY (the cloud
+  // path has its own orchestration). Stays gated until the single-agent loop is
+  // proven on real long sessions.
   if ((opts.swarm ?? 1) > 1) {
     process.stderr.write(
-      "✗ --swarm is gated.\n" +
-        "  N-agent swarms multiply the #1 risk (tool-call emission fraying). Prove the\n" +
-        "  single-agent loop first — run TESTING_HANDOFF.md §8 and confirm late-third\n" +
-        "  emission holds. The runtime + build order live in docs/SWARM_PLAN.md.\n" +
-        "  Swarm is also local-only; it will require --local when enabled.\n",
+      "✗ --swarm is not enabled yet.\n" +
+        "  N-agent swarms multiply the #1 risk (tool-call emission fraying), so the\n" +
+        "  single-agent loop is proven first. Swarm will also be local-only (--local).\n",
     );
     return 2;
   }
@@ -80,24 +141,75 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   // stdout stays clean; auto-answers in non-TTY / --yes).
   const io = stdioPrompt();
 
-  // ── 2.0 repo gate ──────────────────────────────────────────────────────
-  // Before any brain touches your tree, confirm "are you working in this repo?"
-  // (identical wording in predator-cli). When `gh` is authenticated and this is
-  // a git repo, run inside a REAL isolated worktree on a fresh aether/<slug>
-  // branch; otherwise it's confirm-only and we run in place. A non-TTY run
-  // without --yes proceeds in place with zero prompts/side effects, so pipes,
-  // CI, and tests never hang.
-  const ws = await prepareWorkspace(ctx, task, io, defaultRunner());
-  if (!ws.proceed) return 0;
-  const cwd = ws.cwd;
+  // Two ways to land in an isolated worktree, kept as ONE sequence (not two
+  // parallel systems) so a run never tries to cut a worktree twice:
+  //
+  //  - explicit (--repo / --worktree): the user opted in by hand, so honor it
+  //    exactly — --repo clones the GitHub repo first (their own gh/git auth,
+  //    never a backend token) and implies --worktree so the run lands on an
+  //    isolated branch ready for a PR.
+  //  - implicit (the 2.0 repo gate): with no explicit flag, confirm "are you
+  //    working in this repo?" before any brain touches the tree; when `gh` is
+  //    authenticated it auto-upgrades to the same kind of isolated worktree.
+  //    A non-TTY run without --yes proceeds in place with zero prompts/side
+  //    effects, so pipes, CI, and tests never hang.
+  let repoSpec: RepoSpec | null = null;
+  let worktree: Worktree | null = null;
+  let cwd: string;
+  if (opts.repo || opts.worktree) {
+    let repoRoot = ctx.flags.cwd;
+    if (opts.repo) {
+      try {
+        repoSpec = parseRepoSpec(opts.repo);
+        const co = ensureLocalClone(repoSpec);
+        repoRoot = co.dir;
+        process.stderr.write(
+          `⎇ repo ${repoSpec.full} ${co.cloned ? "(cloned)" : "(reusing local clone)"}\n  ${co.dir}\n`,
+        );
+      } catch (err) {
+        process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+        return 1;
+      }
+    }
+    try {
+      worktree = createWorktree(repoRoot, task);
+      process.stderr.write(`⌥ worktree ${worktree.branch}\n  ${worktree.dir}\n`);
+    } catch (err) {
+      process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+      return 1;
+    }
+    cwd = worktree.dir;
+  } else {
+    const ws = await prepareWorkspace(ctx, task, io, defaultRunner());
+    if (!ws.proceed) return 0;
+    cwd = ws.cwd;
+  }
   const poolGb = opts.pool > 0 ? opts.pool : 5;
-  const brainKind: "local" | "cloud" = opts.local ? "local" : "cloud";
+  // --local forces the local brain. Otherwise honor the backend preference
+  // (AETHER_BACKEND env > config.backend > 'auto'); 'auto' is local-first, so an
+  // unauthed user gets the local brain and a signed-in user keeps the cloud default.
+  let goLocal = opts.local;
+  if (!opts.local) {
+    const pref = (process.env["AETHER_BACKEND"] || ctx.cfg.backend || "auto").trim();
+    const authed = Boolean(await ctx.tokens.get());
+    goLocal = chooseBackend(pref, authed) === "local";
+  }
+  const brainKind: "local" | "cloud" = goLocal ? "local" : "cloud";
 
-  const brain: Brain = opts.local ? new LocalBrain() : new CloudBrain(ctx.api);
+  const brain: Brain = goLocal ? new LocalBrain() : new CloudBrain(ctx.api);
   const exec = new ToolExecutor(cwd, opts.testCmd);
   const log = opts.noLog
     ? null
     : new SessionLog({ task, model: ctx.flags.model ?? "", poolGb, brain: brainKind }, nowIso());
+
+  // Ctrl-C prints the exact command to re-enter this session. Registered BEFORE
+  // the renderer's own SIGINT handler so this fires first.
+  if (log) {
+    process.once("SIGINT", () => {
+      process.stderr.write("\n" + resumeHint(log.sessionId) + "\n");
+      process.exit(130);
+    });
+  }
 
   const taskCmd: TaskCommand = {
     type: "task",
@@ -113,6 +225,29 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
 
   const interactive = Boolean(opts.interactive) && Boolean(process.stdin.isTTY);
   const onToolResult = (id: string, result: ToolResult): void => log?.toolResult(id, result, nowIso());
+
+  // Permission gate: every brain-emitted mutating/shell tool call is approved
+  // here before the host runs it. Honors the configured permission mode + auto-
+  // apply; in `ask` (the default) on a TTY the user gets a y/N prompt, and on a
+  // non-TTY (CI/pipe) an un-pre-approved call FAILS CLOSED rather than running
+  // unattended. `--yes` or `permissionMode: skip` opt out.
+  const gate: ToolGate = async ({ name, args }) => {
+    const outcome = decideGate(name, ctx.cfg.permissionMode, ctx.cfg.autoApply, {
+      yes: ctx.flags.yes,
+      isTty: Boolean(process.stdin.isTTY),
+    });
+    if (outcome === "allow") return true;
+    if (outcome === "deny") {
+      process.stderr.write(
+        `✗ blocked ${name} — permission mode "${ctx.cfg.permissionMode}" needs confirmation but there is no TTY.\n` +
+          `  re-run with --yes, or set a less strict mode: aether config set permissionMode skip\n`,
+      );
+      return false;
+    }
+    const detail = String(args["command"] ?? args["path"] ?? args["message"] ?? "");
+    const shown = detail.length > 200 ? detail.slice(0, 197) + "…" : detail;
+    return ctx.confirm(`\n⚠ ${name}${shown ? ` ${shown}` : ""} — run it? [y/N] `);
+  };
 
   // Presentation fork — TTY (and not --json/--quiet) gets the live animated
   // status line; everything else (pipes, --json, --quiet, CI) gets the plain
@@ -138,11 +273,23 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   let onEvent: (ev: BrainEvent) => void | Promise<void>;
   let teardown = (): void => {};
 
+  // Capture the brain's terminal event — advisory input to the host verify gate.
+  // `done` (the brain finished its loop): its breaker reason enriches a red result
+  // but never upgrades a red run to "ok". `error` (the brain CRASHED mid-run): the
+  // run is untrustworthy, so a coincidentally-green tree is reported "error", not "ok".
+  let lastDone: BrainDone | null = null;
+  let sawError = false;
+  const captureDone = (ev: BrainEvent): void => {
+    if (ev.type === "done") lastDone = { ok: ev.ok, remaining: ev.remaining, reason: ev.reason };
+    else if (ev.type === "error") sawError = true;
+  };
+
   if (animated) {
     const sr = new StatusRenderer({ mode: brainKind === "local" ? "local" : "api" });
     sr.start();
+    if (opts.resume) replaySession(opts.resume, (line) => sr.log(line));
     const anim = new AnimationController({
-      onFrame: (stage, art) => sr.setStage(stage, art),
+      onFrame: (_stage, art) => sr.setAnim(art),
       onProgress: (used, c) => sr.setProgress(used, c),
     });
     const hb = new HeartbeatIndicator({
@@ -153,10 +300,18 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     });
     const source = new LocalAgentSource();
     bindEventSource(source, sr, anim, { hb, heartbeatTimeoutMs: 5000 });
+    let tick = 0;
     onEvent = async (ev: BrainEvent): Promise<void> => {
+      if (ev.type === "memory") {
+        log?.event(ev, nowIso());
+        sr.memoryEvent(ev);
+        return;
+      }
       log?.event(ev, nowIso());
+      applyEventToStatus(sr, ev, tick++);
       applyToLedger(ledger, ev);
       trackWrites(ev);
+      captureDone(ev);
       // Intercept the whole-file write to render a live green/red diff into
       // scrollback — the old file is still on disk because hostLoop runs onEvent
       // BEFORE exec.execute. Skip feedBrain for it so we don't ALSO print the
@@ -189,6 +344,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     };
   } else {
     const renderer = new HostRenderer({ poolGb, quiet: opts.quiet, json: ctx.flags.json });
+    if (opts.resume) replaySession(opts.resume, (line) => process.stdout.write(line + "\n"));
     onEvent = async (ev: BrainEvent): Promise<void> => {
       applyToLedger(ledger, ev);
       trackWrites(ev);
@@ -204,6 +360,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
       // End-of-run checklist recap (writeLines is a no-op under --json).
       if (ev.type === "done") renderer.writeLines(ledger.panel(cols));
       log?.event(ev, nowIso());
+      captureDone(ev);
       if (interactive && ev.type === "stage") await stageGate(brain, io, ev.name);
       if (interactive && ev.type === "monologue") await answerAgentQuestionIfPresent(brain, io, ev.text);
     };
@@ -212,7 +369,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   const startedAt = Date.now();
   let code: number;
   try {
-    code = await hostLoop(brain, exec, onEvent, taskCmd, onToolResult);
+    code = await hostLoop(brain, exec, onEvent, taskCmd, onToolResult, gate);
   } finally {
     // A brain that throws mid-run must still clear the pinned status line and
     // print the ledger recap — otherwise stale animation sits over the error.
@@ -220,32 +377,34 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   }
 
   // ── Final verification gate: ground truth, never the brain's self-report ──
-  // The host runs the test command ITSELF and derives finalStatus from the exit
-  // code — it does not trust the brain's done event. Only "ok" when the final
-  // verify is green; "incomplete" (with the failing count) whenever tests fail.
-  let finalStatus: "ok" | "incomplete" | "unverified" = "unverified";
-  let remaining = 0;
-  if (opts.testCmd) {
-    const verify = exec.execute("run_tests", {});
-    if (verify.exitCode === 0) {
-      finalStatus = "ok";
-    } else {
-      finalStatus = "incomplete";
-      const m = verify.output.match(/(\d+) failed/);
-      remaining = m ? parseInt(m[1]!, 10) : -1;
-    }
-  }
+  // The host re-runs the test command ITSELF and derives finalStatus from the real
+  // exit code (verify_gate.ts). The brain's `done` is advisory — it only enriches a
+  // red result with its breaker reason and can never upgrade a red run to "ok".
+  const { status: finalStatus, remaining, exitCode: verifyExit } = finalVerify(exec, opts.testCmd, lastDone, sawError);
   log?.close(finalStatus, nowIso(), remaining);
   // The verdict line — printed even with --no-log (which used to end with
-  // NOTHING); suppressed under --json (frames already carry the data).
+  // NOTHING); suppressed under --json (frames already carry the data). Surfaces
+  // the failing-test count the verify gate already computed but used to bury
+  // in the log file only. runSummary only distinguishes ok/incomplete/unverified
+  // (a breaker reason like "stalled" still reads as "incomplete" to the user —
+  // the run didn't finish green either way), so collapse the wider FinalStatus.
   if (!ctx.flags.json) {
     const secs = (Date.now() - startedAt) / 1000;
-    process.stderr.write("\n  " + runSummary(finalStatus, remaining, touched.size, secs) + "\n");
+    const summaryStatus = finalStatus === "ok" || finalStatus === "unverified" ? finalStatus : "incomplete";
+    process.stderr.write("\n  " + runSummary(summaryStatus, remaining, touched.size, secs) + "\n");
   }
   if (log) process.stderr.write(`  ⤷ log: ${log.dir}\n`);
-  return finalStatus === "incomplete" ? 1 : code;
+  if (worktree) process.stderr.write(mergeHint(worktree));
+  if (repoSpec && worktree) process.stderr.write(prCreateHint(repoSpec, worktree.branch));
+  // Process exit follows the HOST: 0 only on a verified-green run. With no gate
+  // ("unverified") there is no ground truth, so the loop's own code stands.
+  // Any other status (incomplete, a breaker reason, or a brain crash) always
+  // fails the process even if the loop's own code was 0 — a green exit code
+  // must never paper over red tests.
+  if (finalStatus === "ok") return 0;
+  if (finalStatus === "unverified") return code;
+  return verifyExit !== 0 ? verifyExit : 1;
 }
-
 
 /**
  * The host loop — the bridge seam, extracted so it is unit-testable with a fake
@@ -259,6 +418,7 @@ export async function hostLoop(
   onEvent: (ev: BrainEvent) => void | Promise<void>,
   task: TaskCommand,
   onToolResult?: (id: string, result: ToolResult) => void,
+  gate?: ToolGate,
 ): Promise<number> {
   let code = 0;
   try {
@@ -266,8 +426,16 @@ export async function hostLoop(
       await onEvent(ev);
       switch (ev.type) {
         case "tool_call": {
-          // The host owns execution + the path-guard; reply with the result.
-          const result = exec.execute(ev.name, ev.args);
+          // The host owns execution + the path-guard. A tool call is gated FIRST
+          // (permission mode); a denied call is never executed — the brain gets a
+          // synthetic refusal result so the loop continues without running it.
+          // executeAsync delegates the 6 sync tools to execute() unchanged and
+          // awaits the 2 async web tools (web_search/web_fetch) so they run on
+          // this path too — otherwise execute() returns "[tool … is async]".
+          const approved = gate ? await gate({ name: ev.name, args: ev.args }) : true;
+          const result: ToolResult = approved
+            ? await exec.executeAsync(ev.name, ev.args)
+            : { output: `[denied: ${ev.name} not approved by user]`, exitCode: 1 };
           onToolResult?.(ev.id, result);
           brain.sendToolResult(ev.id, result);
           break;

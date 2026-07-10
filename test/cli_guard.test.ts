@@ -10,7 +10,11 @@ import { tmpdir } from "node:os";
 // main() runs at module load): the typo guard and the chat fallthrough + hint.
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-function runCli(args: string[], cfgDir: string): Promise<{ exit: number | string; out: string; err: string }> {
+function runCli(
+  args: string[],
+  cfgDir: string,
+  extraEnv: NodeJS.ProcessEnv = {},
+): Promise<{ exit: number | string; out: string; err: string }> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [join(root, "dist", "src", "main.js"), ...args], {
       env: {
@@ -20,6 +24,7 @@ function runCli(args: string[], cfgDir: string): Promise<{ exit: number | string
         AETHER_CONFIG_DIR: cfgDir,
         AETHER_NO_ANIM: "1",
         NO_COLOR: "1",
+        ...extraEnv,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -53,7 +58,11 @@ test("a lone near-miss token exits 2 with the suggestion + chat escape", async (
 test("a non-near-miss word flows to chat and fails with the network hint", async () => {
   const dir = mkdtempSync(join(tmpdir(), "aether-guard-"));
   try {
-    const r = await runCli(["hello"], dir);
+    // resolveBackend is local-first when unauthenticated ("auto" picks Ollama,
+    // not cloud, unless a session is signed in — see chat.ts). Force the cloud
+    // leg explicitly so this test still exercises what it's named for: a
+    // chat-path network failure surfacing the /doctor-style connectivity hint.
+    const r = await runCli(["hello"], dir, { AETHER_BACKEND: "cloud" });
     assert.equal(r.exit, 1, `expected chat-path network failure, got ${r.exit} (err: ${r.err.slice(0, 150)})`);
     assert.match(r.err, /✗ /);
     assert.match(r.err, /⤷ can't reach http:\/\/127\.0\.0\.1:9/);
