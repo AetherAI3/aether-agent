@@ -17,6 +17,7 @@ import { renderSplash } from "../ui/splash.js";
 import { promptPrefix } from "../ui/prompt.js";
 import { errTheme } from "../ui/theme.js";
 import { KAOMOJI } from "../ui/kaomoji.js";
+import { ThinkingPulse } from "../ui/thinking.js";
 import { configDir } from "../core/config.js";
 import { loadHistory, appendHistory } from "./history.js";
 import { slashCompletions } from "./slash_registry.js";
@@ -40,9 +41,16 @@ export async function runTurn(ctx: AppContext, prompt: string, signal?: AbortSig
     manualModel: ctx.flags.model != null,
   });
   const renderer = new Renderer({ json: ctx.flags.json, audit: ctx.flags.audit });
+  // Dead-air killer: pulse on stderr from submit until the first frame lands.
+  const pulse = new ThinkingPulse({
+    enabled:
+      Boolean(process.stderr.isTTY) && !ctx.flags.json && process.env["AETHER_NO_ANIM"] !== "1",
+  });
+  pulse.start();
   try {
     const stream = await ctx.api.stream(CHAT_STREAM_PATH, req, signal);
     for await (const frame of decodeSse(stream)) {
+      pulse.stop(); // first (and every) frame: real output owns the line now
       // The server signs each turn and returns it; persist the signed receipt
       // locally (best-effort, never breaks the chat).
       if (frame.type === "custody") appendCustody(frame.custody);
@@ -53,6 +61,7 @@ export async function runTurn(ctx: AppContext, prompt: string, signal?: AbortSig
       // Contract fail-soft: fall back to the non-streaming request/response.
       // Same signal — the fallback leg is cancelable too (arena AT-3d).
       const r = await ctx.api.postJson<ChatJsonResponse>(CHAT_PATH, req, signal);
+      pulse.stop();
       process.stdout.write((r.response ?? "") + "\n");
       if (ctx.flags.audit && r.commitment_hash) {
         process.stderr.write(`  signed ✓ ${r.commitment_hash}\n`);
@@ -60,6 +69,8 @@ export async function runTurn(ctx: AppContext, prompt: string, signal?: AbortSig
       return;
     }
     throw err;
+  } finally {
+    pulse.stop();
   }
 }
 
