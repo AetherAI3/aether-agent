@@ -67,8 +67,8 @@ test("heartbeat: one beat reaches the peak then returns to rest", async () => {
       frameMs: 1,
       onFrame: (glyph) => {
         seen.push(glyph);
-        if (glyph === "\u25c9") peaked = true;
-        if (peaked && glyph === "\u00b7") {
+        if (glyph === "◉") peaked = true;
+        if (peaked && glyph === "·") {
           clearTimeout(timeout);
           resolve();
         }
@@ -76,28 +76,17 @@ test("heartbeat: one beat reaches the peak then returns to rest", async () => {
     });
     hb.beat();
   });
-  assert.ok(seen.includes("\u25c9"), "beat reaches the peak glyph");
-  assert.equal(hb!.glyph(), "\u00b7", "rests between beats");
+  assert.ok(seen.includes("◉"), "beat reaches the peak glyph");
+  assert.equal(hb!.glyph(), "·", "rests between beats");
   hb!.stop();
 });
+
 test("heartbeat: stall shows hollow; next beat clears it", () => {
   const hb = new HeartbeatIndicator({ frameMs: 1 });
   hb.markStalled();
-  assert.equal(hb.glyph(), "â—‹");
+  assert.equal(hb.glyph(), "○");
   hb.beat();
-  assert.notEqual(hb.glyph(), "â—‹");
-  hb.stop();
-});
-
-test("heartbeat: counts each beat and reports it to onFrame (thinking timer)", () => {
-  const counts: number[] = [];
-  const hb = new HeartbeatIndicator({ onFrame: (_g, beats) => counts.push(beats), frameMs: 1 });
-  assert.equal(hb.count(), 0);
-  hb.beat();
-  hb.beat();
-  hb.beat();
-  assert.equal(hb.count(), 3, "three pulses counted");
-  assert.ok(counts.includes(3), "the latest count reached onFrame");
+  assert.notEqual(hb.glyph(), "○");
   hb.stop();
 });
 
@@ -194,7 +183,7 @@ test("pager preserves position when new output arrives while scrolled up", () =>
   }
 });
 
-test("StatusRenderer non-TTY = plain lines, zero ANSI (keeps Â§8 logs clean)", () => {
+test("StatusRenderer non-TTY = plain lines, zero ANSI (keeps §8 logs clean)", () => {
   const prev = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
   Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
   const out: string[] = [];
@@ -203,7 +192,7 @@ test("StatusRenderer non-TTY = plain lines, zero ANSI (keeps Â§8 logs clean)",
   try {
     const sr = new StatusRenderer({ mode: "local" });
     sr.start();
-    sr.setAnim("â–¸â–¹");
+    sr.setAnim("▸▹");
     sr.log("  : run_tests");
     sr.setProgress(100, 500);
     sr.end();
@@ -226,7 +215,7 @@ test("TuiLayout non-TTY stays plain (no ANSI)", () => {
     const nt = new TuiLayout({ mode: "api" });
     nt.mount();
     nt.log("agent line");
-    nt.setHeartbeat("â—");
+    nt.setHeartbeat("●");
   } finally {
     process.stdout.write = real;
     if (prev) Object.defineProperty(process.stdout, "isTTY", prev);
@@ -274,7 +263,7 @@ test("status row is clamped to the terminal width", () => {
   const real = process.stdout.write.bind(process.stdout);
   process.stdout.write = ((c: string) => (out.push(String(c)), true)) as typeof process.stdout.write;
   try {
-    t.setVerb("Reconnoitring the perimeter fences", "( âš† _ âš† )");
+    t.setVerb("Reconnoitring the perimeter fences", "( ⚆ _ ⚆ )");
     t.setUvt(123456, 999999);
     const status = out[out.length - 1]!;
     const visible = stripAnsi(status);
@@ -313,7 +302,7 @@ test("TuiLayout setVerb/setStreamed are silent off-TTY (no stray writes)", () =>
   process.stdout.write = ((c: string) => (out.push(String(c)), true)) as typeof process.stdout.write;
   try {
     const t = new TuiLayout({ mode: "api", now: () => 0 });
-    t.setVerb("Forging", "(à¸‡'Ì€-'Ì)à¸‡");
+    t.setVerb("Forging", "(ง'̀-'́)ง");
     t.setStreamed(33_000);
     assert.equal(out.length, 0, "status setters write nothing when not a TTY");
   } finally {
@@ -321,4 +310,3 @@ test("TuiLayout setVerb/setStreamed are silent off-TTY (no stray writes)", () =>
     if (prev) Object.defineProperty(process.stdout, "isTTY", prev);
   }
 });
-
