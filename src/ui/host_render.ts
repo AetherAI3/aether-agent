@@ -100,17 +100,27 @@ export class HostRenderer {
         break;
       }
       case "status": {
+        if (this.opts.quiet) break;
         const line = renderStatusBar(ev.poolUsed, this.opts.poolGb, ev.phase, 30, ev.poolCap);
-        if (!this.opts.quiet) {
-          this.err.write("\r" + line);
+        // \r-rewrite is a TTY affordance; piped stderr gets plain lines (the
+        // file's own header promises that) and no unclamped wrapping.
+        if (process.stderr.isTTY) {
+          const cols = (process.stderr.columns || 80) - 1;
+          this.err.write("\r" + (line.length > cols ? line.slice(0, cols) : line));
           this.barLive = true;
+        } else {
+          this.err.write(line + "\n");
         }
         break;
       }
       case "telemetry": {
-        if (!this.opts.quiet && ev.tps > 0) {
-          this.err.write(errTheme.dim(`\r  └─ speed: ${ev.tps.toFixed(1)}k t/s · vram ${ev.vram}%   `));
+        if (this.opts.quiet || ev.tps <= 0) break;
+        const body = `  └─ speed: ${ev.tps.toFixed(1)}k t/s · vram ${ev.vram}%   `;
+        if (process.stderr.isTTY) {
+          this.err.write(errTheme.dim("\r" + body));
           this.barLive = true;
+        } else {
+          this.err.write(body.trimEnd() + "\n");
         }
         break;
       }
