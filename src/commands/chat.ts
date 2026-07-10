@@ -12,9 +12,14 @@ import { StreamUnavailableError, errorHint } from "../core/errors.js";
 import { appendCustody } from "../core/custody.js";
 import { handleSlash } from "./slash.js";
 import { userInfo } from "node:os";
+import { join } from "node:path";
 import { renderSplash } from "../ui/splash.js";
 import { promptPrefix } from "../ui/prompt.js";
 import { errTheme } from "../ui/theme.js";
+import { KAOMOJI } from "../ui/kaomoji.js";
+import { configDir } from "../core/config.js";
+import { loadHistory, appendHistory } from "./history.js";
+import { slashCompletions } from "./slash_registry.js";
 import { VERSION } from "../version.js";
 
 // the Aether API ChatResponse: { response, commitment_hash, verified, threat_level }.
@@ -69,9 +74,31 @@ export async function cmdChat(ctx: AppContext, prompt: string): Promise<number> 
 }
 
 async function repl(ctx: AppContext): Promise<number> {
-  const rl = createInterface({ input: process.stdin });
   const username = userInfo().username || "you";
   const p = promptPrefix(username);
+  // Real terminal readline: up-arrow history (persisted across sessions),
+  // tab-completion for slash commands, and an owned prompt. Non-TTY keeps
+  // today's exact byte behavior (rl.prompt() writes the plain prompt string).
+  const historyPath = join(configDir(), "history");
+  const terminal = Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal,
+    prompt: p,
+    historySize: 200,
+    history: loadHistory(historyPath),
+    removeHistoryDuplicates: true,
+    completer: slashCompletions,
+  });
+  // In terminal mode readline owns Ctrl+C (no process SIGINT is raised):
+  // leave with a goodbye instead of a hard kill. Exit code 130 mirrors the
+  // status_renderer/tui cleanup convention.
+  rl.on("SIGINT", () => {
+    process.stderr.write(`\n${KAOMOJI.idle}  bye\n`);
+    rl.close();
+    process.exit(130);
+  });
   const model = ctx.flags.model ?? ctx.cfg.defaultModel ?? "auto";
   process.stdout.write(
     renderSplash({
@@ -81,13 +108,14 @@ async function repl(ctx: AppContext): Promise<number> {
     }) + "\n\n",
   );
   process.stdout.write("Type a prompt, or /help for commands. /exit to quit.\n\n");
-  process.stdout.write(p);
+  rl.prompt();
   for await (const line of rl) {
     const t = line.trim();
     if (!t) {
-      process.stdout.write(p);
+      rl.prompt();
       continue;
     }
+    appendHistory(historyPath, t);
     if (t.startsWith("/")) {
       try {
         const res = await handleSlash(ctx, t, process.stdout);
@@ -95,7 +123,7 @@ async function repl(ctx: AppContext): Promise<number> {
       } catch (err) {
         printError(err, ctx.cfg.baseUrl);
       }
-      process.stdout.write(p);
+      rl.prompt();
       continue;
     }
     try {
@@ -103,7 +131,8 @@ async function repl(ctx: AppContext): Promise<number> {
     } catch (err) {
       printError(err, ctx.cfg.baseUrl);
     }
-    process.stdout.write("\n" + p);
+    process.stdout.write("\n");
+    rl.prompt();
   }
   rl.close();
   process.stdout.write("\n");
