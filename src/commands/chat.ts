@@ -31,8 +31,10 @@ interface ChatJsonResponse {
 
 /** Run a single coding turn end to end. Exported for `run.ts` (orchestrators).
  * `signal` cancels the turn client-side (stream AND the fail-soft fallback) —
- * orchestrator runs inherit cancelability through this same seam. */
-export async function runTurn(ctx: AppContext, prompt: string, signal?: AbortSignal): Promise<void> {
+ * orchestrator runs inherit cancelability through this same seam. Returns
+ * false if the server streamed an `error` frame, so callers can exit non-zero
+ * instead of treating a rendered "✗ msg" as a successful turn. */
+export async function runTurn(ctx: AppContext, prompt: string, signal?: AbortSignal): Promise<boolean> {
   const req = buildChatRequest({
     prompt,
     model: ctx.flags.model ?? ctx.cfg.defaultModel,
@@ -49,6 +51,7 @@ export async function runTurn(ctx: AppContext, prompt: string, signal?: AbortSig
   pulse.start();
   try {
     const stream = await ctx.api.stream(CHAT_STREAM_PATH, req, signal);
+    let ok = true;
     for await (const frame of decodeSse(stream)) {
       // open/ping are handshake/keepalive — they render nothing. Stopping on
       // them re-created the dead air on keepalive-happy servers; only frames
@@ -57,8 +60,10 @@ export async function runTurn(ctx: AppContext, prompt: string, signal?: AbortSig
       // The server signs each turn and returns it; persist the signed receipt
       // locally (best-effort, never breaks the chat).
       if (frame.type === "custody") appendCustody(frame.custody);
+      if (frame.type === "error") ok = false;
       renderer.frame(frame);
     }
+    return ok;
   } catch (err) {
     if (err instanceof StreamUnavailableError) {
       // Contract fail-soft: fall back to the non-streaming request/response.
@@ -69,7 +74,7 @@ export async function runTurn(ctx: AppContext, prompt: string, signal?: AbortSig
       if (ctx.flags.audit && r.commitment_hash) {
         process.stderr.write(`  signed ✓ ${r.commitment_hash}\n`);
       }
-      return;
+      return true;
     }
     throw err;
   } finally {
@@ -80,8 +85,8 @@ export async function runTurn(ctx: AppContext, prompt: string, signal?: AbortSig
 export async function cmdChat(ctx: AppContext, prompt: string): Promise<number> {
   if (prompt.trim()) {
     try {
-      await runTurn(ctx, prompt);
-      return 0;
+      const ok = await runTurn(ctx, prompt);
+      return ok ? 0 : 1;
     } catch (err) {
       printError(err, ctx.cfg.baseUrl);
       return 1;

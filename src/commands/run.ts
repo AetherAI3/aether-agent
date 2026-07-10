@@ -20,8 +20,8 @@ export async function cmdRun(
   }
   ctx.flags.agent = agent;
   try {
-    await runTurn(ctx, task);
-    return 0;
+    const ok = await runTurn(ctx, task);
+    return ok ? 0 : 1;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`\n✗ ${msg}\n`);
