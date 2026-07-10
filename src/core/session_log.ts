@@ -14,9 +14,64 @@ import { join } from "node:path";
 import type { BrainEvent } from "./brain_protocol.js";
 import type { ToolResult } from "./tool_executor.js";
 import { registerRestore } from "../ui/restore.js";
+import { normalizeWorkspace } from "./workspace_scope.js";
 
 export function logsRoot(): string {
   return process.env["AETHER_LOG_DIR"] ?? join(homedir(), ".aether-agent", "logs");
+}
+
+
+
+const SENSITIVE_KEY = /token|secret|password|authorization|api[_-]?key|private[_-]?key|credential|pat/i;
+
+function redactInline(value: string): string {
+  return value
+    .replace(/(bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1[REDACTED]")
+    .replace(/((?:token|secret|password|api[_-]?key|authorization)\s*[:=]\s*)[^\s,;]+/gi, "$1[REDACTED]")
+    .slice(0, 512);
+}
+
+function loggedArgs(args: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(args).map(([key, value]) => {
+    if (SENSITIVE_KEY.test(key)) return [key, "[REDACTED]"];
+    if (key.toLowerCase() === "content") {
+      return [key, `[omitted ${Buffer.byteLength(String(value), "utf8")} bytes]`];
+    }
+    if (key.toLowerCase() === "command") return [key, "[omitted shell command]"];
+    if (typeof value === "string") return [key, redactInline(value)];
+    if (Array.isArray(value)) return [key, `[omitted ${value.length} items]`];
+    if (value && typeof value === "object") return [key, "[omitted object]"];
+    return [key, value];
+  }));
+}
+
+/** Keep event records useful for audit while preventing prompts, file contents,
+ * shell commands, and credential-shaped values from becoming durable logs. */
+function loggedEvent(ev: BrainEvent): BrainEvent {
+  switch (ev.type) {
+    case "tool_call":
+      return { ...ev, name: redactInline(ev.name), args: loggedArgs(ev.args) };
+    case "memory": {
+      const { text, narrative, description, triggers, action, skill, skill_name, ...metadata } = ev;
+      return {
+        ...metadata,
+        ...(text != null && { text: `[omitted ${Buffer.byteLength(text, "utf8")} bytes]` }),
+        ...(narrative != null && { narrative: "[omitted memory narrative]" }),
+        ...(description != null && { description: "[omitted memory description]" }),
+        ...(triggers != null && { triggers: `[omitted ${triggers.length} triggers]` }),
+        ...(action != null && { action: "[omitted memory action]" }),
+        ...(skill != null && { skill: redactInline(skill) }),
+        ...(skill_name != null && { skill_name: redactInline(skill_name) }),
+      } as BrainEvent;
+    }
+    case "stage": return { ...ev, name: redactInline(ev.name), face: redactInline(ev.face) };
+    case "skill": return { ...ev, name: redactInline(ev.name), reason: redactInline(ev.reason) };
+    case "monologue": return { ...ev, text: redactInline(ev.text) };
+    case "checkpoint": return { ...ev, gitSha: redactInline(ev.gitSha) };
+    case "done": return { ...ev, result: redactInline(ev.result), reason: redactInline(ev.reason) };
+    case "error": return { ...ev, msg: redactInline(ev.msg) };
+    default: return ev;
+  }
 }
 
 /** The terminal status of a run. Derived by the host's verify gate (verify_gate.ts)
@@ -38,6 +93,7 @@ export interface SessionMeta {
   model: string;
   poolGb: number;
   brain: "local" | "cloud";
+  cwd: string;
 }
 
 export class SessionLog {
@@ -60,9 +116,11 @@ export class SessionLog {
     this.started = now;
     this.sessionId = now.replace(/[:.]/g, "-") + "-" + String(meta.brain);
     this.dir = join(root, this.sessionId);
-    mkdirSync(this.dir, { recursive: true });
+    mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     this.eventsPath = join(this.dir, "events.jsonl");
     this.monologuePath = join(this.dir, "monologue.txt");
+    writeFileSync(this.eventsPath, "", { encoding: "utf8", mode: 0o600 });
+    writeFileSync(this.monologuePath, "", { encoding: "utf8", mode: 0o600 });
     this.manifestPath = join(this.dir, "manifest.json");
     this.writeManifest(null);
     // Batched writes must still land if the process exits abruptly (SIGINT
@@ -76,8 +134,9 @@ export class SessionLog {
   event(ev: BrainEvent, ts: string): void {
     this.events += 1;
     if (ev.type === "tool_call") this.toolCalls += 1;
-    this.buffer(this.eventsPath, JSON.stringify({ ts, ...ev }) + "\n");
-    const line = monologueLine(ev);
+    const safe = loggedEvent(ev);
+    this.buffer(this.eventsPath, JSON.stringify({ ts, ...safe }) + "\n");
+    const line = monologueLine(safe);
     if (line) this.buffer(this.monologuePath, line + "\n");
   }
 
@@ -151,6 +210,7 @@ export class SessionLog {
           model: this.meta.model,
           poolGb: this.meta.poolGb,
           brain: this.meta.brain,
+          cwd: normalizeWorkspace(this.meta.cwd),
           started: this.started,
           ended: end?.ended ?? null,
           finalStatus: end?.finalStatus ?? "running",
@@ -161,7 +221,7 @@ export class SessionLog {
         null,
         2,
       ) + "\n",
-      "utf8",
+      { encoding: "utf8", mode: 0o600 },
     );
   }
 }

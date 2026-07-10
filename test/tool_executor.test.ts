@@ -1,10 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { ToolExecutor } from "../src/core/tool_executor.js";
+
+const canSpawnGit = !spawnSync("git", ["--version"], { encoding: "utf8" }).error;
 
 function initRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), "aether-gitcommit-"));
@@ -17,11 +19,12 @@ function initRepo(): string {
   return dir;
 }
 
-test("git_commit passes a message with shell metacharacters through unexecuted", () => {
+test("git_commit passes a message with shell metacharacters through unexecuted", (t) => {
+  if (!canSpawnGit) { t.skip("sandbox blocks child process spawning"); return; }
   const dir = initRepo();
   try {
-    writeFileSync(join(dir, "a.txt"), "changed\n");
     const exec = new ToolExecutor(dir);
+    writeFileSync(join(dir, "a.txt"), "changed\n");
     const r = exec.execute("git_commit", { message: 'fix "cap & retry" `whoami` $(id)' });
     assert.equal(r.exitCode, 0);
     const log = spawnSync("git", ["log", "-1", "--pretty=%s"], { cwd: dir, encoding: "utf8" });
@@ -31,7 +34,8 @@ test("git_commit passes a message with shell metacharacters through unexecuted",
   }
 });
 
-test("git_commit with nothing staged reports it without a fabricated failure", () => {
+test("git_commit with nothing staged reports it without a fabricated failure", (t) => {
+  if (!canSpawnGit) { t.skip("sandbox blocks child process spawning"); return; }
   const dir = initRepo();
   try {
     const exec = new ToolExecutor(dir);
@@ -59,39 +63,43 @@ test("run_tests with no explicit command and no configured testCmd does not defa
   }
 });
 
-test("run_tests still honors an explicit command even with no configured testCmd", () => {
+test("run_tests still honors an explicit command even with no configured testCmd", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "aether-runtests-explicit-"));
   try {
     const exec = new ToolExecutor(dir);
     const r = exec.execute("run_tests", { command: process.platform === "win32" ? "exit 0" : "true" });
+    if (/spawn error EPERM/.test(r.output)) { t.skip("sandbox blocks child process spawning"); return; }
     assert.equal(r.exitCode, 0);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("run_tests honors a configured testCmd when the call omits an explicit command", () => {
+test("run_tests honors a configured testCmd when the call omits an explicit command", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "aether-runtests-cfg-"));
   try {
     const exec = new ToolExecutor(dir, process.platform === "win32" ? "exit 0" : "true");
     const r = exec.execute("run_tests", {});
+    if (/spawn error EPERM/.test(r.output)) { t.skip("sandbox blocks child process spawning"); return; }
     assert.equal(r.exitCode, 0);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("git_commit surfaces a real failure instead of reporting the old HEAD as success", () => {
+test("git_commit surfaces a real failure instead of reporting the old HEAD as success", (t) => {
+  if (!canSpawnGit) { t.skip("sandbox blocks child process spawning"); return; }
   const dir = initRepo();
   try {
+    const exec = new ToolExecutor(dir);
     writeFileSync(join(dir, "a.txt"), "changed again\n");
     // Break the repo's ability to commit: a pre-commit hook that always fails.
     const hookPath = join(dir, ".git", "hooks", "pre-commit");
+    mkdirSync(join(dir, ".git", "hooks"), { recursive: true });
     writeFileSync(hookPath, "#!/bin/sh\nexit 1\n");
     spawnSync("chmod", ["+x", hookPath]);
     const before = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: dir, encoding: "utf8" }).stdout.trim();
 
-    const exec = new ToolExecutor(dir);
     const r = exec.execute("git_commit", { message: "should fail" });
 
     assert.notEqual(r.exitCode, 0, "a hook rejection must not report success");

@@ -36,11 +36,54 @@ test("bad url rejected on add", () => {
   );
 });
 
-test("corrupt file is backed up and store starts fresh", () => {
+test("corrupt reads are non-mutating and mutators fail closed", () => {
   const { store, file } = freshStore();
-  writeFileSync(file, "{not json", "utf8");
+  const raw = "{not json";
+  writeFileSync(file, raw, "utf8");
   assert.deepEqual(store.list(), []);
-  assert.ok(existsSync(file + ".bak"));
+  assert.equal(readFileSync(file, "utf8"), raw);
+  assert.equal(existsSync(file + ".bak"), false);
+  assert.throws(
+    () => store.add({ name: "docs", url: "https://x.example/m", transport: "http" }),
+    /repair/,
+  );
+  assert.equal(readFileSync(file, "utf8"), raw);
+});
+
+test("repair is explicit, backup-first, and resets only after preserving bytes", () => {
+  const { store, file } = freshStore();
+  const raw = "{not json";
+  writeFileSync(file, raw, "utf8");
+  const result = store.repair("2026-07-10T00:00:00.000Z");
+  assert.equal(result.repaired, true);
+  assert.ok(result.backup);
+  assert.equal(readFileSync(result.backup!, "utf8"), raw);
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { servers: [] });
+});
+
+test("interrupted repair leaves the original and completed backup intact", () => {
+  const { store, file } = freshStore();
+  const raw = "{interrupted";
+  const now = "2026-07-10T01:02:03.000Z";
+  const backup = file + ".bak-2026-07-10T01-02-03-000Z";
+  writeFileSync(file, raw, "utf8");
+  assert.throws(
+    () => store.repair(now, () => { throw new Error("simulated interruption"); }),
+    /simulated interruption/,
+  );
+  assert.equal(readFileSync(file, "utf8"), raw);
+  assert.equal(readFileSync(backup, "utf8"), raw);
+});
+
+test("denied or non-file registry paths fail closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "aether-mcp-denied-"));
+  const store = new LocalMcpStore(dir);
+  assert.equal(store.inspect().status, "unreadable");
+  assert.throws(
+    () => store.add({ name: "docs", url: "https://x.example/m", transport: "http" }),
+    /unreadable/,
+  );
+  assert.throws(() => store.repair("2026-07-10T00:00:00.000Z"));
 });
 
 test("sanityCheckUrl rules", () => {

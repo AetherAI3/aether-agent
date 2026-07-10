@@ -7,6 +7,7 @@
 import type { Writable } from "node:stream";
 import { theme, errTheme, clipCodePoints } from "./theme.js";
 import { renderStatusBar } from "./statusbar.js";
+import { sanitizeTerm } from "./text.js";
 import type { BrainEvent } from "../core/brain_protocol.js";
 
 const STAGE_FACE: Record<string, string> = {
@@ -75,28 +76,29 @@ export class HostRenderer {
       case "stage": {
         this.header();
         this.breakBar();
-        const face = ev.face || STAGE_FACE[ev.name] || "";
-        this.out.write(theme.cyan("* ") + ev.name + "  " + theme.dim(face) + "\n");
+        const name = sanitizeTerm(ev.name);
+        const face = sanitizeTerm(ev.face || STAGE_FACE[name] || "");
+        this.out.write(theme.cyan("* ") + name + "  " + theme.dim(face) + "\n");
         break;
       }
       case "skill": {
         // Procedure pinned — a one-line flourish (the local-hardening move).
         this.breakBar();
-        const why = ev.reason ? theme.dim(` (${ev.reason})`) : "";
-        this.out.write(theme.iceBlue("  ⌁ skill ") + ev.name + why + "\n");
+        const why = ev.reason ? theme.dim(` (${sanitizeTerm(ev.reason)})`) : "";
+        this.out.write(theme.iceBlue("  ⌁ skill ") + sanitizeTerm(ev.name) + why + "\n");
         break;
       }
       case "monologue": {
         this.breakBar();
         const indent = "  " + "  ".repeat(Math.max(0, ev.depth));
         const branch = ev.depth > 0 ? "└─ " : "";
-        this.out.write(theme.dim(indent + branch + ev.text) + "\n");
+        this.out.write(theme.dim(indent + branch + sanitizeTerm(ev.text)) + "\n");
         break;
       }
       case "tool_call": {
         // The host executes this; show what it's running.
         this.breakBar();
-        this.out.write(theme.dim(`  : ${ev.name} ${argHint(ev.args)}`) + "\n");
+        this.out.write(theme.dim(`  : ${sanitizeTerm(ev.name)} ${argHint(ev.args)}`) + "\n");
         break;
       }
       case "status": {
@@ -126,19 +128,19 @@ export class HostRenderer {
       }
       case "checkpoint": {
         this.breakBar();
-        this.out.write(theme.cyan("  [▪]→[▪▪] ") + theme.dim(`checkpoint ${ev.gitSha}`) + "\n");
+        this.out.write(theme.cyan("  [▪]→[▪▪] ") + theme.dim(`checkpoint ${sanitizeTerm(ev.gitSha)}`) + "\n");
         break;
       }
       case "done": {
         this.breakBar();
         const flag = ev.ok ? theme.cyan("[ OKAY ]") : theme.red("[ FAIL ]");
         const mark = ev.ok ? "ᕙ(`▽`)ᕗ" : "o(TヘTo)";
-        this.out.write("\n" + `${mark} ${ev.result || (ev.ok ? "done" : "stopped")} ` + flag + "\n");
+        this.out.write("\n" + `${mark} ${sanitizeTerm(ev.result || (ev.ok ? "done" : "stopped"))} ` + flag + "\n");
         break;
       }
       case "error": {
         this.breakBar();
-        this.err.write("\n" + errTheme.red("✗ ") + ev.msg + "\n");
+        this.err.write("\n" + errTheme.red("✗ ") + sanitizeTerm(ev.msg) + "\n");
         break;
       }
     }
@@ -148,5 +150,5 @@ export class HostRenderer {
 /** A short, single-line hint of a tool call's primary arg. */
 function argHint(args: Record<string, unknown>): string {
   const k = args["path"] ?? args["command"] ?? args["query"] ?? args["message"] ?? "";
-  return clipCodePoints(String(k), 60);
+  return clipCodePoints(sanitizeTerm(String(k)), 60);
 }

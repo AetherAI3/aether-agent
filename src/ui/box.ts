@@ -46,13 +46,15 @@ export const lightBlue = wrapper("38;5;81");
  * @param label    Optional visible label. Defaults to the URL itself.
  */
 export function hyperlink(url: string, label?: string): string {
-  if (!theme.enabled) return label ?? url;
-  return `\x1b]8;;${url}\x1b\\${label ?? url}\x1b]8;;\x1b\\`;
+  const safeUrl = sanitizeTerm(url);
+  const safeLabel = sanitizeTerm(label ?? url);
+  if (!theme.enabled) return safeLabel;
+  return `\x1b]8;;${safeUrl}\x1b\\${safeLabel}\x1b]8;;\x1b\\`;
 }
 
 // ── Box drawing ──
 
-import { visibleWidth } from "./text.js";
+import { sanitizeTerm, visibleWidth } from "./text.js";
 
 /** ANSI-aware, wide-char-aware visible width (shared util). */
 function plainLen(s: string): number {

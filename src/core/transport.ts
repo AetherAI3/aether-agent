@@ -216,6 +216,16 @@ export class ApiClient {
     if (!res.ok) throw await toHttpError(res);
     return (await res.json()) as T;
   }
+
+  async deleteJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+    const res = await fetch(this.url(path), {
+      method: "DELETE",
+      headers: { Accept: "application/json", ...(await this.authHeaders()) },
+      ...(signal ? { signal } : {}),
+    });
+    if (!res.ok) throw await toHttpError(res);
+    return (await res.json()) as T;
+  }
 }
 
 async function toHttpError(res: Response): Promise<HttpError> {

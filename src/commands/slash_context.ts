@@ -5,6 +5,7 @@
 import type { Writable } from "node:stream";
 import type { AppContext } from "../core/context.js";
 import { join } from "node:path";
+import { confineToWorkspace } from "../core/workspace_scope.js";
 import { theme } from "../ui/theme.js";
 import { box } from "../ui/box.js";
 import {
@@ -36,7 +37,7 @@ export async function pinSlash(ctx: AppContext, out: Writable, arg: string, _lin
   const pth = parts[0]!;
   const reason = parts.slice(1).join(" ") || "pinned";
 
-  const resolved = pth.startsWith("/") ? pth : join(process.cwd(), pth);
+  const resolved = confineToWorkspace(ctx.flags.cwd, pth);
   const label = pth.split("/").pop() || pth;
 
   const entry = getRegistry().pin(resolved, label, reason);
@@ -68,7 +69,7 @@ export async function dropSlash(ctx: AppContext, out: Writable, arg: string): Pr
   }
 
   const pth = arg.trim();
-  const resolved = pth.startsWith("/") ? pth : join(process.cwd(), pth);
+  const resolved = confineToWorkspace(ctx.flags.cwd, pth);
   const wasPinned = getRegistry().isPinned(resolved);
   getRegistry().drop(resolved);
 
@@ -91,14 +92,14 @@ export async function snapshotSlash(ctx: AppContext, out: Writable, arg: string)
     const id = arg.trim().split(/\s+/).slice(1).join(" ");
     if (!id) {
       // Try cloud backend first
-      const cloudLoaded = await loadFromBackend(ctx.api);
+      const cloudLoaded = await loadFromBackend(ctx.api, ctx.flags.cwd);
       if (cloudLoaded) {
         const reg = getRegistry();
         out.write(`${theme.cyan("☁ loaded from cloud")} ${theme.bold(reg.sessionLabel)}  (${reg.pins.length} pins, cap ${reg.uvtCap ?? "none"})\n`);
         out.write(theme.dim("  Use /pin list to see restored context.\n"));
         return;
       }
-      const snaps = listSnapshots();
+      const snaps = listSnapshots(ctx.flags.cwd);
       if (snaps.length === 0) {
         out.write("(no snapshots — use /snapshot to save one)\n");
         return;
@@ -118,7 +119,7 @@ export async function snapshotSlash(ctx: AppContext, out: Writable, arg: string)
       out.write(`no snapshot: ${id}  (use /snapshot to list)\n`);
       return;
     }
-    const restored = ContextRegistry.fromSnapshot(data);
+    const restored = ContextRegistry.fromSnapshot(data, ctx.flags.cwd);
     resetRegistry();
     Object.assign(getRegistry(), restored);
     out.write(`${theme.cyan("📂 restored")} ${theme.bold(data.sessionLabel)}  (${data.pins.length} pins, cap ${data.uvtCap ?? "none"})\n`);
@@ -128,7 +129,7 @@ export async function snapshotSlash(ctx: AppContext, out: Writable, arg: string)
   }
 
   if (sub === "list" || sub === "ls") {
-    const snaps = listSnapshots();
+    const snaps = listSnapshots(ctx.flags.cwd);
     if (snaps.length === 0) {
       out.write("(no snapshots)\n");
       return;
@@ -142,7 +143,7 @@ export async function snapshotSlash(ctx: AppContext, out: Writable, arg: string)
     return;
   }
 
-  const snapPath = saveSnapshot(registry);
+  const snapPath = saveSnapshot(registry, ctx.flags.cwd);
   const basename = snapPath.split("/").pop() || snapPath;
   out.write(`${theme.cyan("💾 snapshot saved")}  ${theme.bold(basename)}\n`);
   out.write(`  ${theme.dim(snapPath)}\n`);
@@ -155,7 +156,7 @@ export async function snapshotSlash(ctx: AppContext, out: Writable, arg: string)
 
 /** Fire-and-forget backend sync. Never blocks the REPL. */
 function syncAfter(ctx: AppContext): void {
-  void syncToBackend(ctx.api).catch(() => {});
+  void syncToBackend(ctx.api, ctx.flags.cwd).catch(() => {});
 }
 
 function renderUvtBar(pct: number, width: number): string {

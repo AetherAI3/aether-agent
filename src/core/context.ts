@@ -17,6 +17,8 @@ export interface GlobalFlags {
   yes: boolean;
   /** Working directory for the coding workspace (--cwd). */
   cwd: string;
+  /** Explicit offline agent selection (--local); cloud memory must stay disabled. */
+  local?: boolean;
 }
 
 export interface AppContext {

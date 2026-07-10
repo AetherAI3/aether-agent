@@ -11,7 +11,7 @@
 import { join } from "node:path";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { configDir } from "./config.js";
-import { LOGIN_PATH } from "./transport.js";
+import { LOGIN_PATH, isCredentialSafeUrl } from "./transport.js";
 
 export interface TokenStore {
   get(): Promise<string | null>;
@@ -110,6 +110,7 @@ export async function loginWithPassword(
   store: TokenStore,
   creds: { username: string; password: string; licenseKey?: string },
 ): Promise<LoginResult> {
+  if (!isCredentialSafeUrl(baseUrl)) throw new Error("login refused: insecure transport");
   const res = await fetch(baseUrl.replace(/\/$/, "") + LOGIN_PATH, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },

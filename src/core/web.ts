@@ -13,6 +13,9 @@
 // No new deps: Node's global fetch + node:dns only.
 
 import { lookup } from "node:dns/promises";
+import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { isIP } from "node:net";
 
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_BYTES = 2 * 1024 * 1024; // 2MB read cap
@@ -58,24 +61,43 @@ function isBlockedIPv4(ip: string): boolean {
 }
 
 /** True if a literal IPv6 string is loopback/unique-local/link-local/reserved. */
-function isBlockedIPv6(raw: string): boolean {
-  let ip = raw.trim().toLowerCase();
-  if (ip.startsWith("[") && ip.endsWith("]")) ip = ip.slice(1, -1);
-  // strip a zone id (fe80::1%eth0)
-  const pct = ip.indexOf("%");
-  if (pct !== -1) ip = ip.slice(0, pct);
-  if (ip === "::1" || ip === "::") return true; // loopback / unspecified
-  // IPv4-mapped (::ffff:127.0.0.1) — classify the embedded v4
-  const v4mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(ip);
-  if (v4mapped && v4mapped[1]) return isBlockedIPv4(v4mapped[1]);
-  if (ip.startsWith("fe80")) return true; // link-local
-  // unique-local fc00::/7 = fc00..fdff
-  const head = ip.split(":")[0] ?? "";
-  if (head.length >= 2) {
-    const hi = parseInt(head.slice(0, 2), 16);
-    if (!Number.isNaN(hi) && (hi & 0xfe) === 0xfc) return true; // fc00::/7
+function parseIPv6(raw: string): number[] | null {
+  let value = raw.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  const zone = value.indexOf("%");
+  if (zone >= 0) value = value.slice(0, zone);
+  const dotted = /(?:^|:)(\d{1,3}(?:\.\d{1,3}){3})$/.exec(value);
+  if (dotted?.[1]) {
+    const octets = dotted[1].split(".").map(Number);
+    if (octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return null;
+    const tail = ((octets[0]! << 8) | octets[1]!).toString(16) + ":" + ((octets[2]! << 8) | octets[3]!).toString(16);
+    value = value.slice(0, value.length - dotted[1].length) + tail;
   }
-  if (ip.startsWith("ff")) return true; // multicast
+  const halves = value.split("::");
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const missing = 8 - left.length - right.length;
+  if (missing < 0 || (halves.length === 1 && missing !== 0)) return null;
+  const words = [...left, ...Array(missing).fill("0"), ...right].map((part) => Number.parseInt(part, 16));
+  if (words.length !== 8 || words.some((word) => !Number.isInteger(word) || word < 0 || word > 0xffff)) return null;
+  return words;
+}
+
+function isBlockedIPv6(raw: string): boolean {
+  const words = parseIPv6(raw);
+  if (!words) return true;
+  const [a, b, c, d, e, f, g, h] = words as [number, number, number, number, number, number, number, number];
+  if (a === 0 && b === 0 && c === 0 && d === 0 && e === 0 && (f === 0 || f === 0xffff)) {
+    const embedded = ((g >> 8) & 255) + "." + (g & 255) + "." + ((h >> 8) & 255) + "." + (h & 255);
+    return isBlockedIPv4(embedded) || f === 0;
+  }
+  if ((a & 0xfe00) === 0xfc00) return true;
+  if ((a & 0xffc0) === 0xfe80 || (a & 0xffc0) === 0xfec0) return true;
+  if ((a & 0xff00) === 0xff00) return true;
+  if (a === 0x0100 && b === 0) return true;
+  if (a === 0x2002) return true;
+  if (a === 0x2001 && (b === 0 || b === 2 || b === 0x10 || b === 0xdb8 || (b & 0xfff0) === 0x20)) return true;
+  if ((a & 0xfff0) === 0x3ff0) return true;
   return false;
 }
 
@@ -134,25 +156,32 @@ async function resolveAll(host: string, deps?: FetchDeps): Promise<readonly stri
  * Full pre-flight guard: scheme + literal host (isSafeUrl) AND every resolved
  * address. Returns a reason string if blocked, or null if safe to fetch.
  */
-async function guard(url: string, deps?: FetchDeps): Promise<string | null> {
+interface GuardResolution {
+  reason: string | null;
+  addresses: readonly string[];
+}
+
+async function resolveGuard(url: string, deps?: FetchDeps): Promise<GuardResolution> {
   const safe = isSafeUrl(url);
-  if (!safe.ok) return safe.reason ?? "blocked URL";
+  if (!safe.ok) return { reason: safe.reason ?? "blocked URL", addresses: [] };
   const host = new URL(url).hostname;
-  // Literal IPs were already classified by isSafeUrl; only resolve DNS names.
-  if (looksLikeIPv4(host) || looksLikeIPv6(host) || (host.startsWith("[") && host.endsWith("]"))) {
-    return null;
-  }
-  let addrs: readonly string[];
+  const literal = host.replace(/^\[|\]$/g, "");
+  if (looksLikeIPv4(literal) || looksLikeIPv6(literal)) return { reason: null, addresses: [literal] };
+  let addresses: readonly string[];
   try {
-    addrs = await resolveAll(host, deps);
-  } catch (err) {
-    return `cannot resolve host ${host}: ${err instanceof Error ? err.message : String(err)}`;
+    addresses = await resolveAll(host, deps);
+  } catch {
+    return { reason: "cannot resolve host " + host, addresses: [] };
   }
-  if (addrs.length === 0) return `host ${host} did not resolve`;
-  for (const a of addrs) {
-    if (isBlockedAddress(a)) return `host ${host} resolves to a blocked address (${a})`;
+  if (addresses.length === 0) return { reason: "host " + host + " did not resolve", addresses: [] };
+  for (const address of addresses) {
+    if (isBlockedAddress(address)) return { reason: "host " + host + " resolves to a blocked address", addresses: [] };
   }
-  return null;
+  return { reason: null, addresses: [...new Set(addresses)] };
+}
+
+async function guard(url: string, deps?: FetchDeps): Promise<string | null> {
+  return (await resolveGuard(url, deps)).reason;
 }
 
 // --- HTML -> readable text --------------------------------------------------
@@ -235,6 +264,70 @@ const MAX_REDIRECTS = 5;
  * already passed the original host — a TOCTOU bypass. We refuse that by guarding
  * each Location before following it. Returns the final Response (2xx/4xx body).
  */
+export interface PinnedRequestOptions {
+  protocol: "http:" | "https:";
+  hostname: string;
+  port?: string;
+  path: string;
+  method: "GET";
+  headers: Record<string, string>;
+  servername?: string;
+}
+
+export function pinnedRequestOptions(url: string, address: string): PinnedRequestOptions {
+  const target = new URL(url);
+  if (target.protocol !== "http:" && target.protocol !== "https:") throw new Error("unsupported protocol");
+  return {
+    protocol: target.protocol,
+    hostname: address,
+    ...(target.port ? { port: target.port } : {}),
+    path: target.pathname + target.search,
+    method: "GET",
+    headers: { host: target.host, "user-agent": USER_AGENT, accept: "text/html,*/*" },
+    ...(target.protocol === "https:" && isIP(target.hostname) === 0 ? { servername: target.hostname } : {}),
+  };
+}
+
+function responseHeaders(raw: IncomingHttpHeaders): Headers {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(raw)) {
+    if (Array.isArray(value)) for (const item of value) headers.append(name, item);
+    else if (value != null) headers.set(name, String(value));
+  }
+  return headers;
+}
+
+async function requestPinned(url: string, signal: AbortSignal, addresses: readonly string[]): Promise<Response> {
+  if (!addresses.length) throw new Error("no approved address");
+  const options = { ...pinnedRequestOptions(url, addresses[0]!), signal };
+  const request = options.protocol === "https:" ? httpsRequest : httpRequest;
+  return new Promise<Response>((resolve, reject) => {
+    let settled = false;
+    const req = request(options, (res) => {
+      const chunks: Buffer[] = [];
+      let total = 0;
+      const finish = (): void => {
+        if (settled) return;
+        settled = true;
+        const body = Buffer.concat(chunks);
+        resolve(new Response(body.length ? body : null, { status: res.statusCode ?? 500, headers: responseHeaders(res.headers) }));
+      };
+      res.on("data", (chunk: Buffer) => {
+        if (settled) return;
+        const remaining = MAX_BYTES - total;
+        if (remaining <= 0) return;
+        chunks.push(chunk.subarray(0, remaining));
+        total += Math.min(chunk.length, remaining);
+        if (total >= MAX_BYTES) { finish(); res.destroy(); }
+      });
+      res.on("end", finish);
+      res.on("error", (error) => { if (!settled) reject(error); });
+    });
+    req.on("error", (error) => { if (!settled) reject(error); });
+    req.end();
+  });
+}
+
 async function fetchGuardedRedirects(
   url: string,
   signal: AbortSignal,
@@ -242,15 +335,11 @@ async function fetchGuardedRedirects(
 ): Promise<Response> {
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+    const resolution = await resolveGuard(current, deps);
+    if (resolution.reason) throw new Error(resolution.reason);
     const res = deps?.fetchTransport
       ? await deps.fetchTransport(current)
-      : await fetch(current, {
-          method: "GET",
-          headers: { "user-agent": USER_AGENT, accept: "text/html,*/*" },
-          redirect: "manual",
-          signal,
-        });
-    if (res.status >= 300 && res.status < 400) {
+      : await requestPinned(current, signal, resolution.addresses);    if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get("location");
       if (!loc) return res; // redirect with no target — treat as terminal
       const next = new URL(loc, current).toString();

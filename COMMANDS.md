@@ -9,6 +9,21 @@ aether [global flags] "<prompt>"        # bare prompt = one-shot chat
 aether                                  # no args = interactive REPL
 ```
 
+## Registry indexes
+
+<!-- Registry markers are checked against the declarative command registries. -->
+
+<!-- CLI-COMMANDS:START -->
+`help`, `agent`, `chat`, `resume`, `run`, `models`, `agents`, `auth`,
+`github`, `vault`, `workflow`, `memory`, `image`, `video`, `output`, `audit`,
+`receipt`, `doctor`, `mcp`, `config`
+<!-- CLI-COMMANDS:END -->
+
+<!-- SLASH-COMMANDS:START -->
+`help`, `models`, `model`, `agent`, `agents`, `tier`, `audit`, `effort`, `doctor`, `clear`, `exit`, `mcp`, `autonomous-execution`, `subagent-driven-execution`, `self-review`, `recon`, `plan`, `research`, `review`, `code-review`, `writing-skills`, `writing-plans`, `queue`, `steer`, `btw`, `pin`, `drop`, `snapshot`, `limit`, `audit-receipt`, `rollback`, `logs-view`, `logs`, `goal`, `goals`, `memory`, `workflow`, `workflow-templates`, `workflow-template`, `vault`, `vault-context`, `vault-search`, `vault-recent`, `vault-project`, `vault-tag`, `vault-tree`, `delegate`, `tree`, `broadcast`, `gather`, `scaffold`, `port`, `test-drive`, `bench`, `purge`, `stage-diff`, `revert`, `photogen`, `frame`, `re-frame`, `videogen`, `sequence`, `animate`, `re-cut`, `output`, `storyboard`, `add`, `hud`
+<!-- SLASH-COMMANDS:END -->
+
+
 ---
 
 ## Global flags
@@ -174,9 +189,9 @@ mirrors the live registry in `src/commands/slash.ts`.
 | `/tier` | Show your plan tier, default, and available counts. |
 | `/effort [tier\|1-5]` | Show or set the effort dial (`LOW`→`CODEPRO`). Persists to your Aether config and drives `aether code`. `CODEPRO` gets the banner. |
 | `/audit [n]` | Recent chain-of-custody receipts. |
-| `/doctor` | Diagnose setup: API base, auth state, server reachability. |
+| `/doctor [deep]` | Run ordered diagnostics; `deep` adds bounded checks. |
 | `/clear` | Clear the screen. |
-| `/mcp` | MCP server management (coming soon). |
+| `/mcp [list|doctor|repair]` | Diagnose or confirmation-gated repair for MCP servers. |
 | `/exit`, `/quit` | Leave the REPL. |
 
 Typos get a nudge: `/modle` answers `did you mean /model?`. Tab completes any
