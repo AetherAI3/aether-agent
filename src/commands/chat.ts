@@ -50,7 +50,10 @@ export async function runTurn(ctx: AppContext, prompt: string, signal?: AbortSig
   try {
     const stream = await ctx.api.stream(CHAT_STREAM_PATH, req, signal);
     for await (const frame of decodeSse(stream)) {
-      pulse.stop(); // first (and every) frame: real output owns the line now
+      // open/ping are handshake/keepalive — they render nothing. Stopping on
+      // them re-created the dead air on keepalive-happy servers; only frames
+      // that produce visible output own the line.
+      if (frame.type !== "open" && frame.type !== "ping") pulse.stop();
       // The server signs each turn and returns it; persist the signed receipt
       // locally (best-effort, never breaks the chat).
       if (frame.type === "custody") appendCustody(frame.custody);
