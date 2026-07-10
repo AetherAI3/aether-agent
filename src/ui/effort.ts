@@ -9,9 +9,10 @@ import { KAOMOJI } from "./kaomoji.js";
 export const EFFORT_TIERS = ["LOW", "MED", "MAX", "ULTRA", "CODEPRO"] as const;
 export type EffortTier = (typeof EFFORT_TIERS)[number];
 
-/** Accepts a tier name (any case) or a 1-based index; null if unrecognized. */
+/** Accepts a tier name (any case) or a 1-based index; null if unrecognized.
+ * Coerces defensively: a hand-edited config can carry a number or null. */
 export function normalizeEffort(input: string): EffortTier | null {
-  const t = input.trim().toUpperCase();
+  const t = String(input ?? "").trim().toUpperCase();
   if (!t) return null;
   const byName = EFFORT_TIERS.find((x) => x === t);
   if (byName) return byName;
