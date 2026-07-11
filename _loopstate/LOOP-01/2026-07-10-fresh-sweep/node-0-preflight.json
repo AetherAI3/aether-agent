@@ -1,0 +1,69 @@
+{
+  "run_id": "2026-07-10-fresh-sweep",
+  "loop_id": "LOOP-01",
+  "node": 0,
+  "result": "Tool Failure",
+  "target": "DBarr3/aether-agent",
+  "branch": "loop/LOOP-01-2026-07-10",
+  "branch_sha_at_preflight": "f6e0d97665587b1724ca9300834c379e627d8843",
+  "base": {
+    "ref": "main",
+    "sha": "6f01a90e60ab1f7cfd5da337fae818ec7fdf3d31",
+    "ahead_by": 4,
+    "behind_by": 0
+  },
+  "environment": {
+    "local_worktree_trusted": false,
+    "reason": "local checkout is on another branch, contains unrelated edits, and .git is read-only",
+    "remote_branch_used_as_authority": true
+  },
+  "required_tools": {
+    "ast-grep": {
+      "available": false,
+      "attempts": 2,
+      "failure": "npm ENOTCACHED; package absent from cache and registry access unavailable"
+    },
+    "semgrep": {
+      "available": false,
+      "attempts": 1,
+      "failure": "pip found no available distribution in the restricted package index"
+    },
+    "graphify": {
+      "available": false,
+      "attempts": 1,
+      "failure": "graphifyy unavailable from the restricted package index",
+      "existing_artifact_trusted_for_fresh_run": false
+    }
+  },
+  "protocol_decision": "HALT before node 1. LOOP-01 preconditions explicitly prohibit grep fallback when ast-grep and Semgrep are both unavailable.",
+  "reasoning_summary": [
+    "Verified the remote branch is based on current main.",
+    "Rejected the dirty local checkout as an execution authority.",
+    "Checked all mandated scanner executables.",
+    "Attempted installation and the required retry.",
+    "Stopped before semantic claims or source mutations."
+  ],
+  "tools_used": [
+    "GitHub compare/fetch connector",
+    "PowerShell command discovery",
+    "npm exec",
+    "pip"
+  ],
+  "confidence_block": {
+    "confidence": 0.99,
+    "risk": "high",
+    "evidence": [
+      "remote-compare",
+      "command-discovery",
+      "installation-attempt-logs",
+      "manual-read-loop-preconditions"
+    ],
+    "unknown": [
+      "Fresh AST-level backend findings; node 1 was not permitted to start"
+    ],
+    "missing_evidence": [
+      "A runnable ast-grep or Semgrep executable",
+      "A clean worktree for the exact remote branch"
+    ]
+  }
+}
