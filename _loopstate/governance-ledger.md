@@ -1,2 +1,3 @@
 | 2026-07-10 | LOOP-19 | 2026-07-10T03-28-15Z | PASS | confidence 0.88 | branch loop/LOOP-19-2026-07-09, 16 welds, tests 122->169, LOOP-11 gate REVISE->fixed (E17) | merge pending operator |
 | 2026-07-10 | LOOP-19-sweep | 2026-07-10T03-28-15Z | PASS | 13 sweep welds (W1-W13), tests 172->183, 3 HIGH first-run/exit-0/wire bugs fixed, 9 deferred to register | merge pending operator |
+| 2026-07-10 | LOOP-01 | 2026-07-10-fresh-sweep | HALTED-Tool Failure | success_rate=0; retry_count=1; debate_rounds=2; required_tool_success_pct=0%; human_overrides=0; tokens_spent=unavailable; tier_mix=standard+reasoning; hallucinations_caught=1; false_positive_rate=n/a; mttr=unresolved; rollbacks=0 | ast-grep/Semgrep unavailable; resume at node 1 |
