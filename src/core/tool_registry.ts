@@ -70,7 +70,7 @@ export const TOOL_DEFINITIONS: Readonly<Record<ToolName, ToolDefinition>> = {
 export type ValidatedToolArgs = Record<string, string | number>;
 
 export type ToolValidation =
-  | { ok: true; name: ToolName; args: ValidatedToolArgs; definition: ToolDefinition }
+  | { ok: true; name: ToolName; args: ValidatedToolArgs }
   | { ok: false; error: string };
 
 export function toolDefinition(name: string): ToolDefinition | undefined {
@@ -114,7 +114,7 @@ export function validateToolCall(name: string, rawArgs: unknown): ToolValidation
     }
     validated[key] = value;
   }
-  return { ok: true, name: name as ToolName, args: validated, definition };
+  return { ok: true, name: name as ToolName, args: validated };
 }
 
 export function validateToolDefinitionCoverage(): string[] {

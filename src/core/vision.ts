@@ -4,7 +4,8 @@
 // download helpers with streaming fetch, output manager with persistent log.
 // No terminal I/O. Every function wraps a single concept.
 
-import { ApiClient, MODELS_PATH } from "./transport.js";
+import { ApiClient, MODELS_PATH, isCredentialSafeUrl } from "./transport.js";
+import { InsecureTransportError } from "./errors.js";
 import type { CatalogItem, CatalogResponse } from "../types.js";
 import { createWriteStream, mkdirSync, readdirSync, statSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -226,6 +227,7 @@ export async function downloadMediaFile(
   api: ApiClient, url: string, destDir: string,
   modelKey: string, kind: MediaKind, label?: string,
 ): Promise<string> {
+  if (!isCredentialSafeUrl(url)) throw new InsecureTransportError(url);
   const headers = await authHeaders(api);
   const resp = await fetch(url, { headers });
   if (!resp.ok) throw new Error(`download failed: HTTP ${resp.status}`);

@@ -43,32 +43,6 @@ export function loadSession(id: string, root: string = logsRoot(), cwd?: string)
     : [];
   return { dir, manifest, events };
 }
-export interface SessionSummary {
-  id: string;
-  dir: string;
-  manifest: SessionManifest;
-}
-
-export function listSessionManifests(root: string = logsRoot()): SessionSummary[] {
-  if (!existsSync(root)) return [];
-  const summaries: SessionSummary[] = [];
-  for (const id of readdirSync(root)) {
-    try {
-      const dir = resolveOpaqueChild(root, id, "session id");
-      if (!statSync(dir).isDirectory()) continue;
-      const manifestPath = join(dir, "manifest.json");
-      if (!existsSync(manifestPath)) continue;
-      const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as SessionManifest;
-      summaries.push({ id, dir, manifest });
-    } catch {
-      /* malformed and unreadable records remain unavailable, never fatal */
-    }
-  }
-  return summaries.sort((a, b) => b.manifest.started.localeCompare(a.manifest.started));
-}
-
-
-
 /** The most recently started session, or null if none. */
 export function latestSession(cwd: string, root: string = logsRoot()): LoadedSession | null {
   if (!existsSync(root)) return null;

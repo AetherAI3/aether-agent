@@ -9,6 +9,7 @@ import {
   completeCommand,
   findRegisteredCommand,
   suggestRegisteredCommand,
+  validateCommandRegistry,
 } from "../core/command_registry.js";
 
 export interface SlashCommand {
@@ -78,8 +79,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "token-budget", args: "<uvt>", summary: "alias for /limit", section: "Context & Limits", hidden: true },
   { name: "audit-receipt", args: "[n]", summary: "verified log of tool calls + UVT", section: "Context & Limits" },
   { name: "rollback", args: "[n]", summary: "revert last n filesystem changes", section: "Context & Limits" },
-  { name: "logs-view", summary: "interactive session log browser", section: "Context & Limits" },
-  { name: "logs", args: "[n]", summary: "recent session logs", section: "Context & Limits" },
+  { name: "logs-view", aliases: ["logs"], summary: "interactive session log browser", section: "Context & Limits" },
 
   // ── Goals & Workflows ──
   { name: "goal", args: "<desc|view|start|pause|resume|cancel|complete|note>", summary: "create/manage a goal (agent plans phases)", section: "Goals & Workflows" },
@@ -128,6 +128,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "add", args: "<element>", summary: "add a HUD overlay (context-bar, timer, tools, help, health, status)", section: "HUD" },
   { name: "hud", args: "remove|list|clear", summary: "manage HUD overlay elements", section: "HUD" },
 ];
+const registryErrors = validateCommandRegistry(SLASH_COMMANDS, SLASH_SECTIONS);
+if (registryErrors.length) throw new Error(`Invalid slash registry: ${registryErrors.join("; ")}`);
 
 /** Every dispatchable name (canonical + aliases). */
 export function allCommandNames(): string[] {

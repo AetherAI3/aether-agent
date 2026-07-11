@@ -150,21 +150,25 @@ export function newTask(title: string): GoalTask {
   return { id: `t_${randomUUID().slice(0, 6)}`, title, status: "queued" };
 }
 
+function cloneGoal(goal: Goal): Goal {
+  return JSON.parse(JSON.stringify(goal)) as Goal;
+}
+
 export function selectPhase(goal: Goal, phaseId: string): Goal {
-  const copy = JSON.parse(JSON.stringify(goal)) as Goal;
+  const copy = cloneGoal(goal);
   copy.selectedPhaseId = phaseId;
   return copy;
 }
 
 export function setPhaseNote(goal: Goal, phaseId: string, note: string): Goal {
-  const copy = JSON.parse(JSON.stringify(goal)) as Goal;
+  const copy = cloneGoal(goal);
   const phase = copy.phases.find((p) => p.id === phaseId);
   if (phase) phase.userNote = note;
   return copy;
 }
 
 export function startGoal(goal: Goal): Goal {
-  const copy = JSON.parse(JSON.stringify(goal)) as Goal;
+  const copy = cloneGoal(goal);
   copy.status = "running";
   const first = copy.phases.find((p) => p.status === "pending");
   if (first) {
@@ -177,7 +181,7 @@ export function startGoal(goal: Goal): Goal {
 }
 
 export function completePhase(goal: Goal, phaseId: string): Goal {
-  const copy = JSON.parse(JSON.stringify(goal)) as Goal;
+  const copy = cloneGoal(goal);
   const phase = copy.phases.find((p) => p.id === phaseId);
   if (phase) {
     phase.status = "complete";

@@ -20,7 +20,7 @@ aether                                  # no args = interactive REPL
 <!-- CLI-COMMANDS:END -->
 
 <!-- SLASH-COMMANDS:START -->
-`help`, `models`, `model`, `agent`, `agents`, `tier`, `audit`, `effort`, `doctor`, `clear`, `exit`, `mcp`, `autonomous-execution`, `subagent-driven-execution`, `self-review`, `recon`, `plan`, `research`, `review`, `code-review`, `writing-skills`, `writing-plans`, `queue`, `steer`, `btw`, `pin`, `drop`, `snapshot`, `limit`, `audit-receipt`, `rollback`, `logs-view`, `logs`, `goal`, `goals`, `memory`, `workflow`, `workflow-templates`, `workflow-template`, `vault`, `vault-context`, `vault-search`, `vault-recent`, `vault-project`, `vault-tag`, `vault-tree`, `delegate`, `tree`, `broadcast`, `gather`, `scaffold`, `port`, `test-drive`, `bench`, `purge`, `stage-diff`, `revert`, `photogen`, `frame`, `re-frame`, `videogen`, `sequence`, `animate`, `re-cut`, `output`, `storyboard`, `add`, `hud`
+`help`, `models`, `model`, `agent`, `agents`, `tier`, `audit`, `effort`, `doctor`, `clear`, `exit`, `mcp`, `autonomous-execution`, `subagent-driven-execution`, `self-review`, `recon`, `plan`, `research`, `review`, `code-review`, `writing-skills`, `writing-plans`, `queue`, `steer`, `btw`, `pin`, `drop`, `snapshot`, `limit`, `audit-receipt`, `rollback`, `logs-view`, `goal`, `goals`, `memory`, `workflow`, `workflow-templates`, `workflow-template`, `vault`, `vault-context`, `vault-search`, `vault-recent`, `vault-project`, `vault-tag`, `vault-tree`, `delegate`, `tree`, `broadcast`, `gather`, `scaffold`, `port`, `test-drive`, `bench`, `purge`, `stage-diff`, `revert`, `photogen`, `frame`, `re-frame`, `videogen`, `sequence`, `animate`, `re-cut`, `output`, `storyboard`, `add`, `hud`
 <!-- SLASH-COMMANDS:END -->
 
 
@@ -175,7 +175,7 @@ aether config set autoApply true
 
 Type a prompt to chat; type `/` to drive the session. `/help` renders this same
 set, grouped, inside the REPL. This table is the single source of truth — it
-mirrors the live registry in `src/commands/slash.ts`.
+mirrors the live registry in `src/commands/slash_registry.ts`.
 
 ### Session
 

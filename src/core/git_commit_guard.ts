@@ -15,7 +15,7 @@ export class SpawnGitRunner implements GitRunner {
   constructor(private readonly cwd: string) {}
 
   run(args: string[]): GitRunResult {
-    const result = spawnSync("git", args, {
+    const result = spawnSync("git", ["-c", "core.literalPathspecs=true", ...args], {
       cwd: this.cwd,
       shell: false,
       encoding: "utf8",

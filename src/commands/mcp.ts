@@ -13,6 +13,7 @@ import { McpClient } from "../core/mcp.js";
 import type { McpProvider, McpConnection, StartOAuthResponse } from "../core/mcp.js";
 import { LocalMcpStore, sanityCheckUrl } from "../core/mcp_store.js";
 import { collectMcpDiagnostics, renderMcpDiagnostics } from "../core/mcp_diagnostics.js";
+import { errorMessage } from "../core/errors.js";
 import { SelectMenu, renderMenu } from "../ui/menu.js";
 import type { MenuItem } from "../ui/menu.js";
 import { openBrowser } from "../core/browser.js";
@@ -116,7 +117,7 @@ async function authenticate(client: McpClient, io: MenuIO, providerId: string): 
   try {
     start = await client.startOAuth(providerId);
   } catch (e) {
-    note(io, `auth start failed: ${e instanceof Error ? e.message : String(e)}`);
+    note(io, `auth start failed: ${errorMessage(e)}`);
     return;
   }
   if (start.flow === "pat_paste") {
@@ -129,7 +130,7 @@ async function authenticate(client: McpClient, io: MenuIO, providerId: string): 
       const r = await client.patStore(providerId, pat);
       note(io, r.ok ? `✔ ${providerId} connected` : `✖ rejected: ${r.reason ?? "validation failed"}`);
     } catch (e) {
-      note(io, `✖ store failed: ${e instanceof Error ? e.message : String(e)}`);
+      note(io, `✖ store failed: ${errorMessage(e)}`);
     }
     return;
   }
@@ -143,7 +144,7 @@ async function authenticate(client: McpClient, io: MenuIO, providerId: string): 
       await client.pollUntilConnected(providerId, io.sleep);
       note(io, `✔ ${providerId} connected`);
     } catch (e) {
-      note(io, `✖ ${e instanceof Error ? e.message : String(e)}`);
+      note(io, `✖ ${errorMessage(e)}`);
     }
     return;
   }
@@ -181,7 +182,7 @@ async function manageBackend(
         const tools = await client.listTools(providerId);
         note(io, `✔ ${providerId}: ${tools.length} tools available`);
       } catch (e) {
-        note(io, `✖ test failed: ${e instanceof Error ? e.message : String(e)} — try Re-authenticate`);
+        note(io, `✖ test failed: ${errorMessage(e)} — try Re-authenticate`);
       }
       break;
     case "del":
@@ -190,7 +191,7 @@ async function manageBackend(
           await client.disconnect(providerId);
           note(io, `✔ disconnected ${providerId}`);
         } catch (e) {
-          note(io, `✖ ${e instanceof Error ? e.message : String(e)}`);
+          note(io, `✖ ${errorMessage(e)}`);
         }
       }
       break;
@@ -210,7 +211,7 @@ async function manageLocal(store: LocalMcpStore, io: MenuIO, name: string): Prom
   switch (r.item.id) {
     case "test": {
       const err = current ? sanityCheckUrl(current.url) : "server missing";
-      note(io, err ? `✖ ${err}` : "✔ URL shape OK — server allowlist validates at chat time");
+      note(io, err ? `✖ ${err}` : "✔ URL shape OK — stored locally, not yet forwarded to agent chats");
       break;
     }
     case "edit": {
@@ -223,7 +224,7 @@ async function manageLocal(store: LocalMcpStore, io: MenuIO, name: string): Prom
         });
         note(io, "✔ saved");
       } catch (e) {
-        note(io, `✖ ${e instanceof Error ? e.message : String(e)}`);
+        note(io, `✖ ${errorMessage(e)}`);
       }
       break;
     }
@@ -246,9 +247,9 @@ async function addLocal(store: LocalMcpStore, io: MenuIO): Promise<void> {
   const tok = (await io.readLine("Auth token (optional): ", true)).trim();
   try {
     store.add({ name, url, transport: "http", ...(tok ? { authToken: tok } : {}) });
-    note(io, `✔ added ${name} — passed to agent chats as an MCP server`);
+    note(io, `✔ added ${name} — stored locally, not yet forwarded to agent chats`);
   } catch (e) {
-    note(io, `✖ ${e instanceof Error ? e.message : String(e)}`);
+    note(io, `✖ ${errorMessage(e)}`);
   }
 }
 

@@ -12,6 +12,10 @@ import { renderGoalChain, renderPhaseDetail, navigatePhase } from "../ui/goal_ch
 
 const cols = () => process.stdout.columns || 100;
 
+function resolveGoal(cwd: string, id?: string): Goal | undefined {
+  return id ? getGoalForWorkspace(id, cwd) : getActiveGoal(cwd) ?? goalsForWorkspace(cwd)[0];
+}
+
 // ── LLM-powered goal decomposition ────────────────────────────────────
 // Heuristic today; later wired to POST /project/decompose (task_graph.py).
 
@@ -104,7 +108,7 @@ export async function handleGoal(
 
     case "start": {
       const id = rest.trim();
-      const goal = id ? getGoalForWorkspace(id, ctx.flags.cwd) : getActiveGoal(ctx.flags.cwd) ?? goalsForWorkspace(ctx.flags.cwd)[0];
+      const goal = resolveGoal(ctx.flags.cwd, id);
       if (!goal) { out.write("no goals found. create one first: /goal <description>\n"); return; }
       if (goal.status === "running") { out.write(`already running: ${goal.id}\n`); return; }
       const started = startGoal(goal);
@@ -160,7 +164,7 @@ export async function handleGoal(
       const phaseId = parts[0] ?? "";
       const note = parts[1] ?? "";
       if (!phaseId || !note) { out.write("usage: /goal note <phase-id> <note text>\n"); return; }
-      const active = getActiveGoal(ctx.flags.cwd) ?? goalsForWorkspace(ctx.flags.cwd)[0];
+      const active = resolveGoal(ctx.flags.cwd);
       if (!active) { out.write("no goal to add note to.\n"); return; }
       const updated = setPhaseNote(active, phaseId, note);
       upsertGoal(updated);
@@ -170,7 +174,7 @@ export async function handleGoal(
 
     case "view": {
       const id = rest.trim();
-      const goal = id ? getGoalForWorkspace(id, ctx.flags.cwd) : getActiveGoal(ctx.flags.cwd) ?? goalsForWorkspace(ctx.flags.cwd)[0];
+      const goal = resolveGoal(ctx.flags.cwd, id);
       if (!goal) { out.write("no goals found.\n"); return; }
       out.write("\n");
       for (const l of renderGoalChain(goal, c)) out.write("  " + l + "\n");

@@ -4,7 +4,6 @@
 
 import type { Writable } from "node:stream";
 import type { AppContext } from "../core/context.js";
-import { join } from "node:path";
 import { confineToWorkspace } from "../core/workspace_scope.js";
 import { theme } from "../ui/theme.js";
 import { box } from "../ui/box.js";
@@ -12,7 +11,7 @@ import {
   getRegistry, resetRegistry, saveSnapshot, loadSnapshot, listSnapshots,
   ContextRegistry, syncToBackend, loadFromBackend,
 } from "../core/context_registry.js";
-import { readCustodyLog } from "../core/custody.js";
+import { readCustodyLog, shortCustodyHash } from "../core/custody.js";
 import { fetchTrail } from "../core/audit.js";
 import type { AuditEntry } from "../core/audit.js";
 
@@ -204,17 +203,6 @@ export async function limitSlash(ctx: AppContext, out: Writable, arg: string): P
 
 // ── /audit-receipt ────────────────────────────
 
-function hashShortCustody(v: unknown): string | null {
-  if (v == null) return null;
-  if (typeof v === "string") return v.slice(0, 12);
-  if (typeof v === "object") {
-    const o = v as Record<string, unknown>;
-    const inner = o["hash"] ?? o["env_hash"] ?? o["commitment_hash"] ?? o["digest"];
-    if (inner != null) return String(inner).slice(0, 12);
-  }
-  return "✓";
-}
-
 export async function auditReceiptSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
   const nArg = Number(arg);
   const limit = Number.isInteger(nArg) && nArg > 0 ? Math.min(nArg, 100) : 20;
@@ -249,7 +237,7 @@ export async function auditReceiptSlash(ctx: AppContext, out: Writable, arg: str
     const ts = c.received_at != null ? new Date(c.received_at).toISOString().padEnd(H_TIME) : "—".padEnd(H_TIME);
     const oid = (String(c.order_id ?? "—")).slice(0, H_ORDER - 1).padEnd(H_ORDER);
     const evt = "chat_turn".padEnd(H_EVENT);
-    const comm = (hashShortCustody(c.commitment) ?? "—").slice(0, H_COMMIT - 1).padEnd(H_COMMIT);
+    const comm = shortCustodyHash(c.commitment).slice(0, H_COMMIT - 1).padEnd(H_COMMIT);
     const pathCol = String(c.path ?? "—").slice(0, H_PATH - 1).padEnd(H_PATH);
     out.write(`  ${theme.dim(ts)}${oid}${theme.cyan(evt)}${theme.dim(comm)}${pathCol}\n`);
   }

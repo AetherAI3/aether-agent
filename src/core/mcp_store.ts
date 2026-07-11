@@ -91,12 +91,12 @@ export class LocalMcpStore {
     }
   }
 
-  permissions(): { status: "pass" | "warn" | "fail"; detail: string } {
+  permissions(): { status: "pass" | "warn" | "fail" | "skip"; detail: string } {
     if (!existsSync(this.file)) return { status: "pass", detail: "registry not created" };
     try {
       const mode = statSync(this.file).mode & 0o777;
       if (process.platform === "win32") {
-        return { status: "pass", detail: "registry readable (ACL-controlled)" };
+        return { status: "skip", detail: "permission bits not checked on Windows (ACLs not verified)" };
       }
       return mode & 0o077
         ? { status: "warn", detail: "registry permissions are broader than 0600" }

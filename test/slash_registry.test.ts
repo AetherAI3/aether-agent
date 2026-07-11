@@ -5,7 +5,6 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   SLASH_COMMANDS,
-  SLASH_SECTIONS,
   allCommandNames,
   findCommand,
   completeSlash,
@@ -35,11 +34,8 @@ test("registry ↔ handleSlash switch stay in sync (no /help drift, ever again)"
   assert.deepEqual(missingFromSwitch, [], `registry entries with no case: ${missingFromSwitch.join(", ")}`);
 });
 
-test("every command has a summary and a known section", () => {
-  for (const c of SLASH_COMMANDS) {
-    assert.ok(c.summary.length > 0, `/${c.name} missing summary`);
-    assert.ok((SLASH_SECTIONS as readonly string[]).includes(c.section), `/${c.name} bad section ${c.section}`);
-  }
+test("registry loads without throwing (validateCommandRegistry passes at import time)", () => {
+  assert.ok(SLASH_COMMANDS.length > 0);
 });
 
 test("findCommand resolves names and aliases, with or without slash", () => {
