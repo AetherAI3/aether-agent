@@ -79,3 +79,13 @@ test("broker-absent backend rejects (404 propagates)", async () => {
   const c = new McpClient(api);
   await assert.rejects(() => c.listProviders());
 });
+
+test("broker list endpoints reject wrong-shaped payloads at the API boundary", async () => {
+  const api = fakeApi({
+    [MCP_PROVIDERS_PATH]: { tier: "pro", default: "haiku" },
+    [MCP_CONNECTIONS_PATH]: { connected: true },
+  });
+  const c = new McpClient(api);
+  await assert.rejects(() => c.listProviders(), /invalid list payload/);
+  await assert.rejects(() => c.listConnections(), /invalid list payload/);
+});

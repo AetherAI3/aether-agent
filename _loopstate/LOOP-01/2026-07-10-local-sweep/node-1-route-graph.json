@@ -1,0 +1,24 @@
+{
+  "run_id": "2026-07-10-local-sweep",
+  "scope": "src/core and src/commands backend boundaries",
+  "graph_source": "graphify-out/graph.json built_at_commit=dca6952653b240c3854230c095c01725b262cfa8",
+  "high_fan_in": [
+    {"label":"AppContext","file":"src/core/context.ts","inbound_edges":30},
+    {"label":"ApiClient","file":"src/core/transport.ts","inbound_edges":25},
+    {"label":"BrainEvent","file":"src/core/brain_protocol.ts","inbound_edges":18},
+    {"label":"ToolExecutor","file":"src/core/tool_executor.ts","inbound_edges":5}
+  ],
+  "preconditions": {
+    "git_pull": "blocked: .git write denied and GitHub connection unavailable",
+    "ast_grep_or_semgrep": "missing; TypeScript compiler AST plus existing graph used as a bounded fallback",
+    "test_suite": "available"
+  },
+  "routes": [
+    {"method":"CLI /mcp","handler":"src/commands/mcp.ts:mcpFromRepl","auth_middleware":"ApiClient.authHeaders","backend_calls":["GET /mcp-broker/oauth/providers","GET /mcp-broker/oauth/connections","GET /mcp-broker/tools/{provider_id}"],"bounded":"not explicit on getJson","confidence":0.9},
+    {"method":"CLI /doctor --deep","handler":"src/core/diagnostics.ts:diagnosticReport","auth_middleware":"ApiClient.authHeaders","backend_calls":["GET /models","MCP broker checks"],"bounded":"bounded helper, max 10s","confidence":0.94},
+    {"method":"tool web_fetch","handler":"src/core/tool_executor.ts:executeAsync -> src/core/web.ts:webFetch","auth_middleware":"none","backend_calls":["external URL","manual redirects"],"bounded":"15s and 2MB/8000 chars","confidence":0.96},
+    {"method":"CLI vault upload/download","handler":"src/commands/vault.ts -> src/core/vault.ts","auth_middleware":"ApiClient bearer","backend_calls":["POST /vault/spaces/upload","GET /vault/spaces/download/{filename}","DELETE /vault/spaces/delete/{filename}"],"bounded":"file size/path bounds not centralized","confidence":0.86},
+    {"method":"CLI chat/code","handler":"src/commands/chat.ts and src/commands/code.ts","auth_middleware":"ApiClient.authHeaders","backend_calls":["POST /agent/chat/stream","POST /agent/chat"],"bounded":"SSE idle timeout defaults 120s","confidence":0.95}
+  ],
+  "confidence": {"score":0.86,"unknown":["server-side authorization and refresh-token rotation","dynamic dispatch reachability","remote API pagination contracts"]}
+}

@@ -39,6 +39,13 @@ export interface ToolDescriptor {
   description?: string;
 }
 
+function requireList<T>(value: unknown, path: string): T[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${path} returned an invalid list payload`);
+  }
+  return value as T[];
+}
+
 export interface PollOpts {
   intervalSec?: number;
   timeoutSec?: number;
@@ -47,12 +54,18 @@ export interface PollOpts {
 export class McpClient {
   constructor(private readonly api: ApiClient) {}
 
-  listProviders(): Promise<McpProvider[]> {
-    return this.api.getJson<McpProvider[]>(MCP_PROVIDERS_PATH);
+  async listProviders(): Promise<McpProvider[]> {
+    return requireList(
+      await this.api.getJson<unknown>(MCP_PROVIDERS_PATH),
+      MCP_PROVIDERS_PATH,
+    );
   }
 
-  listConnections(): Promise<McpConnection[]> {
-    return this.api.getJson<McpConnection[]>(MCP_CONNECTIONS_PATH);
+  async listConnections(): Promise<McpConnection[]> {
+    return requireList(
+      await this.api.getJson<unknown>(MCP_CONNECTIONS_PATH),
+      MCP_CONNECTIONS_PATH,
+    );
   }
 
   startOAuth(providerId: string): Promise<StartOAuthResponse> {
@@ -75,9 +88,11 @@ export class McpClient {
     });
   }
 
-  listTools(providerId: string): Promise<ToolDescriptor[]> {
-    return this.api.getJson<ToolDescriptor[]>(
-      `${MCP_TOOLS_PATH}/${encodeURIComponent(providerId)}`,
+  async listTools(providerId: string): Promise<ToolDescriptor[]> {
+    const path = `${MCP_TOOLS_PATH}/${encodeURIComponent(providerId)}`;
+    return requireList(
+      await this.api.getJson<unknown>(path),
+      path,
     );
   }
 
