@@ -7,9 +7,11 @@
 // regardless of which side originally ran it.
 
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, constants as fsConstants, existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import type { ToolName } from "./brain_protocol.js";
+import { validateToolCall } from "./tool_registry.js";
+import { GitCommitGuard, SpawnGitRunner } from "./git_commit_guard.js";
 import { webFetch, webSearch } from "./web.js";
 
 const MAX_OUTPUT = 8000;
@@ -43,6 +45,7 @@ export interface FileSnapshot {
 
 export class ToolExecutor {
   private readonly root: string;
+  private readonly committer: GitCommitGuard;
 
   constructor(
     cwd: string,
@@ -51,6 +54,7 @@ export class ToolExecutor {
     // Canonicalize the root once (resolve any symlinks in the workspace path).
     const r = resolve(cwd);
     this.root = existsSync(r) ? realpathSync(r) : r;
+    this.committer = new GitCommitGuard(new SpawnGitRunner(this.root));
   }
 
   /**
@@ -97,7 +101,12 @@ export class ToolExecutor {
    * SSRF resolve) and live on executeAsync; called here they return a clear
    * pointer rather than silently no-op'ing.
    */
-  execute(name: string, args: Record<string, unknown>): ToolResult {
+  execute(name: string, rawArgs: unknown): ToolResult {
+    const validation = validateToolCall(name, rawArgs);
+    if (!validation.ok) {
+      return { output: `[tool ${name} rejected: ${validation.error}]`, exitCode: 1 };
+    }
+    const args = validation.args;
     try {
       switch (name as ToolName) {
         case "read_file":
@@ -138,7 +147,12 @@ export class ToolExecutor {
    * Web tools never throw — they return a bracketed string, exit 0 (advisory
    * output the brain reads as ordinary tool output).
    */
-  async executeAsync(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  async executeAsync(name: string, rawArgs: unknown): Promise<ToolResult> {
+    const validation = validateToolCall(name, rawArgs);
+    if (!validation.ok) {
+      return { output: `[tool ${name} rejected: ${validation.error}]`, exitCode: 1 };
+    }
+    const args = validation.args;
     if (name === "web_search") {
       const limit = Number(args["limit"]);
       const text = await webSearch(
@@ -165,7 +179,15 @@ export class ToolExecutor {
   private writeFile(path: string, content: string): ToolResult {
     const abs = this.safe(path);
     mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, content, "utf8");
+    // Re-validate immediately before opening, then refuse a symlink final component.
+    const verified = this.safe(path);
+    const noFollow = fsConstants.O_NOFOLLOW ?? 0;
+    const fd = openSync(verified, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | noFollow, 0o600);
+    try {
+      writeFileSync(fd, content, "utf8");
+    } finally {
+      closeSync(fd);
+    }
     return { output: `[wrote ${path} · ${Buffer.byteLength(content)} bytes]`, exitCode: 0 };
   }
 
@@ -210,6 +232,7 @@ export class ToolExecutor {
         if (!ent.isFile()) continue;
 
         const file = resolve(dir, ent.name);
+        if (statSync(file).size > SNAPSHOT_MAX_BYTES) continue;
         const buf = readFileSync(file);
         if (buf.includes(0)) continue;
         const rel = "./" + relative(this.root, file).split(sep).join("/");
@@ -225,42 +248,13 @@ export class ToolExecutor {
     return { output: `[exit 0]\n${capHeadTail(hits.join("\n"), MAX_OUTPUT)}`, exitCode: 0 };
   }
 
-  /** Run a command via argv (no shell) — for git, where the message can
-   * contain shell metacharacters the string form of `run()` would interpret. */
-  private runArgv(argv: string[], timeoutMs = 900_000): ToolResult {
-    const [cmd, ...rest] = argv;
-    const r = spawnSync(cmd!, rest, {
-      cwd: this.root,
-      encoding: "utf8",
-      timeout: timeoutMs,
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    return toResult(r, timeoutMs);
-  }
-
   private gitCommit(message: string): ToolResult {
-    this.run("git add -A");
-    // argv form: the commit message reaches git as one real argument, never
-    // interpreted by a shell — `fix "cap & retry"` used to split at `&` and
-    // could execute what followed it.
-    const commit = this.runArgv(["git", "commit", "-q", "-m", message]);
-    const nothingToCommit = commit.exitCode !== 0 && /nothing to commit/i.test(commit.output);
-    if (commit.exitCode !== 0 && !nothingToCommit) {
-      // A real failure (hook rejection, unset user.name, etc.) — surface it
-      // as-is. Fetching HEAD here would report the PREVIOUS commit's sha as
-      // if this one had landed.
-      return commit;
-    }
-    // Surface the new short sha so the brain can emit a checkpoint event.
-    const sha = this.runArgv(["git", "rev-parse", "--short", "HEAD"]);
-    const head = sha.exitCode === 0 ? sha.output.replace(/^\[exit 0\]\n/, "").trim() : "";
-    const body = nothingToCommit ? "[nothing to commit]" : commit.output;
-    return { output: capHeadTail(`${body}\n${head}`, MAX_OUTPUT), exitCode: 0 };
+    return this.committer.commit(message);
   }
 }
 
-/** Shared spawnSync -> ToolResult mapping for run() (shell) and runArgv() (argv):
- * same timeout/ENOENT/exit-code handling either way, only the spawn call itself differs. */
+/** Shared spawnSync -> ToolResult mapping for run() (shell):
+ * timeout/ENOENT/exit-code handling. */
 function toResult(r: SpawnSyncReturns<string>, timeoutMs: number): ToolResult {
   if (r.error) {
     const err = r.error as NodeJS.ErrnoException;

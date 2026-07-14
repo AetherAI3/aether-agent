@@ -46,17 +46,40 @@ export const lightBlue = wrapper("38;5;81");
  * @param label    Optional visible label. Defaults to the URL itself.
  */
 export function hyperlink(url: string, label?: string): string {
-  if (!theme.enabled) return label ?? url;
-  return `\x1b]8;;${url}\x1b\\${label ?? url}\x1b]8;;\x1b\\`;
+  const safeUrl = sanitizeTerm(url);
+  const safeLabel = sanitizeTerm(label ?? url);
+  if (!theme.enabled) return safeLabel;
+  return `\x1b]8;;${safeUrl}\x1b\\${safeLabel}\x1b]8;;\x1b\\`;
 }
 
 // ── Box drawing ──
 
-import { visibleWidth } from "./text.js";
+import { sanitizeTerm, visibleWidth } from "./text.js";
 
 /** ANSI-aware, wide-char-aware visible width (shared util). */
 function plainLen(s: string): number {
   return visibleWidth(s);
+}
+
+// Box-drawing glyphs — always Unicode (every modern terminal supports them).
+// Colors are gated by theme.enabled; glyphs are not. Shared by box() and
+// titledBox() so the glyph set and frame construction aren't duplicated.
+const BOX_TL = "┌"; // ┌
+const BOX_TR = "┐"; // ┐
+const BOX_BL = "└"; // └
+const BOX_BR = "┘"; // ┘
+const BOX_H  = "─"; // ─
+const BOX_V  = "│"; // │
+
+/** Build a horizontal border row (top or bottom) of width `w`. */
+function boxBorderRow(left: string, right: string, w: number): string {
+  return left + BOX_H.repeat(w - 2) + right;
+}
+
+/** Build a single "│  content  │" row, padded to `inner` width. */
+function boxContentRow(content: string, inner: number): string {
+  const pad = inner - plainLen(content);
+  return BOX_V + "  " + content + " ".repeat(Math.max(0, pad)) + "  " + BOX_V;
 }
 
 /**
@@ -79,23 +102,12 @@ export function box(
   // (border + 2-space left pad + 2-space right pad + border = 6)
   const inner = w - 6;
 
-  // Box-drawing glyphs — always Unicode (every modern terminal supports them).
-  // Colors are gated by theme.enabled; glyphs are not.
-  const tl = "\u250c"; // ┌
-  const tr = "\u2510"; // ┐
-  const bl = "\u2514"; // └
-  const br = "\u2518"; // ┘
-  const h  = "\u2500"; // ─
-  const v  = "\u2502"; // │
-
-  const top = tl + h.repeat(w - 2) + tr;
-  const bot = bl + h.repeat(w - 2) + br;
+  const top = boxBorderRow(BOX_TL, BOX_TR, w);
+  const bot = boxBorderRow(BOX_BL, BOX_BR, w);
 
   let out = theme.cyan(top) + "\n";
   for (const line of lines) {
-    const pad = inner - plainLen(line);
-    const content = line + " ".repeat(Math.max(0, pad));
-    out += theme.cyan(v + "  " + content + "  " + v) + "\n";
+    out += theme.cyan(boxContentRow(line, inner)) + "\n";
   }
   out += theme.cyan(bot);
   return out;
@@ -116,34 +128,23 @@ export function titledBox(
   const w = opts?.width ?? 64;
   const inner = w - 6;
 
-  const tl = "\u250c";
-  const tr = "\u2510";
-  const bl = "\u2514";
-  const br = "\u2518";
-  const h  = "\u2500";
-  const v  = "\u2502";
-
   const border = (s: string): string => theme.cyan(s);
 
-  const top = tl + h.repeat(w - 2) + tr;
-  const bot = bl + h.repeat(w - 2) + br;
+  const top = boxBorderRow(BOX_TL, BOX_TR, w);
 
   let out = border(top) + "\n";
 
   // Title row
-  const titlePad = inner - plainLen(title);
-  out += border(v + "  " + theme.bold(title) + " ".repeat(Math.max(0, titlePad)) + "  " + v) + "\n";
+  out += border(
+    BOX_V + "  " + theme.bold(title) + " ".repeat(Math.max(0, inner - plainLen(title))) + "  " + BOX_V,
+  ) + "\n";
 
   // Separator below title
-  out += border(v + " ".repeat(w - 2) + v) + "\n";
+  out += border(BOX_V + " ".repeat(w - 2) + BOX_V) + "\n";
 
-  // Content
-  for (const line of lines) {
-    const pad = inner - plainLen(line);
-    const content = line + " ".repeat(Math.max(0, pad));
-    out += border(v + "  " + content + "  " + v) + "\n";
-  }
+  // Content + bottom border, delegated to box() to avoid duplicating the
+  // frame/content rendering.
+  out += box(lines, { width: w }).split("\n").slice(1).join("\n");
 
-  out += border(bot);
   return out;
 }

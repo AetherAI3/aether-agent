@@ -12,10 +12,13 @@ import { decodeKey } from "./chat.js";
 import { McpClient } from "../core/mcp.js";
 import type { McpProvider, McpConnection, StartOAuthResponse } from "../core/mcp.js";
 import { LocalMcpStore, sanityCheckUrl } from "../core/mcp_store.js";
+import { collectMcpDiagnostics, renderMcpDiagnostics } from "../core/mcp_diagnostics.js";
+import { errorMessage } from "../core/errors.js";
 import { SelectMenu, renderMenu } from "../ui/menu.js";
 import type { MenuItem } from "../ui/menu.js";
 import { openBrowser } from "../core/browser.js";
 import { theme } from "../ui/theme.js";
+import { sanitizeTerm } from "../ui/text.js";
 
 export interface MenuIO {
   out: Writable;
@@ -106,7 +109,7 @@ async function pickFromMenu(
 }
 
 function note(io: MenuIO, msg: string): void {
-  io.out.write(theme.dim(msg) + "\n");
+  io.out.write(theme.dim(sanitizeTerm(msg)) + "\n");
 }
 
 async function authenticate(client: McpClient, io: MenuIO, providerId: string): Promise<void> {
@@ -114,7 +117,7 @@ async function authenticate(client: McpClient, io: MenuIO, providerId: string): 
   try {
     start = await client.startOAuth(providerId);
   } catch (e) {
-    note(io, `auth start failed: ${e instanceof Error ? e.message : String(e)}`);
+    note(io, `auth start failed: ${errorMessage(e)}`);
     return;
   }
   if (start.flow === "pat_paste") {
@@ -127,19 +130,21 @@ async function authenticate(client: McpClient, io: MenuIO, providerId: string): 
       const r = await client.patStore(providerId, pat);
       note(io, r.ok ? `✔ ${providerId} connected` : `✖ rejected: ${r.reason ?? "validation failed"}`);
     } catch (e) {
-      note(io, `✖ store failed: ${e instanceof Error ? e.message : String(e)}`);
+      note(io, `✖ store failed: ${errorMessage(e)}`);
     }
     return;
   }
   if (start.flow === "auth_code_pkce" && start.authorize_url) {
-    io.out.write(`Opening browser to authorize ${providerId}…\n${theme.dim(start.authorize_url)}\n`);
+    const urlError = sanityCheckUrl(start.authorize_url);
+    if (urlError) { note(io, `auth URL rejected: ${urlError}`); return; }
+    io.out.write(`Opening browser to authorize ${sanitizeTerm(providerId)}…\n${theme.dim(sanitizeTerm(start.authorize_url))}\n`);
     io.openUrl(start.authorize_url);
     io.out.write("Waiting for authorization…\n");
     try {
       await client.pollUntilConnected(providerId, io.sleep);
       note(io, `✔ ${providerId} connected`);
     } catch (e) {
-      note(io, `✖ ${e instanceof Error ? e.message : String(e)}`);
+      note(io, `✖ ${errorMessage(e)}`);
     }
     return;
   }
@@ -177,7 +182,7 @@ async function manageBackend(
         const tools = await client.listTools(providerId);
         note(io, `✔ ${providerId}: ${tools.length} tools available`);
       } catch (e) {
-        note(io, `✖ test failed: ${e instanceof Error ? e.message : String(e)} — try Re-authenticate`);
+        note(io, `✖ test failed: ${errorMessage(e)} — try Re-authenticate`);
       }
       break;
     case "del":
@@ -186,7 +191,7 @@ async function manageBackend(
           await client.disconnect(providerId);
           note(io, `✔ disconnected ${providerId}`);
         } catch (e) {
-          note(io, `✖ ${e instanceof Error ? e.message : String(e)}`);
+          note(io, `✖ ${errorMessage(e)}`);
         }
       }
       break;
@@ -206,7 +211,7 @@ async function manageLocal(store: LocalMcpStore, io: MenuIO, name: string): Prom
   switch (r.item.id) {
     case "test": {
       const err = current ? sanityCheckUrl(current.url) : "server missing";
-      note(io, err ? `✖ ${err}` : "✔ URL shape OK — server allowlist validates at chat time");
+      note(io, err ? `✖ ${err}` : "✔ URL shape OK — stored locally, not yet forwarded to agent chats");
       break;
     }
     case "edit": {
@@ -219,7 +224,7 @@ async function manageLocal(store: LocalMcpStore, io: MenuIO, name: string): Prom
         });
         note(io, "✔ saved");
       } catch (e) {
-        note(io, `✖ ${e instanceof Error ? e.message : String(e)}`);
+        note(io, `✖ ${errorMessage(e)}`);
       }
       break;
     }
@@ -242,9 +247,9 @@ async function addLocal(store: LocalMcpStore, io: MenuIO): Promise<void> {
   const tok = (await io.readLine("Auth token (optional): ", true)).trim();
   try {
     store.add({ name, url, transport: "http", ...(tok ? { authToken: tok } : {}) });
-    note(io, `✔ added ${name} — passed to agent chats as an MCP server`);
+    note(io, `✔ added ${name} — stored locally, not yet forwarded to agent chats`);
   } catch (e) {
-    note(io, `✖ ${e instanceof Error ? e.message : String(e)}`);
+    note(io, `✖ ${errorMessage(e)}`);
   }
 }
 
@@ -332,26 +337,71 @@ export async function mcpFromRepl(ctx: AppContext): Promise<void> {
   }
 }
 
-/** Top-level `aether mcp`: owns raw mode itself. */
-export async function cmdMcp(ctx: AppContext): Promise<number> {
+/** Top-level aether mcp. No subcommand retains the interactive manager. */
+export interface McpCommandOptions {
+  out?: Writable;
+  client?: McpClient;
+  store?: LocalMcpStore;
+}
+
+export async function cmdMcp(
+  ctx: AppContext,
+  argv: string[] = [],
+  options: McpCommandOptions = {},
+): Promise<number> {
+  const sub = (argv[0] ?? "").toLowerCase();
+  const out = options.out ?? process.stdout;
+  const client = options.client ?? new McpClient(ctx.api);
+  const store = options.store ?? new LocalMcpStore();
+
+  if (sub === "list" || sub === "doctor") {
+    const report = await collectMcpDiagnostics(client, store, { includeToolCounts: true });
+    out.write(ctx.flags.json ? JSON.stringify(report) + "\n" : renderMcpDiagnostics(report));
+    return sub === "doctor" && report.checks.some((check) => check.status === "fail") ? 1 : 0;
+  }
+  if (sub === "repair") {
+    const state = store.inspect();
+    if (state.status === "ok" || state.status === "missing") {
+      out.write("MCP registry does not need repair.\n");
+      return 0;
+    }
+    const confirmed =
+      ctx.flags.yes || (await ctx.confirm("Back up and reset the corrupt MCP registry? [y/N] "));
+    if (!confirmed) {
+      out.write("MCP registry kept unchanged.\n");
+      return 0;
+    }
+    try {
+      const result = store.repair();
+      out.write(result.repaired ? "MCP registry backed up and reset.\n" : "MCP registry unchanged.\n");
+      return 0;
+    } catch {
+      out.write("MCP repair failed; original registry remains in place.\n");
+      return 1;
+    }
+  }
+  if (sub) {
+    out.write("usage: aether mcp [list|doctor|repair]\n");
+    return 2;
+  }
   if (!process.stdin.isTTY) {
-    process.stdout.write("aether mcp requires an interactive terminal\n");
+    out.write("aether mcp requires an interactive terminal\n");
     return 1;
   }
   process.stdin.setRawMode(true);
   process.stdin.resume();
   const io = makeRealIO();
   try {
-    await runMcpMenu(new McpClient(ctx.api), new LocalMcpStore(), io);
+    await runMcpMenu(client, store, io);
     return 0;
   } finally {
     io.close();
     try {
       process.stdin.setRawMode(false);
     } catch {
-      /* terminal gone */
+      // terminal gone
     }
     process.stdin.pause();
-    process.stdout.write("\n");
+    out.write("\n");
   }
 }

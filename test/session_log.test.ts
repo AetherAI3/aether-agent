@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionLog, monologueLine } from "../src/core/session_log.js";
+import { normalizeWorkspace } from "../src/core/workspace_scope.js";
 
 const TS = "2026-06-04T08:30:00.000Z";
 
@@ -11,7 +12,7 @@ test("SessionLog writes events.jsonl, monologue.txt, and a manifest", () => {
   const root = mkdtempSync(join(tmpdir(), "aether-log-"));
   try {
     const log = new SessionLog(
-      { task: "fix tests", model: "qwen3-coder:30b", poolGb: 5, brain: "local" },
+      { task: "fix tests", model: "qwen3-coder:30b", poolGb: 5, brain: "local", cwd: root },
       TS,
       root,
     );
@@ -37,6 +38,7 @@ test("SessionLog writes events.jsonl, monologue.txt, and a manifest", () => {
     assert.equal(manifest.toolCalls, 1);
     assert.equal(manifest.started, TS);
     assert.equal(manifest.ended, TS);
+    assert.equal(manifest.cwd, normalizeWorkspace(root));
 
     // monologue: human-readable, no status/telemetry noise
     const mono = readFileSync(join(log.dir, "monologue.txt"), "utf8");
@@ -55,4 +57,31 @@ test("monologueLine drops status and telemetry from the record tree", () => {
     null,
   );
   assert.match(monologueLine({ type: "stage", name: "recon", face: "" }) ?? "", /recon/);
+});
+
+
+test("SessionLog redacts credentials and omits prompt, command, and memory content", () => {
+  const root = mkdtempSync(join(tmpdir(), "aether-log-redact-"));
+  try {
+    const log = new SessionLog(
+      { task: "secret task", model: "test", poolGb: 1, brain: "local", cwd: root },
+      TS,
+      root,
+    );
+    log.event({ type: "tool_call", id: "c1", name: "run_shell", args: {
+      command: "curl -H 'Authorization: Bearer aek_super_secret'",
+      content: "private prompt body",
+      api_key: "aek_super_secret",
+      path: "src/index.ts",
+    } }, TS);
+    log.event({ type: "memory", subtype: "extract", text: "private memory body", narrative: "private narrative", kind: "fact", confidence: 0.9 }, TS);
+    log.close("ok", TS);
+    const raw = readFileSync(join(log.dir, "events.jsonl"), "utf8");
+    assert.doesNotMatch(raw, /aek_super_secret|private prompt body|private memory body|private narrative/);
+    assert.match(raw, /omitted shell command/);
+    assert.match(raw, /omitted memory narrative/);
+    assert.match(raw, /"kind":"fact"/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

@@ -3,6 +3,7 @@
 
 import type { AppContext } from "../core/context.js";
 import { loadSession, latestSession, replayLines } from "../core/session_resume.js";
+import { logsRoot } from "../core/session_log.js";
 import { theme } from "../ui/theme.js";
 
 /** The exact command a paused session can be re-entered with. */
@@ -10,8 +11,14 @@ export function resumeHint(sessionId: string): string {
   return `session paused — resume with:  aether agent --resume ${sessionId}`;
 }
 
-export async function cmdResume(_ctx: AppContext, id: string): Promise<number> {
-  const s = id ? loadSession(id) : latestSession();
+export async function cmdResume(ctx: AppContext, id: string): Promise<number> {
+  let s;
+  try {
+    s = id ? loadSession(id, logsRoot(), ctx.flags.cwd) : latestSession(ctx.flags.cwd);
+  } catch (err) {
+    process.stderr.write(String(err instanceof Error ? err.message : err) + "\n");
+    return 1;
+  }
   if (!s) {
     process.stderr.write('no sessions to resume (run `aether agent "<task>"` first)\n');
     return 1;

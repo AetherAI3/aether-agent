@@ -11,7 +11,8 @@
 
 import type { AppContext } from "../core/context.js";
 import { fetchTrail } from "../core/audit.js";
-import { readCustodyLog, type CustodyRecord } from "../core/custody.js";
+import { readCustodyLog, shortCustodyHash } from "../core/custody.js";
+import { sanitizeTerm } from "../ui/text.js";
 
 const DEFAULT_LIMIT = 50;
 
@@ -37,9 +38,9 @@ function auditClient(ctx: AppContext, argv: string[]): number {
   }
   for (const r of records) {
     const ts = r.received_at != null ? new Date(r.received_at).toISOString() : "-";
-    const orderId = String(r.order_id ?? "-");
-    const commitment = hashOf(r.commitment);
-    const attestation = hashOf(r.attestation);
+    const orderId = sanitizeTerm(String(r.order_id ?? "-"));
+    const commitment = sanitizeTerm(shortCustodyHash(r.commitment));
+    const attestation = sanitizeTerm(shortCustodyHash(r.attestation));
     process.stdout.write(`${ts}\t${orderId}\tc:${commitment}\ta:${attestation}\n`);
   }
   return 0;
@@ -59,22 +60,13 @@ async function auditServer(ctx: AppContext, argv: string[]): Promise<number> {
     return 0;
   }
   for (const e of entries) {
-    const sig = e.commitmentHash ?? "-";
-    process.stdout.write(`${e.timestamp}\t${e.eventType}\t${sig}\t${e.orderId}\t${e.path ?? ""}\n`);
+    const sig = sanitizeTerm(e.commitmentHash ?? "-");
+    const eventType = sanitizeTerm(e.eventType);
+    const orderId = sanitizeTerm(e.orderId);
+    const path = sanitizeTerm(e.path ?? "");
+    process.stdout.write(`${e.timestamp}\t${eventType}\t${sig}\t${orderId}\t${path}\n`);
   }
   return 0;
-}
-
-/** Short, stable hash-ish display for a commitment/attestation blob. */
-function hashOf(v: CustodyRecord["commitment"]): string {
-  if (v == null) return "-";
-  if (typeof v === "string") return v.slice(0, 12) || "-";
-  if (typeof v === "object") {
-    const o = v as Record<string, unknown>;
-    const inner = o["hash"] ?? o["env_hash"] ?? o["commitment_hash"] ?? o["digest"];
-    if (inner != null) return String(inner).slice(0, 12);
-  }
-  return "✓"; // present but no obvious hash field
 }
 
 function parseLimit(arg: string | undefined): number {

@@ -5,15 +5,24 @@
 // original text. Lives beside the session logs under ~/.aether-agent/.
 // Opt out with AETHER_NO_HISTORY=1.
 
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { workspaceFingerprint } from "./workspace_scope.js";
 
 export const HISTORY_CAP = 1000;
 const NL_MARK = String.fromCodePoint(0x2028); // U+2028 LINE SEPARATOR
 
-export function historyPath(): string {
+export function legacyHistoryPath(): string {
   return join(homedir(), ".aether-agent", "history");
+}
+
+export function historyRoot(): string {
+  return join(homedir(), ".aether-agent", "history.d");
+}
+
+export function historyPath(cwd?: string): string {
+  return cwd ? join(historyRoot(), workspaceFingerprint(cwd) + ".history") : legacyHistoryPath();
 }
 
 export function historyEnabled(): boolean {
@@ -54,14 +63,18 @@ export function appendHistory(
   try {
     const entries = loadHistory(path, Number.MAX_SAFE_INTEGER);
     if (entries[entries.length - 1] === line) return;
-    mkdirSync(dirname(path), { recursive: true });
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     if (entries.length >= cap * 2) {
       // Rewrite compacted: keep the newest cap-1 then the new line.
+      // Write-then-rename so a write interrupted mid-compaction can't
+      // truncate/corrupt the history file (matches config.ts/mcp_store.ts).
       const kept = [...entries.slice(-(cap - 1)), line];
-      writeFileSync(path, kept.map(encode).join("\n") + "\n", "utf8");
+      const tmp = `${path}.${process.pid}.tmp`;
+      writeFileSync(tmp, kept.map(encode).join("\n") + "\n", { encoding: "utf8", mode: 0o600 });
+      renameSync(tmp, path);
       return;
     }
-    appendFileSync(path, encode(line) + "\n", "utf8");
+    appendFileSync(path, encode(line) + "\n", { encoding: "utf8", mode: 0o600 });
   } catch {
     /* history is best-effort */
   }

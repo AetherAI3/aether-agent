@@ -8,6 +8,7 @@
 // Pure function — unit tested. The actual prompt I/O lives in the command layer.
 
 import type { PermissionMode } from "../types.js";
+import { toolDefinition } from "./tool_registry.js";
 
 export type GateAction = "edit" | "shell" | "write";
 
@@ -35,20 +36,14 @@ export function evaluate(
 
 /**
  * Map a tool name to the gate action it requires, or null when the tool is
- * read-only and never needs approval. `run_tests` runs the HOST's own grounding
- * command (operator-supplied, not brain-chosen) so it is intentionally ungated;
- * only the brain-driven mutating/arbitrary-exec tools are gated.
+ * read-only and never needs approval. `run_tests` is gated the same as
+ * `run_shell` / `git_commit` (sideEffect: "shell") — it is NOT ungated.
  */
 export function gateActionFor(tool: string): GateAction | null {
-  switch (tool) {
-    case "write_file":
-      return "write";
-    case "run_shell":
-    case "git_commit":
-      return "shell";
-    default:
-      return null; // read_file, repo_search, run_tests — read-only / host-owned
-  }
+  const effect = toolDefinition(tool)?.sideEffect;
+  if (effect === "write") return "write";
+  if (effect === "shell" || effect === "git") return "shell";
+  return null;
 }
 
 export type GateOutcome = "allow" | "deny" | "prompt";

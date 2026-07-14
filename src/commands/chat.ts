@@ -34,6 +34,7 @@ import { ToolExecutor } from "../core/tool_executor.js";
 import { HostRenderer } from "../ui/host_render.js";
 import type { TaskCommand } from "../core/brain.js";
 import { getRegistry } from "../core/context_registry.js";
+import { decideGate } from "../core/autonomy.js";
 import { renderHud, timerLive } from "../core/hud.js";
 import {
   createViewerState,
@@ -186,6 +187,20 @@ async function runLocalTurn(ctx: AppContext, prompt: string): Promise<void> {
   const brain = new OllamaBrain(ctx.flags.model ? { model: ctx.flags.model } : {});
   const exec = new ToolExecutor(cwd);
   const renderer = new HostRenderer({ poolGb: 5, json: ctx.flags.json });
+  const approveTool = async (name: string, args: Record<string, unknown>): Promise<boolean> => {
+    const outcome = decideGate(name, ctx.cfg.permissionMode, ctx.cfg.autoApply, {
+      yes: ctx.flags.yes,
+      isTty: Boolean(process.stdin.isTTY),
+    });
+    if (outcome === "allow") return true;
+    if (outcome === "deny") {
+      process.stderr.write(`blocked ${name}: confirmation required; use --yes or permissionMode skip\n`);
+      return false;
+    }
+    const detail = String(args["path"] ?? args["command"] ?? args["message"] ?? "");
+    const shown = detail.length > 120 ? detail.slice(0, 117) + "..." : detail;
+    return ctx.confirm(`\nwarning ${name}${shown ? " " + shown : ""} - run it? [y/N] `);
+  };
   const task: TaskCommand = {
     type: "task",
     text: prompt,
@@ -198,9 +213,13 @@ async function runLocalTurn(ctx: AppContext, prompt: string): Promise<void> {
     for await (const ev of brain.run(task)) {
       renderer.event(ev);
       if (ev.type === "error") sawError = ev.msg;
+      if (ev.type === "done" && !ev.ok) sawError = ev.result || ev.reason || "turn did not complete";
       if (ev.type === "tool_call") {
         // executeAsync so the two web tools (web_search/web_fetch) work too.
-        const result = await exec.executeAsync(ev.name, ev.args);
+        const approved = await approveTool(ev.name, ev.args);
+        const result = approved
+          ? await exec.executeAsync(ev.name, ev.args)
+          : { output: `[tool ${ev.name} blocked: permission denied]`, exitCode: 1 };
         brain.sendToolResult(ev.id, result);
       }
     }
@@ -318,7 +337,7 @@ async function repl(ctx: AppContext): Promise<number> {
   void primeCatalog(ctx); // non-blocking warm; first /models is then instant
 
   const buf = new InputBuffer();
-  const histPath = historyPath();
+  const histPath = historyPath(ctx.flags.cwd);
   if (historyEnabled()) buf.loadHistory(loadHistory(histPath));
   const remember = (line: string): void => {
     if (historyEnabled()) appendHistory(line, histPath);
@@ -885,7 +904,7 @@ async function replLines(ctx: AppContext): Promise<number> {
       process.stdout.write(p);
       continue;
     }
-    if (historyEnabled()) appendHistory(t);
+    if (historyEnabled()) appendHistory(t, historyPath(ctx.flags.cwd));
     if (t.startsWith("/")) {
       inflight = new AbortController();
       try {

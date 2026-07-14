@@ -4,7 +4,7 @@
 import type { Writable } from "node:stream";
 import type { AppContext } from "../core/context.js";
 import {
-  loadGoals, getGoal, getActiveGoal, newGoal, newPhase, newTask,
+  goalsForWorkspace, getGoalForWorkspace, getActiveGoal, newGoal, newPhase, newTask,
   upsertGoal, deleteGoal, startGoal, completePhase,
   selectPhase, setPhaseNote, type Goal,
 } from "../core/goals.js";
@@ -12,11 +12,15 @@ import { renderGoalChain, renderPhaseDetail, navigatePhase } from "../ui/goal_ch
 
 const cols = () => process.stdout.columns || 100;
 
+function resolveGoal(cwd: string, id?: string): Goal | undefined {
+  return id ? getGoalForWorkspace(id, cwd) : getActiveGoal(cwd) ?? goalsForWorkspace(cwd)[0];
+}
+
 // ── LLM-powered goal decomposition ────────────────────────────────────
 // Heuristic today; later wired to POST /project/decompose (task_graph.py).
 
-function decomposeGoal(description: string): Goal {
-  const goal = newGoal(description);
+function decomposeGoal(description: string, cwd: string): Goal {
+  const goal = newGoal(description, cwd);
   const lower = description.toLowerCase();
 
   const isFullStack = lower.includes("full") || lower.includes("stack") ||
@@ -82,7 +86,7 @@ export async function handleGoal(
         out.write("  e.g. /goal build a full-stack todo app with auth\n");
         return;
       }
-      const goal = decomposeGoal(rest.trim());
+      const goal = decomposeGoal(rest.trim(), ctx.flags.cwd);
 
       // Show the plan
       out.write("\n");
@@ -104,7 +108,7 @@ export async function handleGoal(
 
     case "start": {
       const id = rest.trim();
-      const goal = id ? getGoal(id) : getActiveGoal() ?? loadGoals()[0];
+      const goal = resolveGoal(ctx.flags.cwd, id);
       if (!goal) { out.write("no goals found. create one first: /goal <description>\n"); return; }
       if (goal.status === "running") { out.write(`already running: ${goal.id}\n`); return; }
       const started = startGoal(goal);
@@ -115,7 +119,7 @@ export async function handleGoal(
     }
 
     case "pause": {
-      const goal = getActiveGoal();
+      const goal = getActiveGoal(ctx.flags.cwd);
       if (!goal) { out.write("no active goal to pause.\n"); return; }
       goal.status = "paused";
       upsertGoal(goal);
@@ -124,7 +128,7 @@ export async function handleGoal(
     }
 
     case "resume": {
-      const goal = getActiveGoal() ?? loadGoals().find(g => g.status === "paused");
+      const goal = getActiveGoal(ctx.flags.cwd);
       if (!goal) { out.write("no paused goal to resume.\n"); return; }
       goal.status = "running";
       upsertGoal(goal);
@@ -133,7 +137,7 @@ export async function handleGoal(
     }
 
     case "cancel": {
-      const goal = getActiveGoal();
+      const goal = getActiveGoal(ctx.flags.cwd);
       if (!goal) { out.write("no active goal to cancel.\n"); return; }
       const ok = ctx.flags.yes || (await ctx.confirm("Cancel this goal? [y/N] "));
       if (!ok) { out.write("kept.\n"); return; }
@@ -144,7 +148,7 @@ export async function handleGoal(
     }
 
     case "complete": {
-      const active = getActiveGoal();
+      const active = getActiveGoal(ctx.flags.cwd);
       if (!active) { out.write("no active goal.\n"); return; }
       const phaseId = rest.trim() || active.activePhaseId || "";
       if (!phaseId) { out.write("usage: /goal complete <phase-id>\n"); return; }
@@ -160,7 +164,7 @@ export async function handleGoal(
       const phaseId = parts[0] ?? "";
       const note = parts[1] ?? "";
       if (!phaseId || !note) { out.write("usage: /goal note <phase-id> <note text>\n"); return; }
-      const active = getActiveGoal() ?? loadGoals()[0];
+      const active = resolveGoal(ctx.flags.cwd);
       if (!active) { out.write("no goal to add note to.\n"); return; }
       const updated = setPhaseNote(active, phaseId, note);
       upsertGoal(updated);
@@ -170,7 +174,7 @@ export async function handleGoal(
 
     case "view": {
       const id = rest.trim();
-      const goal = id ? getGoal(id) : getActiveGoal() ?? loadGoals()[0];
+      const goal = resolveGoal(ctx.flags.cwd, id);
       if (!goal) { out.write("no goals found.\n"); return; }
       out.write("\n");
       for (const l of renderGoalChain(goal, c)) out.write("  " + l + "\n");
@@ -188,12 +192,12 @@ export async function handleGoal(
 export async function handleGoals(
   ctx: AppContext, out: Writable, rest: string,
 ): Promise<void> {
-  const goals = loadGoals();
+  const goals = goalsForWorkspace(ctx.flags.cwd);
   const c = cols();
 
   if (rest.trim()) {
     // /goals <id> — show that goal in detail
-    const goal = getGoal(rest.trim());
+    const goal = getGoalForWorkspace(rest.trim(), ctx.flags.cwd);
     if (!goal) { out.write(`no goal found: ${rest.trim()}\n`); return; }
     for (const l of renderGoalChain(goal, c)) out.write("  " + l + "\n");
     for (const l of renderPhaseDetail(goal, c)) out.write("  " + l + "\n");

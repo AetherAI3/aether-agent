@@ -17,14 +17,13 @@ import { ToolExecutor } from "../core/tool_executor.js";
 import { stdioPrompt } from "../ui/interact.js";
 import { defaultRunner } from "../core/worktree.js";
 import { HostRenderer } from "../ui/host_render.js";
-import { SessionLog } from "../core/session_log.js";
+import { SessionLog, logsRoot } from "../core/session_log.js";
 import { finalVerify, type BrainDone } from "../core/verify_gate.js";
 import { StatusRenderer } from "../ui/status_renderer.js";
 import { AnimationController } from "../ui/animations.js";
 import { HeartbeatIndicator } from "../ui/heartbeat.js";
 import { LocalAgentSource, bindEventSource } from "../core/agent_events.js";
 import { phaseVerb } from "../ui/phase_verb.js";
-import { lineDiff, renderDiff } from "../ui/diff_render.js";
 import { TaskLedger } from "../ui/ledger.js";
 import {
   CODE_STAGES,
@@ -89,30 +88,11 @@ export function applyEventToStatus(
   }
 }
 
-/** Colorized diff preview for a write_file edit, or null if not an edit.
- * Reads through ToolExecutor.snapshot() so preview reads share the same
- * workspace guard as the eventual write. */
-export function editPreview(exec: ToolExecutor, ev: BrainEvent): string | null {
-  if (ev.type !== "tool_call" || ev.name !== "write_file") return null;
-  const path = String(ev.args["path"] ?? "");
-  const next = String(ev.args["content"] ?? "");
-  if (!path) return null;
-  const before = exec.snapshot(path);
-  if (before.reason === "unsafe") return null;
-  if (before.existed && before.text === null) {
-    const kind = before.reason === "binary" ? "binary" : "large file";
-    return `  ✎ ${path}  (${kind}, wrote ${Buffer.byteLength(next)} b)`;
-  }
-  const ops = lineDiff(before.text ?? "", next);
-  if (ops.length === 0) return null;
-  return renderDiff(path, ops);
-}
-
 /** Replay a prior local session's transcript into the active surface. Fail-soft:
  * a missing/unreadable session prints a note and does not abort the new run. */
-function replaySession(id: string, emit: (line: string) => void): void {
+function replaySession(id: string, cwd: string, emit: (line: string) => void): void {
   try {
-    const prior = loadSession(id);
+    const prior = loadSession(id, logsRoot(), cwd);
     for (const line of replayLines(prior.events)) emit(line);
   } catch (err) {
     process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
@@ -198,9 +178,17 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
 
   const brain: Brain = goLocal ? new LocalBrain() : new CloudBrain(ctx.api);
   const exec = new ToolExecutor(cwd, opts.testCmd);
+  // Scope the session manifest to the ORIGINAL launch directory (ctx.flags.cwd),
+  // not the possibly-substituted `cwd` (an auto-created worktree, or a manually
+  // redirected directory from the repo gate) — resume always compares against
+  // ctx.flags.cwd of the *next* invocation (resume.ts, latestSession), which is
+  // where the user is standing, not where this run ended up executing.
   const log = opts.noLog
     ? null
-    : new SessionLog({ task, model: ctx.flags.model ?? "", poolGb, brain: brainKind }, nowIso());
+    : new SessionLog(
+        { task, model: ctx.flags.model ?? "", poolGb, brain: brainKind, cwd: ctx.flags.cwd },
+        nowIso(),
+      );
 
   // Ctrl-C prints the exact command to re-enter this session. Registered BEFORE
   // the renderer's own SIGINT handler so this fires first.
@@ -287,7 +275,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   if (animated) {
     const sr = new StatusRenderer({ mode: brainKind === "local" ? "local" : "api" });
     sr.start();
-    if (opts.resume) replaySession(opts.resume, (line) => sr.log(line));
+    if (opts.resume) replaySession(opts.resume, ctx.flags.cwd, (line) => sr.log(line));
     const anim = new AnimationController({
       onFrame: (_stage, art) => sr.setAnim(art),
       onProgress: (used, c) => sr.setProgress(used, c),
@@ -344,7 +332,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     };
   } else {
     const renderer = new HostRenderer({ poolGb, quiet: opts.quiet, json: ctx.flags.json });
-    if (opts.resume) replaySession(opts.resume, (line) => process.stdout.write(line + "\n"));
+    if (opts.resume) replaySession(opts.resume, ctx.flags.cwd, (line) => process.stdout.write(line + "\n"));
     onEvent = async (ev: BrainEvent): Promise<void> => {
       applyToLedger(ledger, ev);
       trackWrites(ev);

@@ -4,7 +4,8 @@
 // download helpers with streaming fetch, output manager with persistent log.
 // No terminal I/O. Every function wraps a single concept.
 
-import { ApiClient, MODELS_PATH } from "./transport.js";
+import { ApiClient, MODELS_PATH, isCredentialSafeUrl } from "./transport.js";
+import { InsecureTransportError } from "./errors.js";
 import type { CatalogItem, CatalogResponse } from "../types.js";
 import { createWriteStream, mkdirSync, readdirSync, statSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -227,6 +228,12 @@ export async function downloadMediaFile(
   modelKey: string, kind: MediaKind, label?: string,
 ): Promise<string> {
   const headers = await authHeaders(api);
+  // Only enforce the credential-safe-transport guard when a bearer token is
+  // actually about to be attached — mirrors transport.ts's authHeaders()/
+  // vault.ts's _authHeaders() token-conditional pattern. An anonymous session
+  // or a non-loopback self-hosted media host has nothing to leak, so it
+  // shouldn't hard-fail the download.
+  if ("Authorization" in headers && !isCredentialSafeUrl(url)) throw new InsecureTransportError(url);
   const resp = await fetch(url, { headers });
   if (!resp.ok) throw new Error(`download failed: HTTP ${resp.status}`);
   if (!resp.body) throw new Error("download failed: empty body");

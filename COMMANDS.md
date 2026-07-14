@@ -9,6 +9,21 @@ aether [global flags] "<prompt>"        # bare prompt = one-shot chat
 aether                                  # no args = interactive REPL
 ```
 
+## Registry indexes
+
+<!-- Registry markers are checked against the declarative command registries. -->
+
+<!-- CLI-COMMANDS:START -->
+`help`, `agent`, `chat`, `resume`, `run`, `models`, `agents`, `auth`,
+`github`, `vault`, `workflow`, `memory`, `image`, `video`, `output`, `audit`,
+`receipt`, `doctor`, `mcp`, `config`
+<!-- CLI-COMMANDS:END -->
+
+<!-- SLASH-COMMANDS:START -->
+`help`, `models`, `model`, `agent`, `agents`, `tier`, `audit`, `effort`, `doctor`, `clear`, `exit`, `mcp`, `autonomous-execution`, `subagent-driven-execution`, `self-review`, `recon`, `plan`, `research`, `review`, `code-review`, `writing-skills`, `writing-plans`, `queue`, `steer`, `btw`, `pin`, `drop`, `snapshot`, `limit`, `audit-receipt`, `rollback`, `logs-view`, `goal`, `goals`, `memory`, `workflow`, `workflow-templates`, `workflow-template`, `vault`, `vault-context`, `vault-search`, `vault-recent`, `vault-project`, `vault-tag`, `vault-tree`, `delegate`, `tree`, `broadcast`, `gather`, `scaffold`, `port`, `test-drive`, `bench`, `purge`, `stage-diff`, `revert`, `photogen`, `frame`, `re-frame`, `videogen`, `sequence`, `animate`, `re-cut`, `output`, `storyboard`, `add`, `hud`
+<!-- SLASH-COMMANDS:END -->
+
+
 ---
 
 ## Global flags
@@ -135,6 +150,30 @@ Exports the cryptographic proof package for one audit entry. Find ids with
 aether receipt chat_8f3a...
 ```
 
+### `aether doctor [--deep]` — runtime diagnostics
+Runs an ordered set of structured checks — auth, network reachability,
+config integrity, MCP registry health, and more — and prints a pass/fail
+summary. `--deep` adds slower, bounded checks on top of the fast baseline.
+Exits `1` if any check fails, so it's safe to gate scripts on.
+
+```bash
+aether doctor
+aether doctor --deep
+aether doctor --json
+```
+
+### `aether mcp [list|doctor|repair]` — manage and diagnose MCP servers
+With no subcommand (in a TTY), opens the same interactive MCP manager as the
+`/mcp` slash command: an arrow-key menu over backend connections (OAuth/PAT
+providers) and local custom servers (`mcp.json`), with authenticate / test /
+disconnect actions per entry.
+
+| Subcommand | Does |
+|---|---|
+| `aether mcp list` | Print a diagnostics report (providers, connections, tool counts). |
+| `aether mcp doctor` | Same report; exits `1` if any check fails (scriptable health gate). |
+| `aether mcp repair` | Back up and reset a corrupted local MCP registry (confirms first). |
+
 ### `aether config [show|get|set]` — local settings
 Local settings, stored at `~/.config/aether/config.json`.
 ```bash
@@ -160,7 +199,7 @@ aether config set autoApply true
 
 Type a prompt to chat; type `/` to drive the session. `/help` renders this same
 set, grouped, inside the REPL. This table is the single source of truth — it
-mirrors the live registry in `src/commands/slash.ts`.
+mirrors the live registry in `src/commands/slash_registry.ts`.
 
 ### Session
 
@@ -174,9 +213,9 @@ mirrors the live registry in `src/commands/slash.ts`.
 | `/tier` | Show your plan tier, default, and available counts. |
 | `/effort [tier\|1-5]` | Show or set the effort dial (`LOW`→`CODEPRO`). Persists to your Aether config and drives `aether code`. `CODEPRO` gets the banner. |
 | `/audit [n]` | Recent chain-of-custody receipts. |
-| `/doctor` | Diagnose setup: API base, auth state, server reachability. |
+| `/doctor [deep]` | Run ordered diagnostics; `deep` adds bounded checks. |
 | `/clear` | Clear the screen. |
-| `/mcp` | MCP server management (coming soon). |
+| `/mcp [list|doctor|repair]` | Diagnose or confirmation-gated repair for MCP servers. |
 | `/exit`, `/quit` | Leave the REPL. |
 
 Typos get a nudge: `/modle` answers `did you mean /model?`. Tab completes any
@@ -230,6 +269,7 @@ Each starts an agent loop in the REPL.
 | `/goal view [id]` | Show the goal chain + detail. |
 | `/goal start\|pause\|resume\|cancel\|complete\|note` | Drive a goal's lifecycle. |
 | `/goals [id]` | List goals, or view one by id. |
+| `/memory [status|inspect|forget|prune]` | Inspect/manage scoped memory tiers (`working`/`episodic`/`semantic`/`procedural`); `forget` and `prune --apply` are destructive. |
 | `/workflow` | Workflow status. |
 | `/workflow-templates` | List workflow templates. |
 | `/workflow-template <n>` | Load a template. |
@@ -256,6 +296,41 @@ Requires an active orchestrator — switch with `/agent neo` or `/agent kronus` 
 | `/tree` | Live orchestration hierarchy (workers, step, tokens, UVT). |
 | `/broadcast "<msg>"` | Inject a directive to all sub-agents. |
 | `/gather <id\|all>` | Merge completed sub-agent work to staging. |
+
+### UVT Tools
+
+| Command | Action |
+|---|---|
+| `/scaffold <type> <name>` | Generate boilerplate: `component`, `route`, or `module`. |
+| `/port <file\|dir> <lang>` | Translate code to another language. |
+| `/test-drive "<target>"` | Generate a test matrix for a route/function, run it, and iterate until green (requires an active orchestrator). |
+| `/bench <target>` | Profile a function/endpoint and suggest optimizations (requires an active orchestrator). |
+| `/purge` | Flush pinned files, temp files, and the UVT cap back to a lean baseline. |
+| `/stage-diff` | Unified diff of uncommitted changes + a suggested commit message. |
+| `/revert <file\|step>` | Surgical rollback of a single file (git-backed). |
+
+### Media
+
+| Command | Action |
+|---|---|
+| `/photogen <prompt> [--model --aspect --count --4k --vector]` | Generate image(s). |
+| `/frame <prompt>` | Generate a single styled frame. |
+| `/re-frame <edit>` | Re-run the last image with an edit description. |
+| `/videogen <prompt> [--model --duration --1080p --audio]` | Generate video. |
+| `/sequence <prompt>` | Cinematic multi-shot video (routes to a cinematic model by default). |
+| `/animate <image_url\|file\|#n> [motion]` | Animate a still image into video. |
+| `/re-cut <edit>` | Re-edit the last generated video. |
+| `/output [open <n>\|clean]` | List, open, or clear recent generations. |
+| `/storyboard <prompt\|file> [--scenes --style]` | Multi-scene storyboard: parse → preview → `--generate`/`--animate`/`--render`. |
+
+### HUD
+
+| Command | Action |
+|---|---|
+| `/add <element>`, `/add list` | Add a HUD overlay element (context-bar, timer, tools, help, health, status), or list what's available. |
+| `/hud remove <element>` | Remove one active HUD element. |
+| `/hud list`, `/hud` | List active HUD elements. |
+| `/hud clear` | Remove all active HUD elements. |
 
 ---
 

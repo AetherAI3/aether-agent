@@ -24,34 +24,16 @@ import { cmdVault } from "./commands/vault.js";
 import { cmdWorkflow } from "./commands/workflow.js";
 import { cmdImage, cmdVideo } from "./commands/media.js";
 import { cmdOutput } from "./commands/output.js";
+import { CLI_COMMANDS, renderCliHelp } from "./commands/cli_registry.js";
+import { commandNames, suggestRegisteredCommand } from "./core/command_registry.js";
 
 /** Coerce a parsed flag value to string | undefined. */
 const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
-// Real top-level subcommands (mirrors the switch below). Kept local rather
-// than re-exported from slash_registry.ts: that registry's suggestCommand()
-// is scoped to slash-command vocabulary (/model, /help, ...), a different
-// namespace than these bare `aether <cmd>` words — conflating them would let
-// e.g. "aether model" suggest a slash command that isn't a valid subcommand.
-const TOP_LEVEL_COMMANDS = [
-  "auth", "github", "vault", "workflow", "image", "video", "output", "login",
-  "logout", "audit", "mcp", "models", "agents", "run", "receipt", "config",
-  "agent", "code", "resume", "chat", "help",
-];
-
-/** Bounded Levenshtein — bails early past `max` (rows are monotonic in min). */
-function editDistance(a: string, b: string, max: number): number {
-  if (Math.abs(a.length - b.length) > max) return max + 1;
-  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [i];
-    for (let j = 1; j <= b.length; j++) {
-      cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1]! : 1 + Math.min(prev[j - 1]!, prev[j]!, cur[j - 1]!);
-    }
-    prev = cur;
-  }
-  return prev[b.length]!;
-}
+// Real top-level subcommand names, sourced from CLI_COMMANDS (cli_registry.ts)
+// — the same registry the switch below is cross-checked against — so this can
+// never drift from the actual dispatched subcommands.
+const TOP_LEVEL_COMMAND_NAMES = commandNames(CLI_COMMANDS);
 
 /**
  * Suggestion for a lone bare token at the top level (`aether auht`). Exact
@@ -60,92 +42,10 @@ function editDistance(a: string, b: string, max: number): number {
  * `moddels`→models while letting an unrelated word like `hello` flow to chat.
  */
 function suggestTopLevel(token: string): string | null {
-  if (TOP_LEVEL_COMMANDS.includes(token)) return null;
+  if (TOP_LEVEL_COMMAND_NAMES.includes(token)) return null;
   const max = token.length <= 5 ? 1 : 2;
-  let best: string | null = null;
-  let bestD = max + 1;
-  for (const cand of TOP_LEVEL_COMMANDS) {
-    const d = editDistance(token, cand, bestD);
-    if (d < bestD) {
-      bestD = d;
-      best = cand;
-    }
-  }
-  return bestD <= max ? best : null;
+  return suggestRegisteredCommand(token, TOP_LEVEL_COMMAND_NAMES, max);
 }
-
-const HELP = `Aether Agent — an open-source coding agent for your terminal.
-
-Local-first: when you're signed in, turns run on the cloud brain (Aether API,
-UVT-metered, signed). When you're NOT signed in, turns run fully offline on a
-local Ollama brain — no account, no network. Override with AETHER_BACKEND or
-'aether config set backend auto|local|cloud' (default: auto).
-
-Usage:
-  aether                       Start an interactive coding REPL (local-first)
-  aether "<prompt>"            One-shot coding turn (cloud if authed, else local)
-  aether chat "<prompt>"       Same, explicit (bypasses top-level typo-matching)
-  aether agent "<task>"         Autonomous coding agent (cloud when signed in)
-  aether agent --local "<task>" Force the local Python/Ollama brain (offline)
-  aether resume [id]           Replay a local session (latest if no id)
-  aether agent --resume <id>    Resume a paused coding session
-  aether run <neo|kronus> "<task>"   Stream an orchestrator run
-  aether models [use <id>]     List models + orchestrators / set default
-  aether agents                List orchestrators (Neo / Kronus)
-  aether auth login            Authorize via browser (or --with-token / --token)
-  aether auth status           Show login state    aether auth token   Print token
-  aether auth refresh          Refresh a session   aether auth logout  Log out
-  aether github connect        Link GitHub so backend agents can work your repos
-  aether github status         Show GitHub link    aether github disconnect  Unlink
-  aether vault list              List vault files/folders
-  aether vault search <query>    Full-text search vault notes
-  aether vault context           Show vault snapshot
-  aether vault status            Vault health check
-  aether vault <sub>             (see 'aether vault help' for all commands)
-  aether workflow new <desc>    Generate a workflow from intent
-  aether workflow templates     List built-in workflow templates
-  aether workflow status        Workflow dashboard
-  aether workflow <sub>         (see 'aether workflow help' for all commands)
-  aether image "<prompt>" [--model] [--aspect] [--count] [--4k] [--vector] [--i]
-  aether video "<prompt>" [--model] [--duration] [--1080p] [--audio] [--i]
-  aether image models              aether video models
-  aether output                    Show recent 10 generations
-  aether output open <n>           Open generation in viewer
-  aether mcp                   Manage MCP servers (connect, add, repair)
-  aether audit [limit]         Recent audit chain-of-custody trail
-  aether receipt <order_id>    Export the proof package for an audit entry
-  aether config [show|get <k>|set <k> <v>]
-  aether config set backend auto|local|cloud   Pick the brain (default: auto)
-
-Global flags:
-  --model <id>   Force a model     --agent <id>   Force an orchestrator
-  --cwd <dir>    Workspace dir      --json         Emit raw frames as JSON
-  --audit        Show signature     -y, --yes      Auto-confirm prompts
-  -h, --help     This help          -v, --version  Print version
-
-aether agent flags:
-  --local        Use the local brain (Python/Ollama) instead of the cloud
-  --pool <gb>    Context pool size in GB (status-bar reach = pool x 233M)
-  --effort <t>   Effort tier: LOW | MED | MAX | ULTRA | CODEPRO
-  --test-cmd <c> Command the grounding gate runs (default: pytest -q)
-  --quiet        Plain output (strip the personality frames)
-  --interactive  Pause at each stage boundary to type a steer (TTY only)
-  --no-log       Disable the local session log (~/.aether-agent/logs)
-  --worktree     Run in a fresh git worktree on an auto-named branch (isolated)
-  --repo <o/n>   Work on a GitHub repo (clones via your gh/git auth, worktrees it)
-  --swarm <N>    N-agent swarm (not enabled yet; will be local-only)
-
-Local model tiers (--model, via Ollama):
-  small (universal) qwen2.5-coder:7b   ~4.7GB · fits 8GB GPU · best small tools
-  gemma option      gemma3:4b          ~3.3GB · gemma3n:e4b for the efficient e4b
-  depth             qwen3-coder:30b    needs ~24GB RAM/VRAM
-  (NOTE: 'gemma4' is not a real Ollama tag. profiles set per-model sampling.)
-
-Agent tools (same set, local and cloud):
-  read_file · write_file · run_shell · run_tests · repo_search · git_commit
-  web_search   Search the web (DuckDuckGo, no key) for docs/answers mid-task
-  web_fetch    Read a web page as text (SSRF-guarded: no localhost/private IPs)
-`;
 
 async function main(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
@@ -165,6 +65,8 @@ async function main(argv: string[]): Promise<number> {
       json: { type: "boolean", default: false },
       audit: { type: "boolean", default: false },
       yes: { type: "boolean", short: "y", default: false },
+      apply: { type: "boolean", default: false },
+      deep: { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
       version: { type: "boolean", short: "v", default: false },
       // `aether agent` flags:
@@ -188,7 +90,8 @@ async function main(argv: string[]): Promise<number> {
   }
   const cmd = positionals[0];
   if (values["help"] || cmd === "help") {
-    process.stdout.write(HELP);
+    const target = cmd === "help" ? positionals[1] : cmd;
+    process.stdout.write(renderCliHelp(target));
     return 0;
   }
 
@@ -203,6 +106,7 @@ async function main(argv: string[]): Promise<number> {
     json: Boolean(values["json"]),
     audit: Boolean(values["audit"]),
     yes: Boolean(values["yes"]),
+    local: Boolean(values["local"]),
     cwd: typeof values["cwd"] === "string" ? (values["cwd"] as string) : process.cwd(),
   };
   // y/N confirmation for destructive prompts (e.g. switching model mid-session).
@@ -240,6 +144,10 @@ async function main(argv: string[]): Promise<number> {
       return cmdVault(ctx, rest);
     case "workflow":
       return cmdWorkflow(ctx, rest);
+    case "memory": {
+      const { cmdMemory } = await import("./commands/memory.js");
+      return cmdMemory(ctx, rest, { apply: Boolean(values["apply"]) });
+    }
     case "image":
     case "img":
       return cmdImage(ctx, rest);
@@ -257,9 +165,13 @@ async function main(argv: string[]): Promise<number> {
       const { cmdAudit } = await import("./commands/audit.js");
       return cmdAudit(ctx, rest);
     }
+    case "doctor": {
+      const { cmdDoctor } = await import("./commands/doctor.js");
+      return cmdDoctor(ctx, rest, { deep: Boolean(values["deep"]) });
+    }
     case "mcp": {
       const { cmdMcp } = await import("./commands/mcp.js");
-      return cmdMcp(ctx);
+      return cmdMcp(ctx, rest);
     }
     case "models":
       return cmdModels(ctx, rest);

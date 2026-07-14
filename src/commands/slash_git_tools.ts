@@ -25,9 +25,9 @@ export async function rollbackSlash(ctx: AppContext, out: Writable, arg: string)
     return;
   }
 
-  const { execSync } = require("node:child_process") as typeof import("node:child_process");
+  const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
   try {
-    const status = execSync("git diff --name-only", { cwd, encoding: "utf8", timeout: 5000 });
+    const status = execFileSync("git", ["-c", "core.literalPathspecs=true", "diff", "--name-only"], { cwd, encoding: "utf8", timeout: 5000 });
     const dirty = status.trim().split("\n").filter(Boolean);
     if (dirty.length === 0) {
       out.write("(working tree clean — nothing to rollback)\n");
@@ -50,7 +50,7 @@ export async function rollbackSlash(ctx: AppContext, out: Writable, arg: string)
       return;
     }
 
-    execSync("git checkout -- .", { cwd, encoding: "utf8", timeout: 10000 });
+    execFileSync("git", ["-c", "core.literalPathspecs=true", "checkout", "--", "."], { cwd, encoding: "utf8", timeout: 10000 });
     out.write(`${theme.cyan("↩ rolled back")}  ${dirty.length} files restored to last commit.\n`);
     out.write(theme.dim("  Git reflog untouched — all commits preserved.\n"));
   } catch (err) {
@@ -122,7 +122,7 @@ export async function revertSlash(ctx: AppContext, out: Writable, arg: string): 
     return;
   }
 
-  const { execSync } = require("node:child_process") as typeof import("node:child_process");
+  const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
 
   if (target.startsWith("step-") || target.match(/^\d+$/)) {
     out.write(theme.muted("Step-based revert not yet available. Use /rollback to revert all, or /revert <file> for a single file.\n"));
@@ -133,7 +133,7 @@ export async function revertSlash(ctx: AppContext, out: Writable, arg: string): 
   try {
     const isTracked = (() => {
       try {
-        execSync(`git ls-files --error-unmatch "${target}"`, { cwd, encoding: "utf8", timeout: 3000 });
+        execFileSync("git", ["-c", "core.literalPathspecs=true", "ls-files", "--error-unmatch", "--", target], { cwd, encoding: "utf8", timeout: 3000 });
         return true;
       } catch { return false; }
     })();
@@ -143,13 +143,13 @@ export async function revertSlash(ctx: AppContext, out: Writable, arg: string): 
       return;
     }
 
-    const diffOut = execSync(`git diff --name-only -- "${target}"`, { cwd, encoding: "utf8", timeout: 3000 });
+    const diffOut = execFileSync("git", ["-c", "core.literalPathspecs=true", "diff", "--name-only", "--", target], { cwd, encoding: "utf8", timeout: 3000 });
     if (!diffOut.trim()) {
       out.write(`(no uncommitted changes in ${target})\n`);
       return;
     }
 
-    const fileDiff = execSync(`git diff -- "${target}"`, { cwd, encoding: "utf8", timeout: 5000 });
+    const fileDiff = execFileSync("git", ["-c", "core.literalPathspecs=true", "diff", "--", target], { cwd, encoding: "utf8", timeout: 5000 });
     const changes = fileDiff.trim().split("\n").length;
 
     out.write(`${theme.cyan("↩  Reverting")} ${theme.bold(target)}  (${changes} line changes)\n`);
@@ -167,7 +167,7 @@ export async function revertSlash(ctx: AppContext, out: Writable, arg: string): 
       return;
     }
 
-    execSync(`git checkout -- "${target}"`, { cwd, encoding: "utf8", timeout: 10000 });
+    execFileSync("git", ["-c", "core.literalPathspecs=true", "checkout", "--", target], { cwd, encoding: "utf8", timeout: 10000 });
     out.write(`${theme.cyan("↩ reverted")}  ${target} restored to last commit.\n`);
   } catch (err: any) {
     if (err?.stderr?.includes("did not match any file")) {

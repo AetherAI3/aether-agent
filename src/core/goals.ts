@@ -2,9 +2,10 @@
 // Mirrors AetherCloud desktop task-chain model, adapted for file-based CLI.
 
 import { randomUUID } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { isCurrentWorkspace, normalizeWorkspace } from "./workspace_scope.js";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -39,59 +40,119 @@ export interface Goal {
   selectedPhaseId?: string;
   createdAt: string;
   completedAt?: string;
+  cwd?: string;
 }
 
 // ── Store ────────────────────────────────────────────────────────────
 
-const GOALS_DIR = join(homedir(), ".config", "aether");
-const GOALS_FILE = join(GOALS_DIR, "goals.json");
-
-function ensureDir(): void {
-  if (!existsSync(GOALS_DIR)) mkdirSync(GOALS_DIR, { recursive: true });
+export function goalsFile(): string {
+  return process.env["AETHER_GOALS_FILE"] ?? join(homedir(), ".config", "aether", "goals.json");
 }
 
-export function loadGoals(): Goal[] {
+function ensureDir(file: string): void {
+  const dir = dirname(file);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+}
+
+export type GoalStoreStatus = "missing" | "ok" | "corrupt" | "unreadable";
+export interface GoalStoreState { status: GoalStoreStatus; goals: Goal[] }
+
+export function readGoals(file: string = goalsFile()): GoalStoreState {
+  if (!existsSync(file)) return { status: "missing", goals: [] };
+  let raw: string;
   try {
-    if (!existsSync(GOALS_FILE)) return [];
-    const raw = readFileSync(GOALS_FILE, "utf8");
-    if (!raw.trim()) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    raw = readFileSync(file, "utf8");
   } catch {
-    return [];
+    return { status: "unreadable", goals: [] };
+  }
+  try {
+    if (!raw.trim()) return { status: "corrupt", goals: [] };
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? { status: "ok", goals: parsed as Goal[] }
+      : { status: "corrupt", goals: [] };
+  } catch {
+    return { status: "corrupt", goals: [] };
   }
 }
 
-function saveGoals(goals: Goal[]): void {
-  ensureDir();
-  writeFileSync(GOALS_FILE, JSON.stringify(goals, null, 2), { mode: 0o600 });
+export function loadGoals(file: string = goalsFile()): Goal[] {
+  return readGoals(file).goals;
 }
 
-export function upsertGoal(goal: Goal): void {
-  const all = loadGoals();
+function mutableGoals(file: string): Goal[] {
+  const state = readGoals(file);
+  if (state.status === "corrupt" || state.status === "unreadable") {
+    throw new Error(
+      `goal store is ${state.status}; refusing to overwrite it at ${file} — inspect/repair the file by hand before retrying`,
+    );
+  }
+  return state.goals;
+}
+
+function saveGoals(goals: Goal[], file: string): void {
+  ensureDir(file);
+  // Write-then-rename so a killed/interrupted process can never leave a torn
+  // goals.json — mirrors mcp_store.ts's atomic write pattern.
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(goals, null, 2), { encoding: "utf8", mode: 0o600 });
+  renameSync(tmp, file);
+}
+
+export function upsertGoal(goal: Goal, file: string = goalsFile()): void {
+  const all = mutableGoals(file);
   const idx = all.findIndex((g) => g.id === goal.id);
   if (idx >= 0) all[idx] = goal;
   else all.push(goal);
-  saveGoals(all);
+  saveGoals(all, file);
 }
 
-export function deleteGoal(id: string): void {
-  const all = loadGoals().filter((g) => g.id !== id);
-  saveGoals(all);
+export function deleteGoal(id: string, file: string = goalsFile()): void {
+  const all = mutableGoals(file).filter((g) => g.id !== id);
+  saveGoals(all, file);
 }
 
-export function getGoal(id: string): Goal | undefined {
-  return loadGoals().find((g) => g.id === id);
+export function getGoal(id: string, file: string = goalsFile()): Goal | undefined {
+  return loadGoals(file).find((g) => g.id === id);
 }
 
-export function getActiveGoal(): Goal | undefined {
-  return loadGoals().find((g) => g.status === "running" || g.status === "paused");
+/** Legacy (pre-workspace-scoping) goals have no `cwd` and are excluded by default. */
+export interface WorkspaceGoalOptions {
+  /** Surface legacy cwd-less goals instead of leaving them silently unreachable. Off by default. */
+  includeUnscoped?: boolean;
 }
 
-export function newGoal(title: string): Goal {
+export function getGoalForWorkspace(
+  id: string,
+  cwd: string,
+  file: string = goalsFile(),
+  options: WorkspaceGoalOptions = {},
+): Goal | undefined {
+  const goal = getGoal(id, file);
+  if (!goal) return undefined;
+  if (isCurrentWorkspace(goal.cwd, cwd)) return goal;
+  return options.includeUnscoped && goal.cwd == null ? goal : undefined;
+}
+
+export function goalsForWorkspace(
+  cwd: string,
+  file: string = goalsFile(),
+  options: WorkspaceGoalOptions = {},
+): Goal[] {
+  return loadGoals(file).filter(
+    (goal) => isCurrentWorkspace(goal.cwd, cwd) || (options.includeUnscoped === true && goal.cwd == null),
+  );
+}
+
+export function getActiveGoal(cwd: string, file: string = goalsFile()): Goal | undefined {
+  return goalsForWorkspace(cwd, file).find((g) => g.status === "running" || g.status === "paused");
+}
+
+export function newGoal(title: string, cwd: string): Goal {
   return {
     id: `goal_${randomUUID().slice(0, 8)}`,
     title,
+    cwd: normalizeWorkspace(cwd),
     phases: [],
     status: "idle",
     createdAt: new Date().toISOString(),
@@ -114,21 +175,25 @@ export function newTask(title: string): GoalTask {
   return { id: `t_${randomUUID().slice(0, 6)}`, title, status: "queued" };
 }
 
+function cloneGoal(goal: Goal): Goal {
+  return JSON.parse(JSON.stringify(goal)) as Goal;
+}
+
 export function selectPhase(goal: Goal, phaseId: string): Goal {
-  const copy = JSON.parse(JSON.stringify(goal)) as Goal;
+  const copy = cloneGoal(goal);
   copy.selectedPhaseId = phaseId;
   return copy;
 }
 
 export function setPhaseNote(goal: Goal, phaseId: string, note: string): Goal {
-  const copy = JSON.parse(JSON.stringify(goal)) as Goal;
+  const copy = cloneGoal(goal);
   const phase = copy.phases.find((p) => p.id === phaseId);
   if (phase) phase.userNote = note;
   return copy;
 }
 
 export function startGoal(goal: Goal): Goal {
-  const copy = JSON.parse(JSON.stringify(goal)) as Goal;
+  const copy = cloneGoal(goal);
   copy.status = "running";
   const first = copy.phases.find((p) => p.status === "pending");
   if (first) {
@@ -141,7 +206,7 @@ export function startGoal(goal: Goal): Goal {
 }
 
 export function completePhase(goal: Goal, phaseId: string): Goal {
-  const copy = JSON.parse(JSON.stringify(goal)) as Goal;
+  const copy = cloneGoal(goal);
   const phase = copy.phases.find((p) => p.id === phaseId);
   if (phase) {
     phase.status = "complete";

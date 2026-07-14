@@ -59,17 +59,26 @@ test("setProgress forwards to onProgress", () => {
 // --- heartbeat -------------------------------------------------------------
 test("heartbeat: one beat reaches the peak then returns to rest", async () => {
   const seen: string[] = [];
-  const frameMs = 5;
-  const hb = new HeartbeatIndicator({ onFrame: (g) => seen.push(g), frameMs });
-  hb.beat();
-  // Poll instead of assuming wall-clock timing: a loaded host lags setTimeout,
-  // so a fixed delay flakes. The one-shot envelope ends at rest and STAYS there
-  // (idx=-1), and `seen` keeps the peak, so each wait is deterministic.
-  for (let i = 0; i < 200 && !seen.includes("◉"); i++) await delay(5);
+  let hb: HeartbeatIndicator;
+  await new Promise<void>((resolve, reject) => {
+    let peaked = false;
+    const timeout = setTimeout(() => reject(new Error("heartbeat did not settle")), 500);
+    hb = new HeartbeatIndicator({
+      frameMs: 1,
+      onFrame: (glyph) => {
+        seen.push(glyph);
+        if (glyph === "◉") peaked = true;
+        if (peaked && glyph === "·") {
+          clearTimeout(timeout);
+          resolve();
+        }
+      },
+    });
+    hb.beat();
+  });
   assert.ok(seen.includes("◉"), "beat reaches the peak glyph");
-  for (let i = 0; i < 200 && hb.glyph() !== "·"; i++) await delay(5);
-  assert.equal(hb.glyph(), "·", "rests between beats");
-  hb.stop();
+  assert.equal(hb!.glyph(), "·", "rests between beats");
+  hb!.stop();
 });
 
 test("heartbeat: stall shows hollow; next beat clears it", () => {
