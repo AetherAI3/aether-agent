@@ -10,6 +10,17 @@ import { renderStatusBar } from "./statusbar.js";
 import { sanitizeTerm } from "./text.js";
 import type { BrainEvent } from "../core/brain_protocol.js";
 
+/**
+ * sanitizeTerm() deliberately keeps literal \n/\t (core/render.ts's markdown
+ * feed needs multi-line output). HostRenderer's whole design is one physical
+ * terminal line per event, so an embedded newline in a BrainEvent field would
+ * break monologue depth/branch indentation and could impersonate an unrelated
+ * frame (e.g. a fake "[ OKAY ]" line) on the next line. Collapse it here.
+ */
+function oneLine(s: string): string {
+  return sanitizeTerm(s).replace(/[\n\t]/g, " ");
+}
+
 const STAGE_FACE: Record<string, string> = {
   recon: "( ⚆ _ ⚆ )",
   parse: "＿φ(°-°=)",
@@ -76,29 +87,29 @@ export class HostRenderer {
       case "stage": {
         this.header();
         this.breakBar();
-        const name = sanitizeTerm(ev.name);
-        const face = sanitizeTerm(ev.face || STAGE_FACE[name] || "");
+        const name = oneLine(ev.name);
+        const face = oneLine(ev.face || STAGE_FACE[name] || "");
         this.out.write(theme.cyan("* ") + name + "  " + theme.dim(face) + "\n");
         break;
       }
       case "skill": {
         // Procedure pinned — a one-line flourish (the local-hardening move).
         this.breakBar();
-        const why = ev.reason ? theme.dim(` (${sanitizeTerm(ev.reason)})`) : "";
-        this.out.write(theme.iceBlue("  ⌁ skill ") + sanitizeTerm(ev.name) + why + "\n");
+        const why = ev.reason ? theme.dim(` (${oneLine(ev.reason)})`) : "";
+        this.out.write(theme.iceBlue("  ⌁ skill ") + oneLine(ev.name) + why + "\n");
         break;
       }
       case "monologue": {
         this.breakBar();
         const indent = "  " + "  ".repeat(Math.max(0, ev.depth));
         const branch = ev.depth > 0 ? "└─ " : "";
-        this.out.write(theme.dim(indent + branch + sanitizeTerm(ev.text)) + "\n");
+        this.out.write(theme.dim(indent + branch + oneLine(ev.text)) + "\n");
         break;
       }
       case "tool_call": {
         // The host executes this; show what it's running.
         this.breakBar();
-        this.out.write(theme.dim(`  : ${sanitizeTerm(ev.name)} ${argHint(ev.args)}`) + "\n");
+        this.out.write(theme.dim(`  : ${oneLine(ev.name)} ${argHint(ev.args)}`) + "\n");
         break;
       }
       case "status": {
@@ -128,19 +139,19 @@ export class HostRenderer {
       }
       case "checkpoint": {
         this.breakBar();
-        this.out.write(theme.cyan("  [▪]→[▪▪] ") + theme.dim(`checkpoint ${sanitizeTerm(ev.gitSha)}`) + "\n");
+        this.out.write(theme.cyan("  [▪]→[▪▪] ") + theme.dim(`checkpoint ${oneLine(ev.gitSha)}`) + "\n");
         break;
       }
       case "done": {
         this.breakBar();
         const flag = ev.ok ? theme.cyan("[ OKAY ]") : theme.red("[ FAIL ]");
         const mark = ev.ok ? "ᕙ(`▽`)ᕗ" : "o(TヘTo)";
-        this.out.write("\n" + `${mark} ${sanitizeTerm(ev.result || (ev.ok ? "done" : "stopped"))} ` + flag + "\n");
+        this.out.write("\n" + `${mark} ${oneLine(ev.result || (ev.ok ? "done" : "stopped"))} ` + flag + "\n");
         break;
       }
       case "error": {
         this.breakBar();
-        this.err.write("\n" + errTheme.red("✗ ") + sanitizeTerm(ev.msg) + "\n");
+        this.err.write("\n" + errTheme.red("✗ ") + oneLine(ev.msg) + "\n");
         break;
       }
     }
@@ -150,5 +161,5 @@ export class HostRenderer {
 /** A short, single-line hint of a tool call's primary arg. */
 function argHint(args: Record<string, unknown>): string {
   const k = args["path"] ?? args["command"] ?? args["query"] ?? args["message"] ?? "";
-  return clipCodePoints(sanitizeTerm(String(k)), 60);
+  return clipCodePoints(oneLine(String(k)), 60);
 }

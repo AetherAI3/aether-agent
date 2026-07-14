@@ -19,6 +19,26 @@ import {
   type WorkspaceScope,
 } from "./workspace_scope.js";
 
+/**
+ * Aether Agent memory model — the four tiers surfaced by
+ * `aether memory status|inspect|forget|prune`.
+ *
+ * - `working`    locally computed from this machine's registry pins and context
+ *                snapshots (context_registry.ts). Never touches the network.
+ * - `episodic`   QOPC-hosted behavioral facts (server `kind: "episodic"`),
+ *                fetched via cloud_memory.ts. Requires an authenticated cloud backend.
+ * - `semantic`   QOPC-hosted behavioral facts (server `kind: "semantic"`), the same
+ *                source as `episodic`, split client-side by the fact's `kind` field.
+ *                NOTE: unrelated to the `vault` command's "semantic memory" (an
+ *                Obsidian-notes store) or README's "working memory" (the
+ *                Unlimited-Context engine) — those are separate subsystems that
+ *                happen to reuse this cognitive-science vocabulary.
+ * - `procedural` QOPC-hosted skills reported by the server, also via cloud_memory.ts.
+ *
+ * Only `working` is computed locally; the other three are always server-sourced and
+ * are reported empty/unavailable when no cloud backend is reachable — compare
+ * `localMemoryReport` (local-only) with `memoryReport` (attempts the cloud fetch).
+ */
 export type MemoryTier = "working" | "episodic" | "semantic" | "procedural";
 export type MemoryHealth = "available" | "degraded" | "unavailable";
 
@@ -75,7 +95,7 @@ export interface PruneResult {
 const hashId = (value: string): string =>
   createHash("sha256").update(value).digest("hex").slice(0, 12);
 
-export function defaultMemoryRoots(cwd: string): MemoryRoots {
+function defaultMemoryRoots(cwd: string): MemoryRoots {
   return {
     logs: logsRoot(),
     snapshots: snapshotsRoot(),

@@ -178,9 +178,17 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
 
   const brain: Brain = goLocal ? new LocalBrain() : new CloudBrain(ctx.api);
   const exec = new ToolExecutor(cwd, opts.testCmd);
+  // Scope the session manifest to the ORIGINAL launch directory (ctx.flags.cwd),
+  // not the possibly-substituted `cwd` (an auto-created worktree, or a manually
+  // redirected directory from the repo gate) — resume always compares against
+  // ctx.flags.cwd of the *next* invocation (resume.ts, latestSession), which is
+  // where the user is standing, not where this run ended up executing.
   const log = opts.noLog
     ? null
-    : new SessionLog({ task, model: ctx.flags.model ?? "", poolGb, brain: brainKind, cwd }, nowIso());
+    : new SessionLog(
+        { task, model: ctx.flags.model ?? "", poolGb, brain: brainKind, cwd: ctx.flags.cwd },
+        nowIso(),
+      );
 
   // Ctrl-C prints the exact command to re-enter this session. Registered BEFORE
   // the renderer's own SIGINT handler so this fires first.

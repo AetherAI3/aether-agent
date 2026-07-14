@@ -227,8 +227,13 @@ export async function downloadMediaFile(
   api: ApiClient, url: string, destDir: string,
   modelKey: string, kind: MediaKind, label?: string,
 ): Promise<string> {
-  if (!isCredentialSafeUrl(url)) throw new InsecureTransportError(url);
   const headers = await authHeaders(api);
+  // Only enforce the credential-safe-transport guard when a bearer token is
+  // actually about to be attached — mirrors transport.ts's authHeaders()/
+  // vault.ts's _authHeaders() token-conditional pattern. An anonymous session
+  // or a non-loopback self-hosted media host has nothing to leak, so it
+  // shouldn't hard-fail the download.
+  if ("Authorization" in headers && !isCredentialSafeUrl(url)) throw new InsecureTransportError(url);
   const resp = await fetch(url, { headers });
   if (!resp.ok) throw new Error(`download failed: HTTP ${resp.status}`);
   if (!resp.body) throw new Error("download failed: empty body");

@@ -17,7 +17,7 @@ scope: terminal security and usability
 
 ## Verification
 
-- `npm test`: 524 pass, 1 sandbox capability skip, 0 failures.
+- `npm test`: 645 pass, 0 sandbox capability skip, 0 failures.
 - Security tests cover credential redaction, path isolation, SSRF, malformed tool calls, cloud-memory content suppression, and repair interruption.
 - Existing bridge protocol, dependencies, migrations, and permissions are unchanged.
 
@@ -32,6 +32,6 @@ scope: terminal security and usability
 ## Acceptance
 
 - Keep production modules, focused tests, and this artifact.
-- Remove loop specs, mutation harnesses, drift scripts, and per-run evidence from the repository.
+- Remove loop specs, mutation harnesses, drift scripts, and per-run evidence from the repository. Done in the PR #44 simplify/harden pass: `docs/loops/`, the mutate-adversarial specs under `docs/plans/`, and the raw per-run evidence under `_loopstate/LOOP-19/2026-07-10T03-28-15Z/` (17 files) were removed; `_loopstate/governance-ledger.md` (the durable summary row per Kernel §8) was kept and given a schema header.
 - Merge only after canonical PR checks and maintainer security review pass.
 

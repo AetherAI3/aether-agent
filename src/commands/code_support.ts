@@ -40,6 +40,13 @@ export function writeDiffLines(exec: ToolExecutor, args: Record<string, unknown>
   const cols = process.stdout.columns && process.stdout.columns > 0 ? process.stdout.columns : 80;
   const face = withFace ? kaomoji("logging") : undefined;
 
+  // snap.reason === "unsafe" means ToolExecutor's workspace guard is about to
+  // reject this write (e.g. a path outside the workspace) — existed is false
+  // in that case (unlike binary/too-big, which have existed:true), so without
+  // this check execution would fall through to renderDiff and fabricate a
+  // clean "(new +N)" preview for a write that never actually happens.
+  if (snap.reason === "unsafe") return [];
+
   if (snap.existed && snap.text === null) {
     const what = snap.reason === "binary" ? "binary" : "large file";
     const bytes = Buffer.byteLength(content);

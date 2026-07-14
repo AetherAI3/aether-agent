@@ -2,7 +2,7 @@
 // Mirrors AetherCloud desktop task-chain model, adapted for file-based CLI.
 
 import { randomUUID } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { isCurrentWorkspace, normalizeWorkspace } from "./workspace_scope.js";
@@ -83,14 +83,20 @@ export function loadGoals(file: string = goalsFile()): Goal[] {
 function mutableGoals(file: string): Goal[] {
   const state = readGoals(file);
   if (state.status === "corrupt" || state.status === "unreadable") {
-    throw new Error(`goal store is ${state.status}; refusing to overwrite it`);
+    throw new Error(
+      `goal store is ${state.status}; refusing to overwrite it at ${file} — inspect/repair the file by hand before retrying`,
+    );
   }
   return state.goals;
 }
 
 function saveGoals(goals: Goal[], file: string): void {
   ensureDir(file);
-  writeFileSync(file, JSON.stringify(goals, null, 2), { encoding: "utf8", mode: 0o600 });
+  // Write-then-rename so a killed/interrupted process can never leave a torn
+  // goals.json — mirrors mcp_store.ts's atomic write pattern.
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(goals, null, 2), { encoding: "utf8", mode: 0o600 });
+  renameSync(tmp, file);
 }
 
 export function upsertGoal(goal: Goal, file: string = goalsFile()): void {
@@ -110,13 +116,32 @@ export function getGoal(id: string, file: string = goalsFile()): Goal | undefine
   return loadGoals(file).find((g) => g.id === id);
 }
 
-export function getGoalForWorkspace(id: string, cwd: string, file: string = goalsFile()): Goal | undefined {
-  const goal = getGoal(id, file);
-  return goal && isCurrentWorkspace(goal.cwd, cwd) ? goal : undefined;
+/** Legacy (pre-workspace-scoping) goals have no `cwd` and are excluded by default. */
+export interface WorkspaceGoalOptions {
+  /** Surface legacy cwd-less goals instead of leaving them silently unreachable. Off by default. */
+  includeUnscoped?: boolean;
 }
 
-export function goalsForWorkspace(cwd: string, file: string = goalsFile()): Goal[] {
-  return loadGoals(file).filter((goal) => isCurrentWorkspace(goal.cwd, cwd));
+export function getGoalForWorkspace(
+  id: string,
+  cwd: string,
+  file: string = goalsFile(),
+  options: WorkspaceGoalOptions = {},
+): Goal | undefined {
+  const goal = getGoal(id, file);
+  if (!goal) return undefined;
+  if (isCurrentWorkspace(goal.cwd, cwd)) return goal;
+  return options.includeUnscoped && goal.cwd == null ? goal : undefined;
+}
+
+export function goalsForWorkspace(
+  cwd: string,
+  file: string = goalsFile(),
+  options: WorkspaceGoalOptions = {},
+): Goal[] {
+  return loadGoals(file).filter(
+    (goal) => isCurrentWorkspace(goal.cwd, cwd) || (options.includeUnscoped === true && goal.cwd == null),
+  );
 }
 
 export function getActiveGoal(cwd: string, file: string = goalsFile()): Goal | undefined {

@@ -1,5 +1,8 @@
 import type { ApiClient } from "./transport.js";
 
+// QOPC: Aether's hosted, cloud-only agentic memory backend (facts + skills
+// synced across sessions/devices). Distinct from local pins/snapshots, which
+// never leave this machine — see core/memory.ts's tier split.
 export const QOPC_MEMORY_PATH = "/agent/memory/qopc?limit=100";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_FACTS = 100;

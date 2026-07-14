@@ -105,10 +105,16 @@ export async function diagnosticReport(
       id: "runtime.node",
       category: "runtime",
       run: () => {
+        // Must track package.json's engines.node — this project's own test
+        // script needs Node 24 (`--test --test-isolation` support).
+        const MIN_SUPPORTED_NODE_MAJOR = 24;
         const major = Number(process.versions.node.split(".")[0]);
         return {
-          status: major >= 20 ? "pass" : "fail",
-          detail: major >= 20 ? "Node runtime supported" : "Node 20 or newer required",
+          status: major >= MIN_SUPPORTED_NODE_MAJOR ? "pass" : "fail",
+          detail:
+            major >= MIN_SUPPORTED_NODE_MAJOR
+              ? "Node runtime supported"
+              : `Node ${MIN_SUPPORTED_NODE_MAJOR} or newer required`,
         };
       },
     },

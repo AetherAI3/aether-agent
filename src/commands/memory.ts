@@ -18,11 +18,18 @@ export interface MemoryCommandOptions {
   apply?: boolean;
 }
 
-const TIERS = new Set<MemoryTier>(["working", "episodic", "semantic", "procedural"]);
+// Mirrors the MemoryTier union in ../core/memory.ts and the error text
+// tierReport() throws there. There is no shared runtime export to import
+// (core/memory.ts only exports the MemoryTier *type*, which erases at
+// runtime), so this list must still be kept in sync by hand if a tier is
+// ever added, renamed, or removed on either side.
+const TIER_LIST: readonly MemoryTier[] = ["working", "episodic", "semantic", "procedural"];
+const TIERS = new Set<MemoryTier>(TIER_LIST);
+const TIER_ERROR = `tier must be ${TIER_LIST.slice(0, -1).join(", ")}, or ${TIER_LIST[TIER_LIST.length - 1]}`;
 
 function parseTier(value: string | undefined): MemoryTier {
   if (!value || !TIERS.has(value as MemoryTier)) {
-    throw new Error("tier must be working, episodic, semantic, or procedural");
+    throw new Error(TIER_ERROR);
   }
   return value as MemoryTier;
 }

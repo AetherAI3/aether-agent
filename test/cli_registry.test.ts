@@ -25,6 +25,16 @@ test("CLI switch cases are represented by the registry", () => {
   const cases = [...source.matchAll(/^    case "([a-z0-9-]+)":/gm)].map((match) => match[1]!);
   const registered = new Set(commandNames(CLI_COMMANDS));
   assert.deepEqual(cases.filter((name) => !registered.has(name)), []);
+
+  // Reverse direction (mirrors slash_registry.test.ts's bidirectional check):
+  // every registry entry should have a matching switch case, or it's dead
+  // registry data no dispatch path ever reaches. "help" is the one legitimate
+  // exception — main.ts dispatches it before the switch (`values["help"] ||
+  // cmd === "help"`), so it never appears as a `case "help":`.
+  const registeredNames = commandNames(CLI_COMMANDS);
+  const caseSet = new Set(cases);
+  const missingFromSwitch = registeredNames.filter((name) => name !== "help" && !caseSet.has(name));
+  assert.deepEqual(missingFromSwitch, []);
 });
 
 test("grouped help includes every visible canonical command", () => {

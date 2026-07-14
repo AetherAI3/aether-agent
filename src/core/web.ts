@@ -16,6 +16,7 @@ import { lookup } from "node:dns/promises";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
+import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_BYTES = 2 * 1024 * 1024; // 2MB read cap
@@ -283,9 +284,36 @@ export function pinnedRequestOptions(url: string, address: string): PinnedReques
     ...(target.port ? { port: target.port } : {}),
     path: target.pathname + target.search,
     method: "GET",
-    headers: { host: target.host, "user-agent": USER_AGENT, accept: "text/html,*/*" },
+    headers: {
+      host: target.host,
+      "user-agent": USER_AGENT,
+      accept: "text/html,*/*",
+      "accept-encoding": "gzip, br, deflate",
+    },
     ...(target.protocol === "https:" && isIP(target.hostname) === 0 ? { servername: target.hostname } : {}),
   };
+}
+
+/**
+ * requestPinned buffers the raw response body itself (no fetch()/undici in the
+ * loop), so unlike a normal fetch() call nothing auto-negotiates or decodes
+ * Content-Encoding. pinnedRequestOptions now sends Accept-Encoding, so a
+ * compliant server may compress — decode it here before the caller ever sees
+ * the bytes. Falls back to the raw buffer on decode failure (e.g. MAX_BYTES
+ * truncated a compressed stream mid-frame) rather than throwing, matching this
+ * transport's existing best-effort behavior for partial responses.
+ */
+function decodeBody(body: Buffer<ArrayBuffer>, contentEncoding: string | null): Buffer<ArrayBuffer> {
+  if (!contentEncoding) return body;
+  try {
+    const encoding = contentEncoding.trim().toLowerCase();
+    if (encoding === "gzip" || encoding === "x-gzip") return gunzipSync(body);
+    if (encoding === "br") return brotliDecompressSync(body);
+    if (encoding === "deflate") return inflateSync(body);
+    return body;
+  } catch {
+    return body;
+  }
 }
 
 function responseHeaders(raw: IncomingHttpHeaders): Headers {
@@ -309,8 +337,11 @@ async function requestPinned(url: string, signal: AbortSignal, addresses: readon
       const finish = (): void => {
         if (settled) return;
         settled = true;
-        const body = Buffer.concat(chunks);
-        resolve(new Response(body.length ? body : null, { status: res.statusCode ?? 500, headers: responseHeaders(res.headers) }));
+        const raw = Buffer.concat(chunks);
+        const body = decodeBody(raw, res.headers["content-encoding"] ?? null);
+        const headers = responseHeaders(res.headers);
+        headers.delete("content-encoding");
+        resolve(new Response(body.length ? body : null, { status: res.statusCode ?? 500, headers }));
       };
       res.on("data", (chunk: Buffer) => {
         if (settled) return;

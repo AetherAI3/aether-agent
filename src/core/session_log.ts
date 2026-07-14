@@ -121,7 +121,11 @@ export class SessionLog {
     root: string = logsRoot(),
   ) {
     this.started = now;
-    this.sessionId = now.replace(/[:.]/g, "-") + "-" + String(meta.brain);
+    // process.pid makes the session dir collision-proof: two `aether code`
+    // invocations with the same brain starting in the same millisecond would
+    // otherwise resolve to the same directory, and the eager truncation below
+    // would silently wipe the other, already-running session's events.
+    this.sessionId = now.replace(/[:.]/g, "-") + "-" + String(meta.brain) + "-" + process.pid;
     this.dir = join(root, this.sessionId);
     mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     this.eventsPath = join(this.dir, "events.jsonl");

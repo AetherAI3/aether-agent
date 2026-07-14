@@ -8,6 +8,13 @@ on:
     branches:
       - main
 
+# Same-repo PR branches fire both on.push and on.pull_request for the same
+# commit, running build-and-test twice. Cancel the superseded run instead of
+# paying for (and status-checking) both.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest

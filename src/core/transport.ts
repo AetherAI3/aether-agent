@@ -207,7 +207,15 @@ export class ApiClient {
       ...(opts.signal ? { signal: opts.signal } : {}),
     });
     if (!res.ok) throw await toHttpError(res);
-    return (await res.json()) as T;
+    // Mirrors toHttpError()'s own defensive res.json() below: a 2xx response
+    // can still have an empty or non-JSON body (e.g. 204 No Content from the
+    // new deleteJson()), which would otherwise throw an uncaught SyntaxError
+    // here instead of letting the caller's own domain check report it.
+    try {
+      return (await res.json()) as T;
+    } catch {
+      return undefined as T;
+    }
   }
 }
 

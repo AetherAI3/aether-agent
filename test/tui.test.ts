@@ -90,6 +90,18 @@ test("heartbeat: stall shows hollow; next beat clears it", () => {
   hb.stop();
 });
 
+test("heartbeat: counts each beat and reports it to onFrame (thinking timer)", () => {
+  const counts: number[] = [];
+  const hb = new HeartbeatIndicator({ onFrame: (_g, beats) => counts.push(beats), frameMs: 1 });
+  assert.equal(hb.count(), 0);
+  hb.beat();
+  hb.beat();
+  hb.beat();
+  assert.equal(hb.count(), 3, "three pulses counted");
+  assert.ok(counts.includes(3), "the latest count reached onFrame");
+  hb.stop();
+});
+
 // --- agent_events: adapter + watchdog --------------------------------------
 test("mapBrainEvent adapts the bridge vocabulary to the UI slice", () => {
   assert.deepEqual(mapBrainEvent({ type: "stage", name: "recon", face: "" }), {
