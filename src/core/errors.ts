@@ -98,16 +98,28 @@ export function isAbortError(err: unknown): boolean {
 }
 
 /**
+ * The ONE wording per auth/plan-shaped HTTP status, shared by errorHint (REPL)
+ * and error_hints.hintFor (embedders/one-shot CLI) so a 401 can't read two
+ * different ways in the same session. `/tier` only exists in the REPL, so the
+ * standalone-CLI alternative is always named too.
+ */
+export function httpStatusHint(status: number): string | null {
+  if (status === 401) return "session expired or invalid — run `aether auth login` to sign in again";
+  if (status === 402) return "out of UVT balance — top up or check your plan: /tier or `aether models`";
+  if (status === 403) return "your plan/tier may not include this — check: /tier or `aether models`";
+  if (status === 429) return "rate limited — give it a moment, or check your plan: /tier or `aether models`";
+  return null;
+}
+
+/**
  * One actionable next step for a failed turn, or null when there is nothing
  * better to say than the error itself. Pure — safe to unit test without a
  * network or a TTY. Consumed under the ✗ line as a dim hint.
  */
 export function errorHint(err: unknown, baseUrl: string): string | null {
   if (err instanceof HttpError) {
-    if (err.status === 401 || err.status === 403) return "not authorized — run: aether auth login";
-    if (err.status === 429) return "rate/UVT limit hit — check your plan: /tier (or aether models)";
     if (err.status >= 500) return `the server at ${baseUrl} had a problem — try again shortly`;
-    return null;
+    return httpStatusHint(err.status);
   }
   if (err instanceof Error) {
     const code = (err.cause as { code?: string } | undefined)?.code ?? "";

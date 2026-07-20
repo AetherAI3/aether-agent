@@ -13,7 +13,7 @@ npm run build
 npm test
 ```
 
-Node ≥ 20. Zero runtime dependencies — the client uses only Node built-ins, and
+Node ≥ 24. Zero runtime dependencies — the client uses only Node built-ins, and
 that's a feature we'd like to keep. Please don't add a runtime dep without a very
 good reason and a maintainer's nod.
 
@@ -36,6 +36,8 @@ Most features touch a `core/` module + a `commands/` file.
 - **Tests pass.** `npm test` is green before you open a PR. Add tests for new
   logic (the stream decoder, catalog parsing, and arg resolution are all unit-
   tested — match that bar).
+- **Types pass.** `npm run typecheck` uses the repository's pinned TypeScript 7
+  compiler and strict project settings.
 - **Types are honest.** No `any` in application code; narrow `unknown`.
 - **Small files, one job each.** If a file grows past ~300 lines it's probably
   doing too much.

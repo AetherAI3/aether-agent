@@ -16,7 +16,6 @@ import {
   existsSync,
   mkdirSync,
   openSync,
-  readFileSync,
   readSync,
   rmSync,
   writeFileSync,
@@ -28,6 +27,10 @@ export interface TokenStore {
   get(): Promise<string | null>;
   set(token: string): Promise<void>;
   clear(): Promise<void>;
+  /** Replace the ACTIVE token without widening persistence scope (used by the
+   * automatic 401→refresh path). Stores that don't distinguish may omit it;
+   * callers fall back to set(). */
+  update?(token: string): Promise<void>;
 }
 
 /** File-backed token store (0600). Fallback until keychain is wired. */
@@ -102,7 +105,39 @@ export function defaultTokenStore(): TokenStore {
  */
 export function tokenStoreFromEnv(env: NodeJS.ProcessEnv = process.env): TokenStore {
   const injected = (env["AETHER_TOKEN"] ?? "").trim();
-  return injected ? new StaticTokenStore(injected) : defaultTokenStore();
+  return injected ? new EnvOverrideTokenStore(injected, defaultTokenStore()) : defaultTokenStore();
+}
+
+/**
+ * Env-injected token that still honors an explicit login. The injected token
+ * wins for reads until the user logs in; set() then updates BOTH the in-memory
+ * override and the on-disk store. Previously the fresh token lived only in a
+ * StaticTokenStore, so "✓ Logged in" evaporated with the process and every
+ * later run re-read the stale AETHER_TOKEN and got 401s at model-select —
+ * the exact bug in PR #47.
+ */
+export class EnvOverrideTokenStore implements TokenStore {
+  constructor(
+    private override: string,
+    private readonly disk: TokenStore,
+  ) {}
+  async get(): Promise<string | null> {
+    return this.override || this.disk.get();
+  }
+  async set(token: string): Promise<void> {
+    this.override = token;
+    await this.disk.set(token);
+  }
+  /** Automatic refresh of an embedded session stays in-process: the desktop
+   * app owns AETHER_TOKEN, and a background rotation must not overwrite the
+   * standalone CLI's independent on-disk login. */
+  async update(token: string): Promise<void> {
+    this.override = token;
+  }
+  async clear(): Promise<void> {
+    this.override = "";
+    await this.disk.clear();
+  }
 }
 
 /**

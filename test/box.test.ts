@@ -4,7 +4,6 @@ import { box, titledBox, hyperlink, orange, green, darkBlue, brightWhite, lightB
 import { stripAnsi, createTheme, type Theme } from "../src/ui/theme.js";
 
 const enabled: Theme = createTheme(true);
-const disabled: Theme = createTheme(false);
 
 // Use the side-effect of importing box.ts — it sets up theme wrappers.
 // These tests run against the singleton theme (process.stdout.isTTY), so

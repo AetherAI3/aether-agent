@@ -5,10 +5,10 @@ import type { Writable } from "node:stream";
 import type { AppContext } from "../core/context.js";
 import {
   goalsForWorkspace, getGoalForWorkspace, getActiveGoal, newGoal, newPhase, newTask,
-  upsertGoal, deleteGoal, startGoal, completePhase,
-  selectPhase, setPhaseNote, type Goal,
+  upsertGoal, startGoal, completePhase,
+  setPhaseNote, type Goal,
 } from "../core/goals.js";
-import { renderGoalChain, renderPhaseDetail, navigatePhase } from "../ui/goal_chain.js";
+import { renderGoalChain, renderPhaseDetail } from "../ui/goal_chain.js";
 
 const cols = () => process.stdout.columns || 100;
 

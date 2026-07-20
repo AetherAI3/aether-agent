@@ -845,7 +845,14 @@ async function repl(ctx: AppContext): Promise<number> {
             }
             return;
           }
-          void onSubmit().catch((err) => printError(err, ctx.cfg.baseUrl));
+          // Last-resort catch: an error escaping onSubmit's own handlers must
+          // still leave a usable session — without busy=false + repaint() the
+          // REPL sat with no visible prompt (PR #47 UX audit, finding 5).
+          void onSubmit().catch((err) => {
+            printError(err, ctx.cfg.baseUrl);
+            busy = false;
+            repaint();
+          });
           return;
         case "escape":
           if (viewerOpen) {
@@ -927,6 +934,7 @@ async function replLines(ctx: AppContext): Promise<number> {
       continue;
     }
     inflight = new AbortController();
+    let printed = false; // printError already ends with a blank line
     try {
       await runTurn(ctx, t, inflight.signal);
     } catch (err) {
@@ -935,11 +943,12 @@ async function replLines(ctx: AppContext): Promise<number> {
       } else if (!(err instanceof ChatTurnError)) {
         // ChatTurnError: Renderer already painted the "✗ <msg>" error line.
         printError(err, ctx.cfg.baseUrl);
+        printed = true;
       }
     } finally {
       inflight = null;
     }
-    process.stdout.write("\n" + p);
+    process.stdout.write((printed ? "" : "\n") + p);
   }
   rl.close();
   process.stdout.write("\n");
@@ -951,4 +960,8 @@ function printError(err: unknown, baseUrl: string): void {
   process.stderr.write(`\n${errTheme.red("✗")} ${msg}\n`);
   const hint = errorHint(err, baseUrl);
   if (hint) process.stderr.write(errTheme.dim(`  ⤷ ${hint}`) + "\n");
+  // Trailing blank line: the REPL reprints its prompt right after this, and
+  // without the separator the dim hint and the prompt fuse into one line
+  // (the "⤷ run `aether auth login` … [user]_:" mess from PR #47's report).
+  process.stderr.write("\n");
 }

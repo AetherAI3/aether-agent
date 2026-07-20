@@ -17,7 +17,7 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "dist",
+    "dist/src",
     "README.md",
     "COMMANDS.md",
     "LICENSE",
@@ -28,11 +28,13 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "node --experimental-strip-types src/main.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "npm run build && node dist/src/main.js",
     "start": "node dist/src/main.js",
     "test": "npm run build && node --test --test-isolation=none \"dist/test/**/*.test.js\"",
     "smoke": "npm run build && node -e \"import('./dist/src/core/smoke.js').then(m=>m.smokeMain()).then(c=>process.exit(c)).catch(e=>{console.error(e);process.exit(1)})\"",
-    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "prepack": "npm run build"
   },
   "keywords": [
     "aether",
@@ -65,11 +67,8 @@
     "url": "https://github.com/DBarr3/aether-agent/issues"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "typescript": "^5.6.0"
-  },
-  "dependencies": {
-    "tsx": "^4.22.4"
+    "@types/node": "^24.0.0",
+    "typescript": "^7.0.2"
   }
 }
 

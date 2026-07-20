@@ -20,12 +20,11 @@ GitHub/worktree/repo shell-out paths.
 | L1 | LOW | `.gitignore` ignores `.aether-token`; real token file is `.token` (misleading only) | Noted |
 | L2 | LOW | Install via `curl|sh` / `irm|iex` with no checksum pinning (accepted convention) | Noted |
 
-**Supply chain:** clean. `package.json` declares **zero runtime dependencies**
-(only `typescript` + `@types/node` dev), no `postinstall`/lifecycle scripts, and a
-2 KB `package-lock.json`. The install scripts only run `npm install -g aether-agent`
-after a Node ≥ 20 check — no piped-build, no privileged steps. The dominant
-supply-chain risk is the published npm package itself (see the prior
-`npm-abuse-report-draft` re: the unscoped-name squatter), not the installer.
+**Supply chain (updated 2026-07-20):** clean. `package.json` declares **zero
+runtime dependencies**; TypeScript 7 and Node declarations are development-only.
+The only lifecycle script builds the package before packing. Installers require
+Node 24 and run `npm install -g aether-agents` without privileged build steps.
+The current lockfile audit reports zero vulnerabilities.
 
 ---
 

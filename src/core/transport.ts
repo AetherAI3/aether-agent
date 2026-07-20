@@ -94,17 +94,84 @@ export interface StreamOptions {
 }
 
 export class ApiClient {
+  /** In-flight refresh, shared so concurrent 401s trigger ONE /auth/refresh. */
+  private refreshing: Promise<boolean> | null = null;
+
   constructor(
     private readonly baseUrl: string,
     private readonly tokens: TokenStore,
   ) {}
 
+  /**
+   * Transparent recovery for an expired session: on a 401, exchange the stale
+   * session token at /auth/refresh and store the fresh one so the caller can
+   * retry once. Returns false (never throws) when refresh isn't applicable —
+   * no token, an `aek_` API key (those don't expire), a 401 from an /auth/*
+   * route itself (no recursion), or a refresh that fails for any reason — so
+   * the ORIGINAL 401 is what surfaces to the user.
+   */
+  private async refreshSession(failedPath: string, usedToken: string | null): Promise<boolean> {
+    if (failedPath.startsWith("/auth/")) return false;
+    if (!usedToken || usedToken.startsWith("aek_")) return false;
+    // Same fail-closed rule as authHeaders(): never POST a session token over
+    // an insecure transport — not even to refresh it.
+    if (!isCredentialSafeUrl(this.baseUrl)) return false;
+    // A concurrent caller (or another process) already rotated the session
+    // while this request was in flight: don't burn a second refresh — on
+    // rotation-detecting servers that would invalidate the just-minted token.
+    // Just signal "retry with the new token".
+    const current = await this.tokens.get();
+    if (current !== usedToken) return current != null;
+    this.refreshing ??= (async () => {
+      try {
+        const res = await fetch(this.url(REFRESH_PATH), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            Authorization: `Bearer ${usedToken}`,
+          },
+          body: "{}",
+          // Bounded on its own: this fetch runs outside the caller's
+          // raceAgainst machinery, so without a timeout a blackholed
+          // /auth/refresh would hang the retry path forever.
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) return false;
+        let body: { session_token?: string } | undefined;
+        try {
+          body = (await res.json()) as { session_token?: string };
+        } catch {
+          return false;
+        }
+        if (!body?.session_token) return false;
+        // update() (when the store distinguishes it) swaps the ACTIVE token
+        // without widening persistence — an automatic refresh must not write
+        // a desktop-embedded session over the standalone CLI's on-disk token.
+        // Explicit logins keep using set(), which does persist.
+        await (this.tokens.update?.(body.session_token) ?? this.tokens.set(body.session_token));
+        return true;
+      } catch {
+        return false;
+      } finally {
+        this.refreshing = null;
+      }
+    })();
+    return this.refreshing;
+  }
+
   private url(path: string): string {
     return this.baseUrl.replace(/\/$/, "") + path;
   }
 
-  private async authHeaders(): Promise<Record<string, string>> {
-    const t = await this.tokens.get();
+  // Kept as the stable seam vision.ts borrows (via cast) for its own fetches.
+  // Internal retry paths pass the token used by that exact attempt; callers
+  // that omit it read the current token from the store.
+  private async authHeaders(token?: string | null): Promise<Record<string, string>> {
+    return this.bearerFor(token === undefined ? await this.tokens.get() : token);
+  }
+
+  private bearerFor(t: string | null): Record<string, string> {
     if (!t) return {};
     // Fail closed: never put the bearer on an insecure transport. Unauthenticated
     // calls (no token) are unaffected — only credentialed requests are refused.
@@ -137,20 +204,31 @@ export class ApiClient {
     }
     const cleanup = (): void => signal?.removeEventListener("abort", releaseNet);
     try {
-      const res = await raceAgainst(
-        fetch(this.url(path), {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "text/event-stream",
-            ...(await this.authHeaders()),
-          },
-          body: JSON.stringify(body),
-          signal: net.signal,
-        }),
-        signal,
-        timeoutMs,
-      );
+      let used: string | null = null;
+      const open = async (): Promise<Response> => {
+        used = await this.tokens.get();
+        return raceAgainst(
+          fetch(this.url(path), {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "text/event-stream",
+              ...(await this.authHeaders(used)),
+            },
+            body: JSON.stringify(body),
+            signal: net.signal,
+          }),
+          signal,
+          timeoutMs,
+        );
+      };
+      let res = await open();
+      if (res.status === 401 && (await this.refreshSession(path, used))) {
+        // Drop the rejected response's body so the socket is released before
+        // the retry (undici keep-alive would otherwise pin the connection).
+        void res.body?.cancel().catch(() => {});
+        res = await open();
+      }
       if (!res.ok) throw await toHttpError(res);
       // Fail-soft: server returns plain JSON `{"stream": false}` instead of an
       // SSE body when it can't/shouldn't stream -> caller falls back to /agent/chat.
@@ -196,16 +274,26 @@ export class ApiClient {
     path: string,
     opts: { body?: unknown; signal?: AbortSignal } = {},
   ): Promise<T> {
-    const res = await fetch(this.url(path), {
-      method,
-      headers: {
-        ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
-        Accept: "application/json",
-        ...(await this.authHeaders()),
-      },
-      ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
-      ...(opts.signal ? { signal: opts.signal } : {}),
-    });
+    let used: string | null = null;
+    const send = async (): Promise<Response> => {
+      used = await this.tokens.get();
+      return fetch(this.url(path), {
+        method,
+        headers: {
+          ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
+          Accept: "application/json",
+          ...(await this.authHeaders(used)),
+        },
+        ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
+        ...(opts.signal ? { signal: opts.signal } : {}),
+      });
+    };
+    let res = await send();
+    if (res.status === 401 && (await this.refreshSession(path, used))) {
+      // Release the rejected response before retrying (see stream()).
+      void res.body?.cancel().catch(() => {});
+      res = await send();
+    }
     if (!res.ok) throw await toHttpError(res);
     // Mirrors toHttpError()'s own defensive res.json() below: a 2xx response
     // can still have an empty or non-JSON body (e.g. 204 No Content from the
@@ -226,10 +314,22 @@ async function toHttpError(res: Response): Promise<HttpError> {
   } catch {
     body = undefined;
   }
-  const msg =
-    body && typeof body === "object" && "message" in body
-      ? String((body as Record<string, unknown>)["message"])
-      : `HTTP ${res.status}`;
+  // Surface the server's own explanation (FastAPI uses `detail`, others
+  // `message`/`reason`/`error`) so e.g. a UVT-balance rejection reads as
+  // "HTTP 401: insufficient UVT balance" instead of an opaque "HTTP 401".
+  let msg = `HTTP ${res.status}`;
+  if (body && typeof body === "object") {
+    for (const k of ["message", "detail", "reason", "error"]) {
+      const v = (body as Record<string, unknown>)[k];
+      if (typeof v === "string" && v.trim()) {
+        // Server-controlled text lands raw in the terminal: strip C0+C1 control
+        // chars (ESC, single-byte CSI, newlines) and cap the length. Printable
+        // residue of a stripped escape (e.g. "[31m") is harmless text.
+        msg = `HTTP ${res.status}: ${v.replace(/[\x00-\x1f\x7f-\x9f]+/g, " ").trim().slice(0, 200)}`;
+        break;
+      }
+    }
+  }
   return new HttpError(res.status, msg, body);
 }
 function normalizeStreamOptions(signalOrOptions?: AbortSignal | StreamOptions): {

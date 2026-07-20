@@ -56,11 +56,11 @@ echo ""
 step "Checking Node.js"
 if ! command -v node >/dev/null 2>&1; then
   echo ""
-  error "Node.js not found. Aether Agent needs Node.js >= 20."
+  error "Node.js not found. Aether Agent needs Node.js >= 24."
   echo ""
   info "Install it from https://nodejs.org (or your package manager):"
   info "  macOS:  brew install node"
-  info "  Ubuntu: curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -"
+  info "  Ubuntu: curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -"
   info "         sudo apt-get install -y nodejs"
   info "  Other:  https://nodejs.org/en/download"
   exit 1
@@ -70,8 +70,8 @@ NODE_V=$(node -v 2>/dev/null | sed 's/^v//')
 NODE_MAJ=$(echo "$NODE_V" | cut -d. -f1)
 success "Node.js v${NODE_V}"
 
-if [ "$NODE_MAJ" -lt 20 ]; then
-  error "Node.js >= 20 required (found v${NODE_V}). Please upgrade."
+if [ "$NODE_MAJ" -lt 24 ]; then
+  error "Node.js >= 24 required (found v${NODE_V}). Please upgrade."
   info "https://nodejs.org/en/download"
   exit 1
 fi

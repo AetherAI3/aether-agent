@@ -184,7 +184,6 @@ function fmtMs(ms: number): string {
 }
 
 const DIM = theme.dim;
-const BOLD = theme.bold;
 const ICE = theme.iceBlue;
 
 // ── Per-element renderers ──────────────────────────────────────

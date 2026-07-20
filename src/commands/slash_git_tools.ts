@@ -4,6 +4,7 @@
 
 import type { Writable } from "node:stream";
 import type { AppContext } from "../core/context.js";
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { theme } from "../ui/theme.js";
@@ -25,7 +26,6 @@ export async function rollbackSlash(ctx: AppContext, out: Writable, arg: string)
     return;
   }
 
-  const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
   try {
     const status = execFileSync("git", ["-c", "core.literalPathspecs=true", "diff", "--name-only"], { cwd, encoding: "utf8", timeout: 5000 });
     const dirty = status.trim().split("\n").filter(Boolean);
@@ -60,7 +60,7 @@ export async function rollbackSlash(ctx: AppContext, out: Writable, arg: string)
 
 // ── /stage-diff ────────────────────────────────
 
-export async function stageDiffSlash(ctx: AppContext, out: Writable): Promise<void> {
+export async function stageDiffSlash(_ctx: AppContext, out: Writable): Promise<void> {
   try {
     const r = generateDiff();
 
@@ -122,8 +122,6 @@ export async function revertSlash(ctx: AppContext, out: Writable, arg: string): 
     return;
   }
 
-  const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
-
   if (target.startsWith("step-") || target.match(/^\d+$/)) {
     out.write(theme.muted("Step-based revert not yet available. Use /rollback to revert all, or /revert <file> for a single file.\n"));
     out.write(theme.dim("  Tracked step checkpoints planned for future release.\n"));
@@ -169,8 +167,11 @@ export async function revertSlash(ctx: AppContext, out: Writable, arg: string): 
 
     execFileSync("git", ["-c", "core.literalPathspecs=true", "checkout", "--", target], { cwd, encoding: "utf8", timeout: 10000 });
     out.write(`${theme.cyan("↩ reverted")}  ${target} restored to last commit.\n`);
-  } catch (err: any) {
-    if (err?.stderr?.includes("did not match any file")) {
+  } catch (err: unknown) {
+    const stderr = err && typeof err === "object" && "stderr" in err
+      ? String((err as { stderr?: unknown }).stderr ?? "")
+      : "";
+    if (stderr.includes("did not match any file")) {
       out.write(`not found: ${target}\n`);
     } else {
       out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);

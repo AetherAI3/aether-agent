@@ -8,7 +8,7 @@
 // All data is in-memory for the current REPL session. /snapshot serializes
 // to ~/.aether-agent/snapshots/<timestamp>.json so sessions can be resumed.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -115,7 +115,6 @@ export class ContextRegistry {
     this.uvtCap = null;
     this.uvtSpent = 0;
 
-    const { unlinkSync, existsSync } = require("node:fs") as typeof import("node:fs");
     let removedFiles = 0;
     for (const f of this.tempFiles) {
       try { if (existsSync(f)) { unlinkSync(f); removedFiles++; } } catch { /* best effort */ }
