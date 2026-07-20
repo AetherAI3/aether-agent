@@ -338,7 +338,7 @@ Requires an active orchestrator — switch with `/agent neo` or `/agent kronus` 
 
 | Var | Default | Meaning |
 |---|---|---|
-| `AETHER_BASE_URL` | `https://api.aethersystems.net` | Overrides the config `baseUrl`. |
+| `AETHER_BASE_URL` | `https://api.aethersystems.net/cloud` | Overrides the config `baseUrl`. |
 | `AETHER_LOGIN_URL` | `https://aethersystems.net/platform` | Page `aether auth login` opens. |
 | `AETHER_TOKEN` | *(unset)* | Inject a session token (CI / headless / embedding). |
 | `AETHER_CONFIG_DIR` | `~/.config/aether` | Config + token + REPL-history directory. |

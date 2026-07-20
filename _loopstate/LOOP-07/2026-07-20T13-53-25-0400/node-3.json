@@ -1,0 +1,12 @@
+{
+  "node": 3,
+  "summary": "No compose or systemd service units exist. The real install surface was audited instead: the POSIX installer masked npm failures through a pipeline and used bash-only PIPESTATUS under /bin/sh; both installers enabled lifecycle scripts. The branch now runs npm directly, preserves its exit status, disables lifecycle scripts, and supports version pinning.",
+  "git_sha": "0f648f3741b7a08eae5ba2f505412b7d2075b51b",
+  "confidence_block": {
+    "confidence": 0.94,
+    "risk": "medium",
+    "evidence": ["manual read", "POSIX syntax check", "PowerShell parser", "production-policy regression tests"],
+    "unknown": ["website-hosted copies of installer scripts were not compared"],
+    "missing_evidence": ["post-merge website publication check"]
+  }
+}

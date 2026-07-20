@@ -1,0 +1,13 @@
+{
+  "node": 5,
+  "summary": "Current tree and full Git history were scanned for common credential shapes without printing values. The only matches were two path fragments containing 'sk-' inside architecture document filenames, confirmed as false positives after redaction. Workflow secret references are symbolic only.",
+  "git_sha": "0f648f3741b7a08eae5ba2f505412b7d2075b51b",
+  "findings": [],
+  "confidence_block": {
+    "confidence": 0.86,
+    "risk": "medium",
+    "evidence": ["history-wide credential-shape scan", "redacted false-positive review", ".gitignore inspection"],
+    "unknown": ["GitHub secret-scanning alerts API was unavailable to the current credential"],
+    "missing_evidence": ["secret-scanning settings and alert export"]
+  }
+}

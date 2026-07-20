@@ -1,0 +1,12 @@
+{
+  "node": 6,
+  "summary": "Workflow IAM is least-privilege in source: read-only contents by default, CodeQL alone writes security events, release alone writes OIDC/attestations, and checkout credentials are not persisted. NPM_TOKEN is isolated to the npm-production environment in the workflow, but its real package scope and rotation state cannot be verified from repository contents.",
+  "git_sha": "0f648f3741b7a08eae5ba2f505412b7d2075b51b",
+  "confidence_block": {
+    "confidence": 0.87,
+    "risk": "high",
+    "evidence": ["workflow static policy", "immutable action pins", "release runbook"],
+    "unknown": ["npm token scope", "required reviewer configuration", "main branch protection"],
+    "missing_evidence": ["npm-production environment export", "branch-protection export"]
+  }
+}

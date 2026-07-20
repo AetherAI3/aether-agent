@@ -1,0 +1,17 @@
+{
+  "node": 8,
+  "summary": "The package has zero runtime dependencies and npm audit reports zero vulnerabilities. All GitHub Actions are pinned to full commit SHAs. CI now blocks dependency lifecycle scripts, runs package-policy verification, emits a CycloneDX SBOM, and uploads it for 90 days. CodeQL and weekly Dependabot coverage were added; releases attest and publish the exact verified tarball with provenance.",
+  "git_sha": "0f648f3741b7a08eae5ba2f505412b7d2075b51b",
+  "sbom": {
+    "format": "CycloneDX",
+    "components_observed": 4,
+    "generation": "npm sbom --sbom-format cyclonedx"
+  },
+  "confidence_block": {
+    "confidence": 0.94,
+    "risk": "low",
+    "evidence": ["npm audit", "npm SBOM", "package dry-run", "workflow policy tests"],
+    "unknown": ["remote CodeQL and Dependabot execution pending push"],
+    "missing_evidence": ["successful remote workflow runs"]
+  }
+}

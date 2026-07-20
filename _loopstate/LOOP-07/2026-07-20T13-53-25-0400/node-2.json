@@ -1,0 +1,13 @@
+{
+  "node": 2,
+  "summary": "No Dockerfiles, compose manifests, container references, or running-container target exist in this repository. Container image controls are not applicable to the npm CLI delivery model.",
+  "git_sha": "0f648f3741b7a08eae5ba2f505412b7d2075b51b",
+  "images": [],
+  "confidence_block": {
+    "confidence": 0.97,
+    "risk": "low",
+    "evidence": ["git file inventory", "literal container-manifest search"],
+    "unknown": ["hosted API images are outside repository scope"],
+    "missing_evidence": []
+  }
+}

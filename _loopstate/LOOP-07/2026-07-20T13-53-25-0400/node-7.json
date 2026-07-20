@@ -1,0 +1,12 @@
+{
+  "node": 7,
+  "summary": "The CLI opens no inbound listener. Credentialed API transport is restricted to HTTPS or loopback HTTP by isCredentialSafeUrl and covered by transport-security tests. The public Aether API is an outbound dependency and its hosted ingress is outside this repository.",
+  "git_sha": "0f648f3741b7a08eae5ba2f505412b7d2075b51b",
+  "confidence_block": {
+    "confidence": 0.91,
+    "risk": "medium",
+    "evidence": ["network call-path review", "transport security tests", "repository listener search"],
+    "unknown": ["live hosted API firewall and ingress posture"],
+    "missing_evidence": ["hosted API infrastructure audit from its owning repository"]
+  }
+}
