@@ -164,11 +164,11 @@ export class ApiClient {
     return this.baseUrl.replace(/\/$/, "") + path;
   }
 
-  // Kept as the stable seam vault.ts/vision.ts borrow (via cast) for their own
-  // fetches; request()/stream() use bearerFor() directly so the retry path can
-  // pin exactly which token the failed attempt used.
-  private async authHeaders(): Promise<Record<string, string>> {
-    return this.bearerFor(await this.tokens.get());
+  // Kept as the stable seam vision.ts borrows (via cast) for its own fetches.
+  // Internal retry paths pass the token used by that exact attempt; callers
+  // that omit it read the current token from the store.
+  private async authHeaders(token?: string | null): Promise<Record<string, string>> {
+    return this.bearerFor(token === undefined ? await this.tokens.get() : token);
   }
 
   private bearerFor(t: string | null): Record<string, string> {
@@ -213,7 +213,7 @@ export class ApiClient {
             headers: {
               "Content-Type": "application/json",
               Accept: "text/event-stream",
-              ...this.bearerFor(used),
+              ...(await this.authHeaders(used)),
             },
             body: JSON.stringify(body),
             signal: net.signal,
@@ -282,7 +282,7 @@ export class ApiClient {
         headers: {
           ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
           Accept: "application/json",
-          ...this.bearerFor(used),
+          ...(await this.authHeaders(used)),
         },
         ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
         ...(opts.signal ? { signal: opts.signal } : {}),
