@@ -105,7 +105,7 @@ export async function workflowSlash(ctx: AppContext, out: Writable): Promise<voi
   }
 }
 
-export async function workflowTemplatesSlash(ctx: AppContext, out: Writable): Promise<void> {
+export async function workflowTemplatesSlash(_ctx: AppContext, out: Writable): Promise<void> {
   for (let i = 0; i < WORKFLOW_TEMPLATES.length; i++) {
     const t = WORKFLOW_TEMPLATES[i]!;
     out.write(`  ${String(i+1)}. ${t.icon} ${t.name}  (${t.category}, ${t.difficulty})\n`);
@@ -113,7 +113,7 @@ export async function workflowTemplatesSlash(ctx: AppContext, out: Writable): Pr
   out.write("load: /workflow-template <n>\n");
 }
 
-export async function workflowTemplateSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+export async function workflowTemplateSlash(_ctx: AppContext, out: Writable, arg: string): Promise<void> {
   const n = parseInt(arg);
   if (isNaN(n) || n < 1 || n > WORKFLOW_TEMPLATES.length) {
     out.write(`invalid: ${arg} (1-${WORKFLOW_TEMPLATES.length})\n`);

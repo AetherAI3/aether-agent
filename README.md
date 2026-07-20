@@ -4,9 +4,9 @@
 
 **A coding agent for your terminal — runs on hosted frontier models or fully offline on your own machine.**
 
-[![License](https://img.shields.io/badge/license-Apache--2.0-06b6d4)](LICENSE) [![Node](https://img.shields.io/badge/node-%E2%89%A524-14b8a6)](https://nodejs.org) [![Release notes](https://img.shields.io/badge/release_notes-june_2026-7c3aed)](RELEASE_NOTES.md)
+[![License](https://img.shields.io/badge/license-Apache--2.0-06b6d4)](LICENSE) [![Node](https://img.shields.io/badge/node-%E2%89%A524-14b8a6)](https://nodejs.org) [![TypeScript](https://img.shields.io/badge/TypeScript-7-3178c6)](https://www.typescriptlang.org/) [![Release notes](https://img.shields.io/badge/release-notes-7c3aed)](RELEASE_NOTES.md)
 
-**Aether Agent is in **BETA** I am shipping updates as fast as possible
+**Aether Agent is in beta.** Updates are shipping quickly.
 ```bash
 npm i -g aether-agents     # or run once: npx aether-agents
 ```
@@ -30,7 +30,7 @@ It scans, plans, edits, and runs your tests — in your repo, on your terms. Ver
 </div>
 
 ```bash
-npm i -g aether-agents     # 01 — drop it in (Node ≥ 20)
+npm i -g aether-agents     # 01 — drop it in (Node ≥ 24)
 
 aether auth login          # 02 — sign in once
 aether agent               #      …terminal opens. Just start chatting.

@@ -2,6 +2,7 @@
 // Follows the exact pattern of aether vault and aether github
 
 import type { AppContext } from "../core/context.js";
+import { createInterface } from "node:readline";
 import { fail as coreFail } from "../core/errors.js";
 import { hintFor } from "../core/error_hints.js";
 import { buildChatRequest } from "../core/envelope.js";
@@ -274,7 +275,7 @@ async function workflowBrainstorm(ctx: AppContext, name?: string): Promise<numbe
     process.stdout.write(`brainstorming: ${wf.name}\n`);
     process.stdout.write("(Socratic Q&A — answer each question to refine the project plan)\n\n");
     // Interactive Q&A loop
-    const rl = require("node:readline").createInterface({ input: process.stdin, output: process.stdout });
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
     const qaHistory: Array<{ q: string; a: string }> = [];
     let nextIndex = 0;
     const ask = (): Promise<string> => new Promise(resolve => {
@@ -332,7 +333,7 @@ async function workflowFinalize(ctx: AppContext, name?: string): Promise<number>
   } catch (err) { return fail(err); }
 }
 
-async function workflowTemplates(ctx: AppContext): Promise<number> {
+async function workflowTemplates(_ctx: AppContext): Promise<number> {
   process.stdout.write("Workflow Templates:\n\n");
   for (let i = 0; i < WORKFLOW_TEMPLATES.length; i++) {
     const t = WORKFLOW_TEMPLATES[i]!;
@@ -347,7 +348,7 @@ async function workflowTemplates(ctx: AppContext): Promise<number> {
   return 0;
 }
 
-async function workflowTemplateLoad(ctx: AppContext, arg?: string): Promise<number> {
+async function workflowTemplateLoad(_ctx: AppContext, arg?: string): Promise<number> {
   if (!arg) { process.stderr.write("usage: aether workflow template <n>\n"); return 1; }
   const n = parseInt(arg);
   if (isNaN(n) || n < 1 || n > WORKFLOW_TEMPLATES.length) {

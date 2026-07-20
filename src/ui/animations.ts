@@ -129,8 +129,6 @@ export class AnimationController {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stalled = false;
   private lastArt = "";
-  private used = 0;
-  private cap = 0;
 
   constructor(private readonly sink: AnimationSink) {}
 
@@ -151,8 +149,6 @@ export class AnimationController {
   }
 
   setProgress(used: number, cap: number): void {
-    this.used = used;
-    this.cap = cap;
     if (!this.stalled) this.sink.onProgress?.(used, cap);
   }
 

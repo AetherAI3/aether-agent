@@ -17,6 +17,7 @@ import {
 } from "../core/vision.js";
 import { theme } from "../ui/theme.js";
 import { basename } from "node:path";
+import { createInterface, type Interface } from "node:readline";
 
 // ═════════════════════════════════════════════════════════════════════
 // Entry points
@@ -109,7 +110,7 @@ async function mediaModelsList(ctx: AppContext, kind: MediaKind): Promise<number
 
 async function mediaInteractive(ctx: AppContext, kind: MediaKind): Promise<number> {
   const icon = kind === "video" ? "🎬" : "🖼";
-  const rl = nodeReadline();
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
   const write = (s: string) => { process.stdout.write(s); };
 
   write(theme.iceBlue(`\n${icon}  Aether ${kind === "video" ? "Video" : "Image"} Generation\n\n`));
@@ -157,13 +158,7 @@ async function mediaInteractive(ctx: AppContext, kind: MediaKind): Promise<numbe
   return mediaGenerate(ctx, prompt, kind, flags);
 }
 
-function nodeReadline() {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { createInterface } = require("node:readline");
-  return createInterface({ input: process.stdin, output: process.stdout });
-}
-
-function read(rl: any): Promise<string> {
+function read(rl: Interface): Promise<string> {
   return new Promise(resolve => { rl.once("line", (line: string) => { rl.pause(); resolve(line.trim()); }); });
 }
 

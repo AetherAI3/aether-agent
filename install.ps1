@@ -3,7 +3,7 @@
 #   irm https://aethersystems.net/install.ps1 | iex
 #
 # Installs the `aether` CLI globally via npm, then shows next steps.
-# Requires Node.js >= 20 and npm on the PATH.
+# Requires Node.js >= 24 and npm on the PATH.
 
 param(
   [switch]$SkipNodeCheck = $false
@@ -79,7 +79,7 @@ if (-not $SkipNodeCheck) {
   $nodePath = Get-Command node -ErrorAction SilentlyContinue
   if (-not $nodePath) {
     Write-Host ""
-    Write-ErrorMsg "Node.js not found. Aether Agent needs Node.js >= 20."
+    Write-ErrorMsg "Node.js not found. Aether Agent needs Node.js >= 24."
     Write-Host ""
     Write-Info "Install it from https://nodejs.org"
     Write-Info "  winget install OpenJS.NodeJS.LTS"
@@ -90,8 +90,8 @@ if (-not $SkipNodeCheck) {
   $nodeMajor = [int]($nodeVersion.Split('.')[0])
   Write-Success "Node.js v${nodeVersion}"
 
-  if ($nodeMajor -lt 20) {
-    Write-ErrorMsg "Node.js >= 20 required (found v${nodeVersion}). Please upgrade."
+  if ($nodeMajor -lt 24) {
+    Write-ErrorMsg "Node.js >= 24 required (found v${nodeVersion}). Please upgrade."
     Write-Info "https://nodejs.org/en/download"
     exit 1
   }

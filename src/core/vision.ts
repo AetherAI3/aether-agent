@@ -4,9 +4,9 @@
 // download helpers with streaming fetch, output manager with persistent log.
 // No terminal I/O. Every function wraps a single concept.
 
-import { ApiClient, MODELS_PATH, isCredentialSafeUrl } from "./transport.js";
+import { ApiClient, isCredentialSafeUrl } from "./transport.js";
 import { InsecureTransportError } from "./errors.js";
-import type { CatalogItem, CatalogResponse } from "../types.js";
+import type { CatalogItem } from "../types.js";
 import { createWriteStream, mkdirSync, readdirSync, statSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -168,7 +168,7 @@ export function autoRouteModel(prompt: string, kind: MediaKind): string {
 // Prompt builder
 // ═════════════════════════════════════════════════════════════════════
 
-export function buildMediaPrompt(prompt: string, flags: GenFlags, kind: MediaKind): string {
+export function buildMediaPrompt(prompt: string, flags: GenFlags, _kind: MediaKind): string {
   const parts: string[] = [prompt];
   if (flags.aspect && ASPECT_RATIOS[flags.aspect]) {
     const ar = ASPECT_RATIOS[flags.aspect]!;
@@ -403,24 +403,6 @@ export async function parseStoryboard(
   options?: { scenes?: number; style?: string },
 ): Promise<StoryboardParseResult> {
   const style = options?.style ?? "cinematic";
-  const sceneHint = options?.scenes ? `Break this into exactly ${options.scenes} distinct scenes.` : "";
-  const systemPrompt = `You are a storyboard artist. ${sceneHint}
-For each scene output the format:
-SCENE <n>: <SHOT_TYPE> | <CAMERA_MOVEMENT>
-  Visual: <keyframe description>
-  Motion: <camera instructions>
-  Palette: <colors>
-  Lighting: <setup>
-  Duration: <seconds>
-  Transition: <type>
-  Notes: <any>
-
-Shot types: WIDE | MED | CLOSE | OVERHEAD | POV | TRACKING | DOLLY
-Camera: static | pan-left | pan-right | tilt-up | tilt-down | push-in | pull-out | orbit | dolly | crane
-Transitions: cut | dissolve | wipe-left | wipe-right | fade-black | fade-white
-Style: ${style}
-
-Reply ONLY with the formatted scenes, no preamble.`;
   const content = sourceType === "script_file" ? readFileSync(source, "utf-8") : source;
   const resp = await api.postJson<ChatGenResponse>("/agent/chat", {
     query: `STORYBOARD REQUEST:\n\n${content}`,

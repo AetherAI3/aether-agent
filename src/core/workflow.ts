@@ -396,7 +396,13 @@ export function formatWorkflowDetail(wf: Workflow): string {
   const nodeMap = new Map(wf.nodes.map(n => [n.id, n]));
   lines.push("Nodes:");
   for (const n of wf.nodes) {
-    const ns = (n.metadata?.northStar || n.metadata?.acceptance || n.metadata?.deliverable || n.metadata?.event || "");
+    const ns = (
+      n.metadata?.["northStar"] ||
+      n.metadata?.["acceptance"] ||
+      n.metadata?.["deliverable"] ||
+      n.metadata?.["event"] ||
+      ""
+    );
     lines.push(`  [${n.type}] ${n.title}  (${n.id})${ns ? "  → " + ns.slice(0, 60) : ""}`);
   }
   if (wf.edges.length > 0) {

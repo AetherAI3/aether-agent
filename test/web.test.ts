@@ -53,7 +53,7 @@ test("pinned transport connects to the approved address with original Host and S
     "203.0.113.10",
   );
   assert.equal(options.hostname, "203.0.113.10");
-  assert.equal(options.headers.host, "public.example.test:8443");
+  assert.equal(options.headers["host"], "public.example.test:8443");
   assert.equal(options.servername, "public.example.test");
   assert.equal(options.path, "/docs?q=1");
 });

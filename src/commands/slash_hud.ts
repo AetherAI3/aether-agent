@@ -12,7 +12,7 @@ import {
   type HudRenderState,
 } from "../core/hud.js";
 
-export async function addSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+export async function addSlash(_ctx: AppContext, out: Writable, arg: string): Promise<void> {
   const input = arg.trim().toLowerCase();
 
   if (!input || input === "list" || input === "ls") {
@@ -61,7 +61,7 @@ export async function addSlash(ctx: AppContext, out: Writable, arg: string): Pro
   }
 }
 
-export async function hudSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+export async function hudSlash(_ctx: AppContext, out: Writable, arg: string): Promise<void> {
   const parts = arg.trim().split(/\s+/);
   const sub = (parts[0] ?? "").toLowerCase();
   const target = parts.slice(1).join(" ").trim();
