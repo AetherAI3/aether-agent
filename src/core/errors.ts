@@ -152,6 +152,15 @@ export function errorHint(err: unknown, baseUrl: string): string | null {
   // null and print the message with no actionable next step at all.
   if (err instanceof MalformedResponseError) return "retry, or /doctor to check connectivity";
   if (err instanceof RequestTimeoutError) return "retry, or /doctor to check connectivity";
+  // Same wording as error_hints.hintFor's StreamTimeoutError branch — a
+  // mid-turn stream timeout must read identically whether it surfaces via
+  // the REPL's printError (this function) or a one-shot/embedder path
+  // (hintFor). Previously unhandled here, so it fell through to the generic
+  // Error branch below (no NETWORK_CODES/cause.code, no "fetch failed" in
+  // the message) and returned null — a bare error with no recovery hint.
+  if (err instanceof StreamTimeoutError) {
+    return "the stream went quiet - retry, or /doctor to check connectivity";
+  }
   if (err instanceof HttpError) {
     if (err.status >= 500) return `the server at ${baseUrl} had a problem — try again shortly`;
     return httpStatusHint(err.status);
