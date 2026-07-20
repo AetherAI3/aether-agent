@@ -4,7 +4,7 @@
 
 **A coding agent for your terminal — runs on hosted frontier models or fully offline on your own machine.**
 
-[![License](https://img.shields.io/badge/license-Apache--2.0-06b6d4)](LICENSE) [![Node](https://img.shields.io/badge/node-%E2%89%A524-14b8a6)](https://nodejs.org) [![TypeScript](https://img.shields.io/badge/TypeScript-7-3178c6)](https://www.typescriptlang.org/) [![Release notes](https://img.shields.io/badge/release-notes-7c3aed)](RELEASE_NOTES.md)
+[![CI](https://github.com/DBarr3/aether-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/DBarr3/aether-agent/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-Apache--2.0-06b6d4)](LICENSE) [![Node](https://img.shields.io/badge/node-%E2%89%A524-14b8a6)](https://nodejs.org) [![TypeScript](https://img.shields.io/badge/TypeScript-7-3178c6)](https://www.typescriptlang.org/) [![Release notes](https://img.shields.io/badge/release-notes-7c3aed)](RELEASE_NOTES.md)
 
 **Aether Agent is in beta.** Updates are shipping quickly.
 ```bash
@@ -89,6 +89,22 @@ Flags you can set when launching the REPL (or pass with an inline task `aether a
 | `-y`, `--yes` | Auto-confirm prompts (non-interactive). |
 
 **Full reference** — every command, flag, slash command, and env var: [COMMANDS.md](COMMANDS.md). Dated patch notes: [RELEASE_NOTES.md](RELEASE_NOTES.md) · [docs/releases/](docs/releases/).
+
+## Development
+
+The application and executable test suite are fully on **TypeScript 7.0.2**, with **Node.js 24 or newer** as the supported runtime. Strict ESM compilation emits the distributable JavaScript to `dist/`; the published package contains `dist/src` and excludes compiled tests.
+
+Run the release gates from a clean checkout:
+
+```bash
+npm ci
+npm run typecheck
+npm test
+npm run smoke
+npm pack --dry-run
+```
+
+The verified TypeScript 7 release baseline is tagged [`v0.1.0`](https://github.com/DBarr3/aether-agent/tree/v0.1.0). Migration details and measurements are in the [TypeScript 7 upgrade design](docs/specs/2026-07-20-typescript-7-terminal-upgrade-design.md).
 
 ## Security
 
