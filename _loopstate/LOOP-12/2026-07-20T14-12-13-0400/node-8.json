@@ -1,0 +1,12 @@
+{
+  "node": 8,
+  "status": "SKIPPED-WITH-NODE-7",
+  "graded_scenarios": 0,
+  "confidence_block": {
+    "confidence": 1.0,
+    "risk": "medium",
+    "evidence": ["approval gate preserved"],
+    "unknown": ["chaos degradation grades and recovery times"],
+    "missing_evidence": ["approved sandbox campaign"]
+  }
+}

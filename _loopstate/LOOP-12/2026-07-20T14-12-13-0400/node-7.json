@@ -1,0 +1,13 @@
+{
+  "node": 7,
+  "status": "SKIPPED",
+  "reason": "No chaos_env was provided. The loop forbids guessing a target and requires operator approval of the sandbox and scenario list before injection.",
+  "production_targets_touched": 0,
+  "confidence_block": {
+    "confidence": 1.0,
+    "risk": "low",
+    "evidence": ["no chaos commands executed"],
+    "unknown": ["runtime behavior under the ten chaos scenarios"],
+    "missing_evidence": ["explicit non-production sandbox and operator approval"]
+  }
+}

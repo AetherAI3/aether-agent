@@ -42,3 +42,20 @@ Out of scope here (report to Aether AI directly, same address):
 - Rotate your CLI token at [aethersystems.net/platform](https://aethersystems.net/platform)
   if you suspect it leaked, then `aether auth logout` and `aether auth login` again.
 - Prefer `aether login` (browser) over pasting long-lived tokens into scripts.
+
+## Release and supply-chain controls
+
+- GitHub Actions are pinned to immutable commit SHAs and run with explicit,
+  least-privilege permissions and bounded timeouts.
+- CI installs dependencies with lifecycle scripts disabled, audits the complete
+  development graph, tests on Linux and Windows, verifies the npm package
+  allowlist, and emits a CycloneDX SBOM.
+- npm publication accepts only a `v<package-version>` tag, runs through the
+  protected `npm-production` environment, attests the tarball, and publishes
+  it with npm provenance. A release never rebuilds after the verified tarball
+  has been created.
+- Installer scripts support exact-version pinning and never recommend piping a
+  network response directly into a shell.
+
+Operational setup, rollback, secret rotation, and evidence retention are
+documented in [`docs/PRODUCTION_OPERATIONS.md`](docs/PRODUCTION_OPERATIONS.md).

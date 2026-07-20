@@ -1,0 +1,12 @@
+{
+  "node": 9,
+  "summary": "No repository-owned database, object store, or persistent production volume exists. The runbook assigns source recovery to a Git mirror and release evidence to GitHub/npm plus 90-day workflow retention. The organization-controlled mirror and restore rehearsal remain operator-owned and unverified.",
+  "git_sha": "0f648f3741b7a08eae5ba2f505412b7d2075b51b",
+  "confidence_block": {
+    "confidence": 0.85,
+    "risk": "medium",
+    "evidence": ["state inventory", "package topology", "backup and recovery runbook"],
+    "unknown": ["external Git mirror freshness", "release-evidence export cadence"],
+    "missing_evidence": ["dated restore rehearsal"]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "node": 3,
+  "behavioral_tests": {
+    "regression": 6,
+    "integration": 1,
+    "snapshot": 0,
+    "configuration_contract": 1
+  },
+  "flaky_tests_discarded": 0,
+  "stability_runs": ["695/695", "695/695", "695/695"],
+  "confidence_block": {
+    "confidence": 0.94,
+    "risk": "low",
+    "evidence": ["three full-suite runs", "exact package integration smoke"],
+    "unknown": ["hosted runner timing"],
+    "missing_evidence": ["remote CI matrix"]
+  }
+}

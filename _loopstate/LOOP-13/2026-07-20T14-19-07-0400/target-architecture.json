@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "run_id": "2026-07-20T14-19-07-0400",
+  "target": "DBarr3/aether-agent",
+  "snapshot_ref": "3aa36f02ff0488367eb673e15e9e624b946694df",
+  "baseline_kind": "descriptive-first-run",
+  "sources": [
+    "CONTRIBUTING.md",
+    "README.md",
+    "docs/PRODUCTION_OPERATIONS.md",
+    "src/index.ts",
+    "src/main.ts",
+    "TypeScript static import and re-export graph"
+  ],
+  "modules": [
+    {
+      "name": "entrypoints",
+      "paths": ["src/main.ts", "src/index.ts"],
+      "responsibility": "CLI dispatch and public package surface"
+    },
+    {
+      "name": "commands",
+      "paths": ["src/commands/**"],
+      "responsibility": "Top-level and slash-command orchestration"
+    },
+    {
+      "name": "core",
+      "paths": ["src/core/**", "src/types.ts", "src/version.ts"],
+      "responsibility": "Transport, agent behavior, policy, storage, and shared domain logic"
+    },
+    {
+      "name": "ui",
+      "paths": ["src/ui/**"],
+      "responsibility": "Terminal rendering, interaction, and embeddable terminal surfaces"
+    },
+    {
+      "name": "delivery",
+      "paths": [".github/**", "install.sh", "install.ps1", "scripts/verify-production.ts"],
+      "responsibility": "CI, release, package verification, and installation"
+    }
+  ],
+  "declared_boundaries": [
+    "src/core/client.ts is the universal chat route shared by every surface",
+    "src/main.ts is the CLI entry and command dispatcher",
+    "src/index.ts is the public package export surface",
+    "commands may orchestrate core and UI modules",
+    "UI must not import commands",
+    "release automation publishes only a verified package built from a release tag on main"
+  ],
+  "static_graph": {
+    "language": "TypeScript",
+    "nodes": 128,
+    "edges_including_reexports": 424,
+    "max_dependency_depth": 10,
+    "strongly_connected_components_over_one_node": 1,
+    "dynamic_imports": "manually checked at CLI and slash dispatch sites; not included in edge totals"
+  },
+  "god_nodes_top_decile": [
+    {"file": "src/core/transport.ts", "fan_in": 40, "fan_out": 2, "degree": 42},
+    {"file": "src/ui/theme.ts", "fan_in": 37, "fan_out": 1, "degree": 38},
+    {"file": "src/commands/chat.ts", "fan_in": 4, "fan_out": 32, "degree": 36},
+    {"file": "src/core/context.ts", "fan_in": 31, "fan_out": 3, "degree": 34},
+    {"file": "src/commands/code.ts", "fan_in": 1, "fan_out": 26, "degree": 27},
+    {"file": "src/commands/slash.ts", "fan_in": 1, "fan_out": 19, "degree": 20},
+    {"file": "src/main.ts", "fan_in": 0, "fan_out": 19, "degree": 19},
+    {"file": "src/index.ts", "fan_in": 0, "fan_out": 17, "degree": 17},
+    {"file": "src/core/brain_protocol.ts", "fan_in": 14, "fan_out": 0, "degree": 14},
+    {"file": "src/core/errors.ts", "fan_in": 14, "fan_out": 0, "degree": 14},
+    {"file": "src/core/tool_executor.ts", "fan_in": 10, "fan_out": 4, "degree": 14},
+    {"file": "src/commands/mcp.ts", "fan_in": 0, "fan_out": 13, "degree": 13},
+    {"file": "src/ui/text.ts", "fan_in": 13, "fan_out": 0, "degree": 13}
+  ],
+  "service_boundaries": [
+    "GitHub Actions build and release plane",
+    "npm registry publication plane",
+    "end-user Node 24+ runtime",
+    "Aether hosted API boundary",
+    "optional local Ollama boundary"
+  ],
+  "unknown": [
+    "No normative architecture ADR enumerates every allowed module edge",
+    "No production traffic graph exists for external callers",
+    "Static graph excludes runtime-computed module loading"
+  ]
+}

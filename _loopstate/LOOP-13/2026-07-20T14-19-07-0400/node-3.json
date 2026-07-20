@@ -1,0 +1,14 @@
+{
+  "node": 3,
+  "status": "complete",
+  "duplicate_families": 3,
+  "dead_confirmed": 0,
+  "suspected_dead": 1,
+  "raw_overlapping_windows": 16,
+  "confidence": {
+    "score": 0.88,
+    "evidence": ["exact token-window scan", "manual same-runtime confirmation", "package exports check", "dynamic import check"],
+    "unknown": ["external deep-import workarounds", "production traffic"],
+    "missing_evidence": ["runtime coverage map for every exported symbol"]
+  }
+}

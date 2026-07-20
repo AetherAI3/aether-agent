@@ -1,0 +1,12 @@
+{
+  "node": 4,
+  "summary": "No Terraform, Pulumi, CloudFormation, Kubernetes, or other infrastructure-as-code state exists. This is justified for the repository-owned npm CLI boundary; GitHub environment and branch controls remain external click-configuration and are documented as required admin actions.",
+  "git_sha": "0f648f3741b7a08eae5ba2f505412b7d2075b51b",
+  "confidence_block": {
+    "confidence": 0.91,
+    "risk": "medium",
+    "evidence": ["git file inventory", "production topology runbook"],
+    "unknown": ["current GitHub environment and branch-protection state"],
+    "missing_evidence": ["repository-admin settings export"]
+  }
+}

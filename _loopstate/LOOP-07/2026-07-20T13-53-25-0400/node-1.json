@@ -1,0 +1,12 @@
+{
+  "node": 1,
+  "summary": "Repository production topology captured: GitHub source and runners, protected npm release environment, npm distribution, and end-user Node runtime. No repository-owned live nodes were supplied, so the run used the documented repo-static posture.",
+  "git_sha": "0f648f3741b7a08eae5ba2f505412b7d2075b51b",
+  "confidence_block": {
+    "confidence": 0.88,
+    "risk": "medium",
+    "evidence": ["repository inventory", "workflow inspection", "package metadata", "docs/PRODUCTION_OPERATIONS.md"],
+    "unknown": ["repository-admin settings could not be read", "no SSH or production-node target was provided"],
+    "missing_evidence": ["branch-protection export", "npm-production environment policy export"]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "node": 5,
+  "status": "complete",
+  "scores": {"security": 85, "performance": null, "maintainability": 66, "complexity": 62, "testability": 76, "accessibility": null, "composite": 72.3},
+  "na_reasons": {"performance": "no current benchmark or upstream performance artifact", "accessibility": "no current accessibility artifact"},
+  "confidence": {
+    "score": 0.87,
+    "evidence": ["LOOP-07 artifact", "LOOP-12 artifact", "nodes 1-4"],
+    "unknown": ["repository-admin controls", "npm environment controls", "performance", "accessibility", "cognitive complexity"],
+    "missing_evidence": ["admin read access", "benchmark artifact", "a11y artifact"]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "node": 9,
+  "verdict": "PASS-NO-CHAOS",
+  "line_coverage": 90.69,
+  "mutation_score": 100.0,
+  "full_suite": "695/695 x3",
+  "confidence_block": {
+    "confidence": 0.93,
+    "risk": "medium",
+    "evidence": ["coverage", "mutation testing", "three stability runs", "regression sweep"],
+    "unknown": ["chaos resilience", "remote workflow results"],
+    "missing_evidence": ["approved chaos sandbox", "pushed CI checks"]
+  }
+}

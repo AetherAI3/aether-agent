@@ -1,0 +1,13 @@
+{
+  "node": 1,
+  "scope": ["scripts/verify-production.ts", "test/production_hardening.test.ts", ".github/workflows", "install.sh", "install.ps1"],
+  "coverage": { "file": "dist/scripts/verify-production.js", "line_pct": 90.69, "branch_pct": 55.68, "function_pct": 100.0 },
+  "git_sha": "3aa36f02ff0488367eb673e15e9e624b946694df",
+  "confidence_block": {
+    "confidence": 0.93,
+    "risk": "medium",
+    "evidence": ["node test coverage", "scoped test run"],
+    "unknown": ["remote workflow execution branches"],
+    "missing_evidence": ["successful GitHub Actions runs"]
+  }
+}

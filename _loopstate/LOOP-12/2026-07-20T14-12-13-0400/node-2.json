@@ -1,0 +1,23 @@
+{
+  "node": 2,
+  "fixed_bug_regressions": {
+    "L07-001": "release manifest and publishing policy tests",
+    "L07-002": "checked-in workflow policy test",
+    "L07-003": "installer policy and parser checks",
+    "L07-006": "operator-facing API defaults test",
+    "L17-001": "event, tag, and ancestry policy test",
+    "L17-002": "YAML shorthand action-pin test",
+    "L17-003": "exact tarball install/version/help smoke",
+    "L11-001": "block-scalar npm-ci negative fixture",
+    "L11-002": "quoted/npm-i/npx negative fixtures",
+    "L11-003": "checked-in installer policy test"
+  },
+  "missing_regressions": [],
+  "confidence_block": {
+    "confidence": 0.95,
+    "risk": "low",
+    "evidence": ["LOOP artifacts", "test symbol trace", "targeted runs"],
+    "unknown": [],
+    "missing_evidence": []
+  }
+}

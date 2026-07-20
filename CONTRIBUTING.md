@@ -11,6 +11,7 @@ cd aether-agent
 npm install
 npm run build
 npm test
+npm run verify:production
 ```
 
 Node ≥ 24. Zero runtime dependencies — the client uses only Node built-ins, and
@@ -38,6 +39,8 @@ Most features touch a `core/` module + a `commands/` file.
   tested — match that bar).
 - **Types pass.** `npm run typecheck` uses the repository's pinned TypeScript 7
   compiler and strict project settings.
+- **Production policy passes.** `npm run verify:production` checks the npm
+  package allowlist, pinned CI actions, bounded jobs, and installer safety.
 - **Types are honest.** No `any` in application code; narrow `unknown`.
 - **Small files, one job each.** If a file grows past ~300 lines it's probably
   doing too much.

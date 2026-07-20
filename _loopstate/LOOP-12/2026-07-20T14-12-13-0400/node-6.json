@@ -1,0 +1,13 @@
+{
+  "node": 6,
+  "surviving_mutants": 0,
+  "remediations": [],
+  "updated_mutation_score": 100.0,
+  "confidence_block": {
+    "confidence": 0.96,
+    "risk": "low",
+    "evidence": ["mutation report", "source restoration check"],
+    "unknown": [],
+    "missing_evidence": []
+  }
+}

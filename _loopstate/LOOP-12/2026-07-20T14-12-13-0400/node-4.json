@@ -1,0 +1,12 @@
+{
+  "node": 4,
+  "generative_strategy": "Deterministic adversarial variants were used instead of adding a property-testing runtime dependency: valid/mismatched tags, floating/full SHA refs, inline/block npm commands, quoted/unquoted package specs, npm/npx forms, and poisoned package paths.",
+  "counterexamples": [],
+  "confidence_block": {
+    "confidence": 0.88,
+    "risk": "medium",
+    "evidence": ["boundary variant matrix", "negative tests"],
+    "unknown": ["not an exhaustive YAML grammar fuzzer"],
+    "missing_evidence": ["future grammar-based workflow fuzzing"]
+  }
+}

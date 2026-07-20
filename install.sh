@@ -1,12 +1,22 @@
 #!/bin/sh
 # Aether Agent installer — macOS / Linux / WSL.
 #
-#   curl -fsSL https://aethersystems.net/install.sh | sh
+#   Download, inspect, then run this file with: sh install.sh
 #
 # Installs the `aether` CLI globally via npm, then shows next steps.
 # Respects NO_COLOR (https://no-color.org) and non-TTY output.
 
-set -e
+set -eu
+
+# Pin a specific release with AETHER_VERSION=0.1.0. The default follows npm's
+# latest dist-tag, while the quoted package spec prevents shell interpretation.
+AETHER_VERSION="${AETHER_VERSION:-latest}"
+case "$AETHER_VERSION" in
+  ""|*[!0-9A-Za-z.+-]*)
+    printf '%s\n' "Invalid AETHER_VERSION: use latest, a dist-tag, or a semver."
+    exit 1
+    ;;
+esac
 
 # ── ANSI color helpers ──
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -47,7 +57,7 @@ echo ""
 echo "${cyan}┌──────────────────────────────────────────────────────────────┐${n}"
 echo "${cyan}│${n}                                                              ${cyan}│${n}"
 echo "${cyan}│${n}  ${ice}☁${n}  ${bold}Aether Agent${n} — Terminal Coding Agent Installer              ${cyan}│${n}"
-echo "${cyan}│${n}     ${dim}v0.1.0  ·  aethersystems.net${n}                              ${cyan}│${n}"
+echo "${cyan}│${n}     ${dim}npm release ${AETHER_VERSION}  ·  aethersystems.net${n}                    ${cyan}│${n}"
 echo "${cyan}│${n}                                                              ${cyan}│${n}"
 echo "${cyan}└──────────────────────────────────────────────────────────────┘${n}"
 echo ""
@@ -58,11 +68,9 @@ if ! command -v node >/dev/null 2>&1; then
   echo ""
   error "Node.js not found. Aether Agent needs Node.js >= 24."
   echo ""
-  info "Install it from https://nodejs.org (or your package manager):"
+  info "Install it from https://nodejs.org or your package manager."
   info "  macOS:  brew install node"
-  info "  Ubuntu: curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -"
-  info "         sudo apt-get install -y nodejs"
-  info "  Other:  https://nodejs.org/en/download"
+  info "  Linux/other: https://nodejs.org/en/download"
   exit 1
 fi
 
@@ -91,7 +99,7 @@ ALREADY=""
 if command -v aether >/dev/null 2>&1; then
   AETH_V=$(aether --version 2>/dev/null || echo "unknown")
   ALREADY="yes"
-  info "aether-agent ${AETH_V} already installed — will update to latest."
+  info "aether-agent ${AETH_V} already installed — will install ${AETHER_VERSION}."
 fi
 
 # ── Install ──
@@ -102,23 +110,19 @@ else
   step "Installing aether-agent"
 fi
 
-# Capture npm output, show spinner dots while installing
-npm install -g aether-agents 2>&1 | while IFS= read -r line; do
-  # print dots for progress
-  printf '.' >&2
-done
-echo ""
-
-if [ "${PIPESTATUS[0]}" -ne 0 ]; then
+# Keep npm attached directly so POSIX sh receives its real exit status. The
+# package has no runtime dependencies; --ignore-scripts makes that contract
+# fail-safe if the registry graph ever drifts.
+if ! npm install -g "aether-agents@${AETHER_VERSION}" --ignore-scripts; then
   error "Install failed. Check your network and npm permissions."
   echo ""
   info "If you see EACCES errors, try one of:"
-  info "  npm install -g aether-agents --prefix ~/.local"
-  info "  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash"
+  info "  npm install -g aether-agents@${AETHER_VERSION} --ignore-scripts --prefix ~/.local"
+  info "  Or install Node with a version manager from https://nodejs.org/en/download"
   exit 1
 fi
 
-AETH_V=$(aether --version 2>/dev/null || echo "0.1.0")
+AETH_V=$(aether --version 2>/dev/null || echo "unknown")
 success "Aether Agent ${AETH_V} installed!"
 
 # ── Verify ──

@@ -8,7 +8,7 @@
 
 **Aether Agent is in beta.** Updates are shipping quickly.
 ```bash
-npm i -g aether-agents     # or run once: npx aether-agents
+npm i -g aether-agents --ignore-scripts     # or run once: npx --ignore-scripts aether-agents
 ```
 
 [Install](#install-in-three-moves) · [Models & pricing](#models--pricing) · [Commands](#commands) · [Security](#security) · [Release notes](RELEASE_NOTES.md)
@@ -30,7 +30,7 @@ It scans, plans, edits, and runs your tests — in your repo, on your terms. Ver
 </div>
 
 ```bash
-npm i -g aether-agents     # 01 — drop it in (Node ≥ 24)
+npm i -g aether-agents --ignore-scripts     # 01 — drop it in (Node ≥ 24)
 
 aether auth login          # 02 — sign in once
 aether agent               #      …terminal opens. Just start chatting.
@@ -41,7 +41,7 @@ aether agent --local           #      …same terminal, nothing leaves the machi
 
 `aether agent` opens the REPL — chat with the model, slash-commands at hand, the agent edits files and runs your tests **in the same session**. Both brains run through the same host loop, render, tools, and commands — switching just swaps the transport. On the hosted path your code stays local and only the prompt + context you send leaves; on `--local`, nothing leaves at all. The local brain runs on **[Unlimited Context](https://github.com/DBarr3/Unlimited-Context-LLM)** — Aether's open-source (Apache-2.0) memory engine that gives any Ollama model a billion-token working memory.
 
-> Prefer a script? `curl -fsSL https://aethersystems.net/install.sh | sh` (macOS / Linux / WSL) · `irm https://aethersystems.net/install.ps1 | iex` (Windows PowerShell). Both just verify Node and run the npm install — no native deps, no daemon.
+> Prefer the installer UI? Download [`install.sh`](install.sh) or [`install.ps1`](install.ps1), inspect it, then run it locally. Set `AETHER_VERSION=0.1.0` (shell) or `-Version 0.1.0` (PowerShell) to pin an exact release. The canonical npm command above verifies registry integrity and disables lifecycle scripts; there are no native or runtime dependencies and no daemon.
 
 ## Models & pricing
 

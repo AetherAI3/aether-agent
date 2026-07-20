@@ -58,3 +58,23 @@ test("confined paths reject lexical and symlink escapes", (t) => {
     rmSync(outside, { recursive: true, force: true });
   }
 });
+
+test("confined paths accept an aliased workspace root and return the canonical file", (t) => {
+  const parent = mkdtempSync(join(tmpdir(), "scope-alias-"));
+  const root = join(parent, "real");
+  const alias = join(parent, "alias");
+  mkdirSync(root);
+  const file = join(root, "ok.txt");
+  writeFileSync(file, "ok");
+  try {
+    try {
+      symlinkSync(root, alias, "junction");
+    } catch {
+      t.diagnostic("workspace alias creation unavailable");
+      return;
+    }
+    assert.equal(confineToWorkspace(alias, join(alias, "ok.txt"), true), normalizeWorkspace(file));
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});

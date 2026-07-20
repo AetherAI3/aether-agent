@@ -1,15 +1,20 @@
 # Aether Agent installer — Windows (PowerShell).
 #
-#   irm https://aethersystems.net/install.ps1 | iex
+#   Download, inspect, then run this file with: .\install.ps1
 #
 # Installs the `aether` CLI globally via npm, then shows next steps.
 # Requires Node.js >= 24 and npm on the PATH.
 
 param(
-  [switch]$SkipNodeCheck = $false
+  [switch]$SkipNodeCheck = $false,
+  [string]$Version = $(if ($env:AETHER_VERSION) { $env:AETHER_VERSION } else { "latest" })
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($Version -notmatch '^[0-9A-Za-z.+-]+$') {
+  throw "Invalid Version: use latest, a dist-tag, or a semver."
+}
 
 # ── Color helpers ──
 $cyan  = 11  # BrightCyan  (ANSI 44 ≈ #1aa6b7)
@@ -67,7 +72,7 @@ Write-Host "│" -NoNewline -ForegroundColor $cyan
 Write-Host "  ☁  Aether Agent — Terminal Coding Agent Installer              " -NoNewline
 Write-Host "│" -ForegroundColor $cyan
 Write-Host "│" -NoNewline -ForegroundColor $cyan
-Write-Host "     v0.1.0  ·  aethersystems.net                              " -NoNewline -ForegroundColor $dim
+Write-Host "     npm release $Version  ·  aethersystems.net                    " -NoNewline -ForegroundColor $dim
 Write-Host "│" -ForegroundColor $cyan
 Write-BoxEmpty
 Write-BoxBottom
@@ -113,7 +118,7 @@ $alreadyInstalled = $false
 $aetherPath = Get-Command aether -ErrorAction SilentlyContinue
 if ($aetherPath) {
   $alreadyInstalled = $true
-  Write-Info "aether-agent already installed — will update to latest."
+  Write-Info "aether-agent already installed — will install $Version."
 }
 
 # ── Install ──
@@ -124,10 +129,9 @@ if ($alreadyInstalled) {
   Write-Step "Installing aether-agent"
 }
 
-npm install -g aether-agents 2>&1 | ForEach-Object {
-  Write-Host "." -NoNewline
-}
-Write-Host ""
+# Run npm directly so its native exit status cannot be hidden by a pipeline.
+# --ignore-scripts is safe because the package has no install-time lifecycle.
+& npm install -g "aether-agents@$Version" --ignore-scripts
 
 if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne $null) {
   Write-ErrorMsg "Install failed. Check your network and npm permissions."
@@ -139,7 +143,7 @@ if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne $null) {
 }
 
 $aetherPath = Get-Command aether -ErrorAction SilentlyContinue
-$aetherVersion = "0.1.0"
+$aetherVersion = "unknown"
 if ($aetherPath) {
   try { $aetherVersion = (aether --version 2>$null) } catch {}
 }

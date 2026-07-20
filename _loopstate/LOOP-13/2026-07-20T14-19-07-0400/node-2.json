@@ -1,0 +1,16 @@
+{
+  "node": 2,
+  "status": "complete",
+  "findings": [
+    {"id": "L13-001", "type": "circular-dependency", "severity": "MEDIUM", "members": ["src/core/auth.ts", "src/core/transport.ts"], "runtime_cycle": false},
+    {"id": "L13-002", "type": "high-coupling-baseline", "severity": "INFO", "top_degree": 42}
+  ],
+  "layer_violations": 0,
+  "microservice_monolith_delta": "initial",
+  "confidence": {
+    "score": 0.90,
+    "evidence": ["424-edge static graph", "Tarjan SCC analysis", "manual dynamic-dispatch check"],
+    "unknown": ["runtime call graph", "production traffic"],
+    "missing_evidence": ["prior baseline"]
+  }
+}
