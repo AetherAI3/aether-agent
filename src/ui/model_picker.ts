@@ -240,8 +240,13 @@ export async function pickModel(
         }
       } catch {
         // If anything throws in the key handler (render, decode), bail out
-        // and restore the REPL listeners so the session isn't bricked.
+        // and restore the REPL listeners so the session isn't bricked. Write
+        // a distinct diagnostic first: without it this resolves null exactly
+        // like a deliberate Escape, and the caller (slash.ts's showPicker)
+        // would print the same "kept current session." for both — hiding a
+        // real internal fault behind the same text as a plain cancel.
         cleanup();
+        out.write(theme.dim("  picker error — kept current session.") + "\n");
         resolve(null);
       }
     };
