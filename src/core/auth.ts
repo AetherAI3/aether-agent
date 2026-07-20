@@ -21,7 +21,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { configDir } from "./config.js";
-import { LOGIN_PATH, defaultRequestTimeoutMs, isCredentialSafeUrl } from "./transport.js";
+import { LOGIN_PATH, defaultRequestTimeoutMs, isCredentialSafeUrl, sanitizeServerText } from "./transport.js";
 
 export interface TokenStore {
   get(): Promise<string | null>;
@@ -246,11 +246,27 @@ export async function loginWithPassword(
     throw new Error(`login failed (HTTP ${res.status})`);
   }
   if (!res.ok || !body.authenticated || !body.session_token) {
-    throw new Error(`login failed: ${body.reason ?? `HTTP ${res.status}`}`);
+    // body.reason is raw JSON from an un-authenticated POST /auth/login
+    // response — a compromised/misconfigured backend (or a self-hosted dev
+    // server) could otherwise inject raw control bytes, including OSC 52
+    // clipboard-hijack sequences, since login.ts's headless catch writes
+    // this message straight to stderr with no sanitization of its own
+    // (LOOP-06 round 2). Same strip-and-cap treatment toHttpError applies to
+    // every OTHER server-text path, via the shared sanitizeServerText().
+    const reason =
+      typeof body.reason === "string" && body.reason.trim() ? sanitizeServerText(body.reason) : undefined;
+    throw new Error(`login failed: ${reason ?? `HTTP ${res.status}`}`);
   }
   await store.set(body.session_token);
   const result: LoginResult = {};
-  if (body.plan != null) result.plan = body.plan;
-  if (body.commitment_hash != null) result.commitmentHash = body.commitment_hash;
+  // Same server-controlled-text hazard as `reason` above, just on the SUCCESS
+  // path: login.ts:74 writes `plan` straight to stdout
+  // (`✓ Logged in (plan: ${r.plan}).`) with no sanitization of its own, so a
+  // compromised/misconfigured backend's `plan`/`commitment_hash` fields need
+  // the same treatment before they leave loginWithPassword.
+  if (typeof body.plan === "string" && body.plan.trim()) result.plan = sanitizeServerText(body.plan);
+  if (typeof body.commitment_hash === "string" && body.commitment_hash.trim()) {
+    result.commitmentHash = sanitizeServerText(body.commitment_hash);
+  }
   return result;
 }

@@ -518,6 +518,24 @@ async function parseOkBody<T>(res: Response): Promise<T> {
   }
 }
 
+/**
+ * Server-controlled text lands raw in the terminal: strip C0+C1 control chars
+ * (ESC, single-byte CSI, newlines) and cap the length. Printable residue of a
+ * stripped escape (e.g. "[31m") is harmless text.
+ *
+ * The one canonical treatment for any raw server-supplied string that may be
+ * embedded in an Error message a caller prints to the terminal — shared by
+ * toHttpError (below, every non-2xx response) and loginWithPassword's
+ * `reason` field (auth.ts), which used to build its thrown Error directly
+ * from the unsanitized, uncapped field, bypassing this exact protection
+ * (LOOP-06 round 2: an OSC 52 clipboard-hijack payload in a login failure
+ * `reason` would otherwise reach the terminal verbatim via login.ts's
+ * headless catch).
+ */
+export function sanitizeServerText(v: string): string {
+  return v.replace(/[\x00-\x1f\x7f-\x9f]+/g, " ").trim().slice(0, 200);
+}
+
 async function toHttpError(res: Response): Promise<HttpError> {
   let body: unknown;
   try {
@@ -533,10 +551,7 @@ async function toHttpError(res: Response): Promise<HttpError> {
     for (const k of ["message", "detail", "reason", "error"]) {
       const v = (body as Record<string, unknown>)[k];
       if (typeof v === "string" && v.trim()) {
-        // Server-controlled text lands raw in the terminal: strip C0+C1 control
-        // chars (ESC, single-byte CSI, newlines) and cap the length. Printable
-        // residue of a stripped escape (e.g. "[31m") is harmless text.
-        msg = `HTTP ${res.status}: ${v.replace(/[\x00-\x1f\x7f-\x9f]+/g, " ").trim().slice(0, 200)}`;
+        msg = `HTTP ${res.status}: ${sanitizeServerText(v)}`;
         break;
       }
     }

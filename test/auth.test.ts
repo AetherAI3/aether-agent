@@ -104,6 +104,98 @@ test("loginWithPassword: a stalled /auth/login response times out instead of han
   }
 });
 
+// ── LOOP-06 round 2: a malicious `reason` field must not survive raw ──
+// into the thrown Error's message. login.ts's headless `--username/
+// --password` catch writes err.message straight to process.stderr with no
+// sanitization of its own, so this field is the last line of defense against
+// a compromised/misconfigured backend (or a self-hosted dev server) smuggling
+// terminal escape sequences — including OSC 52 clipboard-hijack payloads —
+// into the user's terminal.
+test("loginWithPassword: a malicious `reason` field is stripped of control chars and length-capped before it reaches the thrown Error's message", async () => {
+  const realFetch = globalThis.fetch;
+  // Raw ESC byte + an OSC-style clipboard-hijack-shaped payload + padding well
+  // past the 200-char cap this mirrors from toHttpError's sanitizeServerText.
+  const evilReason = "\x1b]52;c;ZXZpbA==\x07" + "A".repeat(300);
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ authenticated: false, reason: evilReason }), {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+  try {
+    await assert.rejects(
+      () => loginWithPassword("https://api.example", new StaticTokenStore(""), { username: "u", password: "p" }),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        const msg = err.message;
+        assert.ok(!msg.includes("\x1b"), "raw ESC byte must never survive into the message");
+        assert.ok(!/[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(msg), "no other C0/C1 control bytes may survive either");
+        assert.ok(msg.length < 250, `message must be length-capped, got ${msg.length} chars`);
+        assert.match(msg, /^login failed: /);
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("loginWithPassword: a non-string `reason` (e.g. a compromised server sending an object/number) falls back to the HTTP status instead of leaking it verbatim", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ authenticated: false, reason: { evil: "\x1b[31mpayload" } }), {
+      status: 403,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+  try {
+    await assert.rejects(
+      () => loginWithPassword("https://api.example", new StaticTokenStore(""), { username: "u", password: "p" }),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.equal(err.message, "login failed: HTTP 403");
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+// ── LOOP-06 round 2 (advisor follow-up): the SUCCESS path carries the same
+// hazard — login.ts:74 writes `plan` straight to stdout
+// (`✓ Logged in (plan: ${r.plan}).`) with no sanitization of its own.
+test("loginWithPassword: a malicious `plan`/`commitment_hash` on a SUCCESSFUL login is sanitized before it reaches the caller", async () => {
+  const realFetch = globalThis.fetch;
+  const evilPlan = "\x1b]52;c;ZXZpbA==\x07pro" + "C".repeat(300);
+  const evilHash = "\x1b[31mhash" + "D".repeat(300);
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        authenticated: true,
+        session_token: "sess_ok",
+        plan: evilPlan,
+        commitment_hash: evilHash,
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )) as typeof fetch;
+  try {
+    const result = await loginWithPassword("https://api.example", new StaticTokenStore(""), {
+      username: "u",
+      password: "p",
+    });
+    assert.ok(result.plan);
+    assert.ok(!result.plan!.includes("\x1b"), "raw ESC byte must never survive in `plan`");
+    assert.ok(result.plan!.length < 210, `plan must be length-capped, got ${result.plan!.length} chars`);
+    assert.ok(result.commitmentHash);
+    assert.ok(!result.commitmentHash!.includes("\x1b"), "raw ESC byte must never survive in `commitmentHash`");
+    assert.ok(
+      result.commitmentHash!.length < 210,
+      `commitmentHash must be length-capped, got ${result.commitmentHash!.length} chars`,
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 test("loginWithPassword: AETHER_REQUEST_TIMEOUT_MS=0 disables the timeout (no AbortSignal attached)", async () => {
   const realFetch = globalThis.fetch;
   const restoreEnv = setRequestTimeoutMs("0");
