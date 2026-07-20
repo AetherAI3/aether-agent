@@ -70,14 +70,21 @@ export async function pollForToken(
       resp = await api.postJson<PollResponse>(DEVICE_TOKEN_PATH, { device_code: code.device_code });
       consecutiveNetworkErrors = 0;
     } catch (err) {
-      // The poll endpoint returns 400 with an `error` body for pending/slow_down/
-      // expired; postJson throws HttpError carrying that body — that's the ONLY
-      // case that should be folded into ordinary polling state. Any OTHER
-      // thrown error (network down, DNS failure, timeout, a malformed/bodyless
-      // response) is a real problem, not "user hasn't approved yet" — don't
-      // silently reclassify it as authorization_pending, or a genuine outage
-      // reads as normal polling for the whole expires_in window.
-      if (err instanceof HttpError && err.body && typeof err.body === "object") {
+      // The poll endpoint returns 400 with a string `error` body for pending/
+      // slow_down/expired (RFC 8628); postJson throws HttpError carrying that
+      // body — that's the ONLY case that should be folded into ordinary
+      // polling state. Any OTHER thrown error (network down, DNS failure,
+      // timeout, a malformed/bodyless response, or a non-400 HttpError such
+      // as a 5xx that merely happens to carry a parseable JSON object body,
+      // e.g. FastAPI's `{"detail": "..."}`) is a real problem, not "user
+      // hasn't approved yet" — don't silently reclassify it as
+      // authorization_pending, or a genuine outage reads as normal polling
+      // for the whole expires_in window.
+      if (
+        err instanceof HttpError &&
+        err.status === 400 &&
+        typeof (err.body as Record<string, unknown> | undefined)?.["error"] === "string"
+      ) {
         resp = err.body as PollResponse;
         consecutiveNetworkErrors = 0;
       } else {

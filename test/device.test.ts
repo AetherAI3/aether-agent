@@ -163,6 +163,60 @@ test("pollForToken: real authorization_pending (HttpError with body) times out w
   }
 });
 
+test("pollForToken: a repeating 5xx with a parseable JSON object body (e.g. FastAPI's {detail}) is NOT folded into authorization_pending — it counts as a network error and warns/fails distinctly", async () => {
+  const serverError = () => jsonRes(500, { detail: "internal error" });
+  const fetchStub = stubFetchSequence([serverError]);
+  const clock = fakeClock();
+  const stderr = captureStderr();
+  try {
+    const api = new ApiClient("https://api.example", new StaticTokenStore("aek_key"));
+    await assert.rejects(
+      () => pollForToken(api, CODE, clock.sleep),
+      (e: unknown) => {
+        assert.match(
+          (e as Error).message,
+          /couldn't reach the server/,
+          "a sustained 500 outage must surface the distinct network-outage message, not the generic 'run login again'",
+        );
+        return true;
+      },
+    );
+    assert.match(
+      stderr.text(),
+      /can't reach the server/,
+      "a repeating 500 must trip the same outage warning as a raw network failure, not read as silent authorization_pending",
+    );
+    // All 10 attempts (interval=1, expires_in=10) hit the network-error branch.
+    assert.equal(fetchStub.calls(), 10);
+  } finally {
+    fetchStub.restore();
+    clock.restore();
+    stderr.restore();
+  }
+});
+
+test("pollForToken: a 400 with a non-string `error` field (malformed pending shape) is NOT treated as ordinary polling state", async () => {
+  const malformed = () => jsonRes(400, { error: 123 });
+  const fetchStub = stubFetchSequence([malformed]);
+  const clock = fakeClock();
+  const stderr = captureStderr();
+  try {
+    const api = new ApiClient("https://api.example", new StaticTokenStore("aek_key"));
+    await assert.rejects(
+      () => pollForToken(api, CODE, clock.sleep),
+      (e: unknown) => {
+        assert.match((e as Error).message, /couldn't reach the server/);
+        return true;
+      },
+    );
+    assert.match(stderr.text(), /can't reach the server/);
+  } finally {
+    fetchStub.restore();
+    clock.restore();
+    stderr.restore();
+  }
+});
+
 // ── LOOP-01 round-1 regression: a single STALLED (never-settling) poll ──
 // request must not sit past its own deadline. Before ApiClient.request() had
 // a default timeout, `while (Date.now() < deadline)`'s re-check could never
