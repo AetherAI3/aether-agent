@@ -170,6 +170,13 @@ export async function cmdAuth(
     case "logout":
       return cmdLogout(ctx);
     case "status": {
+      // LOOP-06: renderAuthBox's first move is a network round-trip to
+      // /models (no cache to fall back on for the CLI's one-shot status
+      // command), and nothing was written to stdout until the whole thing
+      // resolved — up to DEFAULT_REQUEST_TIMEOUT_MS of silence on a slow
+      // connection, "the REPL just looks hung" (the exact class PR #47 fixed
+      // for slash.ts's catalog fetch). Match that convention here.
+      process.stdout.write(theme.dim("checking session…\n"));
       const panel = await renderAuthBox(ctx);
       process.stdout.write(panel + "\n");
       return 0;
@@ -182,8 +189,11 @@ export async function cmdAuth(
       printAuthHelp();
       return 0;
     default: {
-      // Bare `aether auth` — show the branded panel.
+      // Bare `aether auth` — show the branded panel. Same LOOP-06 loading
+      // line as the "status" branch above — this hits renderAuthBox's same
+      // /models call.
       if (sub === "") {
+        process.stdout.write(theme.dim("checking session…\n"));
         const panel = await renderAuthBox(ctx);
         process.stdout.write("\n" + panel + "\n\n");
         return 0;

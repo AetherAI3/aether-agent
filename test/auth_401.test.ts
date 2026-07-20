@@ -12,6 +12,13 @@
 //      with a 401/403 — that used to be folded into the same silent
 //      "server unreachable, show what we know locally" catch as a genuine
 //      network outage.
+//   5. cmdAuth (LOOP-06 round 2): renderAuthBox's /models call is the FIRST
+//      network round-trip either the "status" subcommand or bare `aether
+//      auth` make, and previously nothing was written to stdout until the
+//      whole thing resolved — up to DEFAULT_REQUEST_TIMEOUT_MS of silence on
+//      a slow connection ("the REPL just looks hung", the exact defect class
+//      PR #47 fixed for slash.ts's catalog fetch). cmdAuth must now print a
+//      loading line BEFORE awaiting renderAuthBox.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
@@ -21,7 +28,8 @@ import { tokenStoreFromEnv, FileTokenStore, StaticTokenStore } from "../src/core
 import { ApiClient } from "../src/core/transport.js";
 import { errorHint, HttpError } from "../src/core/errors.js";
 import { hintFor } from "../src/core/error_hints.js";
-import { renderAuthBox } from "../src/commands/auth.js";
+import { renderAuthBox, cmdAuth } from "../src/commands/auth.js";
+import type { LoginOpts } from "../src/commands/login.js";
 import { stripAnsi } from "../src/ui/theme.js";
 import type { AppContext } from "../src/core/context.js";
 
@@ -328,5 +336,99 @@ test("renderAuthBox: a successful /models call renders the normal 'Authenticated
     assert.match(panel, /aether-large/);
   } finally {
     globalThis.fetch = real;
+  }
+});
+
+// ── 6. cmdAuth (LOOP-06 round 2): loading feedback before the /models call ──
+//
+// These intercept the process-wide process.stdout.write, which — unlike the
+// renderAuthBox tests above — is a genuinely global stream shared with the
+// test runner's own reporter. Matching on a broad /Authenticated/ regex over
+// that captured stream is a trap: a SIBLING test's own description text
+// ("...renders the normal 'Authenticated' panel...") can be flushed by the
+// reporter through that same intercepted stream while this test's capture
+// window is open, producing a false match unrelated to cmdAuth's own output.
+// PANEL_MARKER is the exact, singular header string renderAuthBox emits
+// (auth.ts's `theme.bold("Aether Agent — Authenticated")`) — not a string
+// that appears anywhere in a test name — so a match can only come from
+// cmdAuth's own finished panel actually having been written.
+const PANEL_MARKER = "Aether Agent — Authenticated";
+
+function captureStdout(): { writes: string[]; restore: () => void } {
+  const writes: string[] = [];
+  const orig = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: unknown) => {
+    writes.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  return {
+    writes,
+    restore: () => {
+      process.stdout.write = orig;
+    },
+  };
+}
+
+test("cmdAuth 'status': prints a loading line BEFORE the /models call resolves — no silent hang", async () => {
+  const real = globalThis.fetch;
+  const tokens = new StaticTokenStore("aek_deadtoken1234");
+  let resolveFetch: (r: Response) => void = () => {};
+  const pending = new Promise<Response>((res) => {
+    resolveFetch = res;
+  });
+  // Simulate a stalled/slow connection: fetch never resolves until we say so.
+  globalThis.fetch = (async () => pending) as typeof globalThis.fetch;
+  const cap = captureStdout();
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const ctx = fakeCtx(api, tokens);
+    const done = cmdAuth(ctx, ["status"], {} as LoginOpts);
+    // Let queued microtasks (the write before the await) run while the
+    // network call is still deliberately left hanging.
+    await new Promise((r) => setImmediate(r));
+    assert.ok(
+      cap.writes.some((w) => /checking session/i.test(w)),
+      "a loading line must be written before the network call resolves",
+    );
+    assert.ok(
+      !cap.writes.some((w) => w.includes(PANEL_MARKER)),
+      "the finished panel must NOT have printed yet — /models is still pending",
+    );
+    resolveFetch(jsonRes(200, { tier: "pro", default: "aether-large" }));
+    const code = await done;
+    assert.equal(code, 0);
+    assert.ok(cap.writes.some((w) => w.includes(PANEL_MARKER)), "the panel prints once /models resolves");
+  } finally {
+    globalThis.fetch = real;
+    cap.restore();
+  }
+});
+
+test("cmdAuth bare `aether auth` (no subcommand): same loading line before the /models call resolves", async () => {
+  const real = globalThis.fetch;
+  const tokens = new StaticTokenStore("aek_deadtoken1234");
+  let resolveFetch: (r: Response) => void = () => {};
+  const pending = new Promise<Response>((res) => {
+    resolveFetch = res;
+  });
+  globalThis.fetch = (async () => pending) as typeof globalThis.fetch;
+  const cap = captureStdout();
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const ctx = fakeCtx(api, tokens);
+    const done = cmdAuth(ctx, [], {} as LoginOpts);
+    await new Promise((r) => setImmediate(r));
+    assert.ok(
+      cap.writes.some((w) => /checking session/i.test(w)),
+      "bare `aether auth` must also show loading feedback before /models resolves",
+    );
+    assert.ok(!cap.writes.some((w) => w.includes(PANEL_MARKER)));
+    resolveFetch(jsonRes(200, { tier: "pro", default: "aether-large" }));
+    const code = await done;
+    assert.equal(code, 0);
+    assert.ok(cap.writes.some((w) => w.includes(PANEL_MARKER)));
+  } finally {
+    globalThis.fetch = real;
+    cap.restore();
   }
 });
