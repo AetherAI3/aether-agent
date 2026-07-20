@@ -13,6 +13,7 @@ import { loginWithPassword } from "../core/auth.js";
 import { LOGOUT_PATH } from "../core/transport.js";
 import { requestDeviceCode, pollForToken } from "../core/device.js";
 import { openBrowser } from "../core/browser.js";
+import { theme } from "../ui/theme.js";
 
 export interface LoginOpts {
   token?: string;
@@ -23,11 +24,30 @@ export interface LoginOpts {
   noBrowser?: boolean;
 }
 
+/** After a successful login, flag a shell-level AETHER_TOKEN: it is re-read by
+ * every NEW process and would shadow the token just stored — the classic
+ * "login succeeded but the next command 401s" trap (PR #47). */
+function warnEnvTokenShadow(): void {
+  if ((process.env["AETHER_TOKEN"] ?? "").trim()) {
+    const unsetCmd =
+      process.platform === "win32"
+        ? "Remove-Item Env:AETHER_TOKEN (PowerShell) / set AETHER_TOKEN= (cmd)"
+        : "unset AETHER_TOKEN";
+    process.stderr.write(
+      theme.dim(
+        "⚠ AETHER_TOKEN is set in this shell and overrides stored logins in new\n" +
+          `  processes. If you keep getting 401s: ${unsetCmd}\n`,
+      ),
+    );
+  }
+}
+
 export async function cmdLogin(ctx: AppContext, opts: LoginOpts): Promise<number> {
   // 1. Direct token.
   if (opts.token) {
     await ctx.tokens.set(opts.token);
     process.stdout.write("✓ Token stored.\n");
+    warnEnvTokenShadow();
     return 0;
   }
   // 2. Token piped on stdin.
@@ -43,6 +63,7 @@ export async function cmdLogin(ctx: AppContext, opts: LoginOpts): Promise<number
     }
     await ctx.tokens.set(t);
     process.stdout.write("✓ Token stored.\n");
+    warnEnvTokenShadow();
     return 0;
   }
   // 3. Headless username/password.
@@ -52,6 +73,7 @@ export async function cmdLogin(ctx: AppContext, opts: LoginOpts): Promise<number
       const creds = opts.licenseKey ? { ...credsBase, licenseKey: opts.licenseKey } : credsBase;
       const r = await loginWithPassword(ctx.cfg.baseUrl, ctx.tokens, creds);
       process.stdout.write(`✓ Logged in${r.plan ? ` (plan: ${r.plan})` : ""}.\n`);
+      warnEnvTokenShadow();
       return 0;
     } catch (err) {
       process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
@@ -79,6 +101,7 @@ export async function cmdLogin(ctx: AppContext, opts: LoginOpts): Promise<number
     const token = await pollForToken(ctx.api, code, sleep);
     await ctx.tokens.set(token);
     process.stdout.write("✓ Logged in.\n");
+    warnEnvTokenShadow();
     return 0;
   } catch (err) {
     process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);

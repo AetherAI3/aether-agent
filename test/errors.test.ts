@@ -4,9 +4,10 @@ import { HttpError, errorHint } from "../src/core/errors.js";
 
 const BASE = "https://api.aethersystems.net";
 
-test("401/403 hint points at auth login", () => {
+test("401 hint points at auth login; 402/403 point at plan/balance instead", () => {
   assert.match(errorHint(new HttpError(401, "HTTP 401"), BASE) ?? "", /aether auth login/);
-  assert.match(errorHint(new HttpError(403, "HTTP 403"), BASE) ?? "", /aether auth login/);
+  assert.match(errorHint(new HttpError(402, "HTTP 402"), BASE) ?? "", /UVT|balance/i);
+  assert.match(errorHint(new HttpError(403, "HTTP 403"), BASE) ?? "", /plan|tier/i);
 });
 
 test("429 hint points at the tier", () => {

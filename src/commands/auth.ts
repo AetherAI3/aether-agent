@@ -55,7 +55,8 @@ async function renderAuthBox(ctx: AppContext): Promise<string> {
     "",
     theme.iceBlue("\u2601") + "  " + theme.bold("Aether Agent \u2014 Authenticated"),
     "",
-    "  " + theme.dim("Account:") + "  " + theme.bold("(fetching\u2026)"),
+    // No Account row: there is no account endpoint yet, and a hardcoded
+    // "(fetching\u2026)" that never resolves is a fake loading state (PR #47 UX).
     "  " + theme.dim("Token:") + "    " + theme.bold(mask(t)) + "  " + theme.dim(`(${kind})`),
     "  " + theme.dim("API:") + "      " + ctx.cfg.baseUrl.replace("https://", ""),
   ];
