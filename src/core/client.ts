@@ -13,8 +13,7 @@ import { decodeSse, type StreamFrame } from "./stream.js";
 import { buildChatRequest } from "./envelope.js";
 import { StreamUnavailableError } from "./errors.js";
 import {
-  defaultTokenStore,
-  StaticTokenStore,
+  tokenStoreForInjected,
   loginWithPassword,
   type LoginResult,
   type TokenStore,
@@ -49,8 +48,13 @@ export class AetherClient {
     this.baseUrl = opts.baseUrl ?? process.env["AETHER_BASE_URL"] ?? loadConfig().baseUrl;
     const envToken = process.env["AETHER_TOKEN"];
     const injected = opts.token ?? envToken;
-    this.tokens =
-      opts.tokenStore ?? (injected ? new StaticTokenStore(injected) : defaultTokenStore());
+    // In-process only (persistOnLogin: false): AetherClient is an embeddable
+    // library surface (desktop in-process embed, Aether AI on the web), so an
+    // explicit login() must not clobber the standalone CLI's on-disk session.
+    // Shares the injected-token decision with tokenStoreFromEnv via
+    // tokenStoreForInjected so the two surfaces can't silently diverge
+    // (LOOP-01 round 1).
+    this.tokens = opts.tokenStore ?? tokenStoreForInjected(injected, { persistOnLogin: false });
     this.api = new ApiClient(this.baseUrl, this.tokens);
   }
 

@@ -92,6 +92,33 @@ export function defaultTokenStore(): TokenStore {
 }
 
 /**
+ * The one canonical "injected token -> TokenStore" decision, shared by every
+ * surface that resolves an embedded/injected session token (tokenStoreFromEnv
+ * for the CLI entry, AetherClient's constructor for library embedders) so the
+ * choice can't silently drift into hand-maintained copies (LOOP-01 round 1).
+ *
+ * An empty/whitespace token counts as unset and falls back to the file store.
+ *
+ * `persistOnLogin` is the one axis that legitimately differs by surface:
+ *  - true  (EnvOverrideTokenStore): an explicit login's fresh token persists to
+ *    disk too, so a NEW process (no env override) still sees it — this is the
+ *    CLI-entry fix for PR #47's "✓ Logged in" evaporating with the process.
+ *  - false (StaticTokenStore): the token stays in-process only. AetherClient is
+ *    an embeddable library surface (desktop in-process embed, Aether AI on the
+ *    web) whose consumers explicitly must NOT have a `.login()` call clobber
+ *    the standalone CLI's independent on-disk session — see StaticTokenStore's
+ *    doc comment below.
+ */
+export function tokenStoreForInjected(
+  injected: string | undefined | null,
+  opts: { persistOnLogin: boolean },
+): TokenStore {
+  const t = (injected ?? "").trim();
+  if (!t) return defaultTokenStore();
+  return opts.persistOnLogin ? new EnvOverrideTokenStore(t, defaultTokenStore()) : new StaticTokenStore(t);
+}
+
+/**
  * Token store for a running CLI process, choosing the source by environment.
  *
  * An injected `AETHER_TOKEN` — how the desktop app (and the web server) embed a
@@ -99,13 +126,14 @@ export function defaultTokenStore(): TokenStore {
  * store, so a user already signed into AetherCloud who opens a terminal is
  * authenticated as that same account and is NEVER asked to re-run
  * `aether auth login`. With no env token (a standalone CLI user), it falls back
- * to the file store, so the normal login flow is unaffected. An empty/whitespace
- * value counts as unset. Mirrors AetherClient's embedded-token resolution so the
- * interactive REPL and the universal chat client agree on auth.
+ * to the file store, so the normal login flow is unaffected. Mirrors
+ * AetherClient's embedded-token resolution (both go through
+ * tokenStoreForInjected) so the interactive REPL and the universal chat client
+ * agree on auth reads; only the login-persistence axis differs (see
+ * tokenStoreForInjected's doc comment).
  */
 export function tokenStoreFromEnv(env: NodeJS.ProcessEnv = process.env): TokenStore {
-  const injected = (env["AETHER_TOKEN"] ?? "").trim();
-  return injected ? new EnvOverrideTokenStore(injected, defaultTokenStore()) : defaultTokenStore();
+  return tokenStoreForInjected(env["AETHER_TOKEN"], { persistOnLogin: true });
 }
 
 /**
