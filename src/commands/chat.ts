@@ -11,6 +11,7 @@ import { CHAT_STREAM_PATH, CHAT_PATH, defaultStreamTimeoutMs } from "../core/tra
 import { decodeSse } from "../core/stream.js";
 import { Renderer } from "../core/render.js";
 import { StreamUnavailableError, errorHint, isAbortError } from "../core/errors.js";
+import { formatErrorLine } from "../ui/error_line.js";
 import { appendCustody } from "../core/custody.js";
 import { handleSlash, primeCatalog } from "./slash.js";
 import { applyPromptMode } from "./prompt_modes.js";
@@ -961,11 +962,8 @@ async function replLines(ctx: AppContext): Promise<number> {
 
 function printError(err: unknown, baseUrl: string): void {
   const msg = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`\n${errTheme.red("✗")} ${msg}\n`);
-  const hint = errorHint(err, baseUrl);
-  if (hint) process.stderr.write(errTheme.dim(`  ⤷ ${hint}`) + "\n");
-  // Trailing blank line: the REPL reprints its prompt right after this, and
-  // without the separator the dim hint and the prompt fuse into one line
-  // (the "⤷ run `aether auth login` … [user]_:" mess from PR #47's report).
-  process.stderr.write("\n");
+  // formatErrorLine (LOOP-06) owns the glyph/hint/separator convention so
+  // this reads identically to a server-streamed error frame's Renderer.error
+  // — see src/ui/error_line.ts for why both paths must agree.
+  process.stderr.write(formatErrorLine(msg, { hint: errorHint(err, baseUrl) }));
 }
