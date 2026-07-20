@@ -4,6 +4,8 @@
 // server hands back an `aek_` API key. Same flow as `gh auth login`.
 
 import { ApiClient, DEVICE_CODE_PATH, DEVICE_TOKEN_PATH } from "./transport.js";
+import { HttpError } from "./errors.js";
+import { errTheme } from "../ui/theme.js";
 
 export interface DeviceCode {
   device_code: string;
@@ -41,6 +43,13 @@ export async function requestDeviceCode(api: ApiClient): Promise<DeviceCode> {
   return api.postJson<DeviceCode>(DEVICE_CODE_PATH, { client_id: "aether-cli" });
 }
 
+// Consecutive non-HTTP polling failures (network down, DNS failure, timeout,
+// a malformed/bodyless response) before we tell the user something looks
+// wrong. A single blip shouldn't interrupt "waiting for approval", but a
+// sustained outage must not read as silent waiting for the whole expires_in
+// window.
+const NETWORK_WARN_THRESHOLD = 3;
+
 /**
  * Poll the token endpoint until the user approves in the portal. Returns the raw
  * `aek_` token. `sleep` is injected so the loop is testable. Honors `slow_down`
@@ -53,21 +62,44 @@ export async function pollForToken(
 ): Promise<string> {
   let interval = code.interval;
   const deadline = Date.now() + code.expires_in * 1000;
+  let consecutiveNetworkErrors = 0;
   while (Date.now() < deadline) {
     await sleep(interval * 1000);
     let resp: PollResponse;
     try {
       resp = await api.postJson<PollResponse>(DEVICE_TOKEN_PATH, { device_code: code.device_code });
+      consecutiveNetworkErrors = 0;
     } catch (err) {
       // The poll endpoint returns 400 with an `error` body for pending/slow_down/
-      // expired; postJson throws HttpError carrying that body.
-      resp = (err as { body?: PollResponse }).body ?? { error: "authorization_pending" };
+      // expired; postJson throws HttpError carrying that body — that's the ONLY
+      // case that should be folded into ordinary polling state. Any OTHER
+      // thrown error (network down, DNS failure, timeout, a malformed/bodyless
+      // response) is a real problem, not "user hasn't approved yet" — don't
+      // silently reclassify it as authorization_pending, or a genuine outage
+      // reads as normal polling for the whole expires_in window.
+      if (err instanceof HttpError && err.body && typeof err.body === "object") {
+        resp = err.body as PollResponse;
+        consecutiveNetworkErrors = 0;
+      } else {
+        consecutiveNetworkErrors++;
+        if (consecutiveNetworkErrors === NETWORK_WARN_THRESHOLD) {
+          process.stderr.write(
+            errTheme.dim("⚠ can't reach the server — still trying… (check your connection)\n"),
+          );
+        }
+        continue;
+      }
     }
     const action = classifyPoll(resp);
     if (action === "ready") return resp.access_token as string;
     if (action === "denied") throw new Error("authorization denied in the browser");
     if (action === "expired") throw new Error("login timed out — run `aether auth login` again");
     if (action === "slow_down") interval += 5;
+  }
+  if (consecutiveNetworkErrors >= NETWORK_WARN_THRESHOLD) {
+    throw new Error(
+      "login timed out — couldn't reach the server while waiting for approval; check your connection and try again",
+    );
   }
   throw new Error("login timed out — run `aether auth login` again");
 }
