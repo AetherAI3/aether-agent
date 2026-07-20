@@ -70,8 +70,16 @@ export function resolveSelection(items: CatalogItem[], arg: string): CatalogItem
   return items.find((i) => i.id === a) ?? null;
 }
 
-async function getCatalog(ctx: AppContext, force = false, signal?: AbortSignal): Promise<CatalogResponse> {
+async function getCatalog(
+  ctx: AppContext,
+  force = false,
+  signal?: AbortSignal,
+  out?: Writable,
+): Promise<CatalogResponse> {
   if (!_catalog || force) {
+    // Loading state: on a cold cache this blocks on a network round-trip, and
+    // with no feedback the REPL just looks hung (spec: distinct loading state).
+    out?.write(theme.dim("fetching model catalog…\n"));
     _catalog = await ctx.api.getJson<CatalogResponse>(MODELS_PATH, signal);
   }
   return _catalog;
@@ -362,7 +370,7 @@ async function showPicker(
   kind: Kind,
   signal?: AbortSignal,
 ): Promise<{ model?: string; agent?: string } | null> {
-  const cat = await getCatalog(ctx, false, signal);
+  const cat = await getCatalog(ctx, false, signal, out);
   const items = byKind(cat, kind);
 
   const picked = await pickModel(items, out);
@@ -401,7 +409,7 @@ async function select(
     out.write(`usage: /${kind === "model" ? "model" : "agent"} <n|id>\n`);
     return null;
   }
-  const cat = await getCatalog(ctx, false, signal);
+  const cat = await getCatalog(ctx, false, signal, out);
   const item = resolveSelection(byKind(cat, kind), arg);
   if (!item) {
     out.write(`no such ${kind}: ${arg}\n`);
@@ -460,7 +468,7 @@ function setEffort(ctx: AppContext, out: Writable, arg: string): void {
 }
 
 async function showTier(ctx: AppContext, out: Writable, signal?: AbortSignal): Promise<void> {
-  const cat = await getCatalog(ctx, false, signal);
+  const cat = await getCatalog(ctx, false, signal, out);
   const models = byKind(cat, "model").filter((m) => m.available).length;
   const orch = byKind(cat, "orchestrator").filter((m) => m.available).length;
   out.write(

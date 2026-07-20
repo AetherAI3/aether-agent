@@ -7,13 +7,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   tokenStoreFromEnv,
-  StaticTokenStore,
+  EnvOverrideTokenStore,
   FileTokenStore,
 } from "../src/core/auth.js";
 
 test("AETHER_TOKEN (desktop embed) wins over the file store — no re-auth", async () => {
   const store = tokenStoreFromEnv({ AETHER_TOKEN: "sess-desktop-123" } as NodeJS.ProcessEnv);
-  assert.ok(store instanceof StaticTokenStore, "embedded session token is used, not the on-disk file");
+  // EnvOverrideTokenStore (not StaticTokenStore): reads still prefer the
+  // injected session, but an explicit login now persists (PR #47 fix).
+  assert.ok(store instanceof EnvOverrideTokenStore, "embedded session token is used, not the on-disk file");
   assert.equal(await store.get(), "sess-desktop-123", "the injected session is the active token");
 });
 
