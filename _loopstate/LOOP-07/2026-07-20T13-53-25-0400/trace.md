@@ -8,3 +8,4 @@
 | 8 | supply-chain reviewer | Audit dependencies, package contents, action pins, SBOM and release provenance. | npm audit, npm pack, npm sbom | bounded | 0.94 | PASS |
 | 9 | operations reviewer | Classify state, backup ownership, evidence retention, and recovery gaps. | docs, inventory | bounded | 0.85 | OPERATOR-DEFERRED |
 | final | hostile SRE | Attack unknowns first and reject a silent pass on unreadable admin controls. | artifact review | bounded | 0.88 | FAIL-WITH-ARTIFACT |
+| hosted follow-up | CI repair | Diagnose Windows runner alias failure; separate lexical and canonical containment representations; add junction-alias regression. | Actions run 29767917285; targeted 5/5 | bounded | 0.95 | repaired and repushed |

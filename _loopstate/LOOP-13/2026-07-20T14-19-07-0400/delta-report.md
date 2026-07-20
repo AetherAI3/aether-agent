@@ -24,8 +24,12 @@ No score drop, new cycle, watchlist join, or trend direction can be asserted
 without a prior run. The next run must reuse the formulas in `scorecard.md` or
 explicitly report a formula change.
 
-Relative to `origin/main`, this hardening branch does not modify `src/**`; it
-adds the production verifier under `scripts/`, its tests, delivery workflows,
-installers, and operations documentation. The verifier contributes three
-functions over the cyclomatic threshold but has 90.69% line coverage and a
-100% score across the declared ten-mutant high-risk catalog.
+At the LOOP-13 snapshot, the hardening branch did not modify `src/**`; it added
+the production verifier under `scripts/`, its tests, delivery workflows,
+installers, and operations documentation. A later hosted-CI follow-up made one
+targeted portability fix in `src/core/workspace_scope.ts` after Windows exposed
+an alias-vs-realpath mismatch. That follow-up adds no import edge or function and
+does not change this baseline's cycle, degree, depth, duplication, or complexity
+aggregates. The verifier contributes three functions over the cyclomatic
+threshold but has 90.69% line coverage and a 100% score across the declared
+ten-mutant high-risk catalog.

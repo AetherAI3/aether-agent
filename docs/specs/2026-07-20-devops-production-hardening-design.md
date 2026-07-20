@@ -54,6 +54,7 @@ This file began as the starting point and now records the completed run.
 - Release-only npm publication from an exact tag on `main`, protected by an npm production environment, OIDC provenance, build attestation, exact tarball install smoke, and retained evidence.
 - Safe version-selectable Bash and PowerShell installers that never pipe remote code to a shell and suppress package lifecycle scripts.
 - A production verifier enforcing manifest, package allowlist/size, workflow, release, installer, and installed-CLI invariants.
+- A Windows portability repair for workspace containment when runner temp paths use an alias; lexical traversal and canonical symlink guards remain independently enforced.
 - Operations, rollback, backup, observability, ownership, and required-administrator-control documentation.
 - Full loop artifacts and governance trail under `_loopstate/LOOP-07`, `LOOP-17`, `LOOP-11`, `LOOP-12`, and `LOOP-13`.
 

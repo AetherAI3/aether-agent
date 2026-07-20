@@ -8,8 +8,10 @@ The first drift/debt run established a reproducible descriptive baseline for
 128 source modules and 424 static import/re-export edges. It found one
 pre-existing type-level circular dependency, three duplication families, one
 suspected-dead internal TUI prototype, 88 of 1,306 functions above cyclomatic
-10, and one file above the 800-line house limit. The production-hardening branch
-does not modify `src/**`, so none of those source findings were introduced here.
+10, and one file above the 800-line house limit. None of those source findings
+were introduced by the hardening work. A later hosted-CI follow-up touched only
+the containment logic in `workspace_scope.ts` and did not alter the measured
+graph or complexity aggregates.
 
 ## Scorecard
 
@@ -59,7 +61,8 @@ recomputation.
 LOOP-13 changed no runtime, test, installer, workflow, or implementation
 documentation file. Its writes are under `_loopstate/LOOP-13/` plus the required
 governance metadata. Runtime changes already present in the working tree were
-created and tested by the preceding LOOP-11/12 stages.
+created and tested by the preceding LOOP-11/12 stages. The hosted Windows repair
+was applied only after this read-only run completed.
 
 ## Recommended next loops
 

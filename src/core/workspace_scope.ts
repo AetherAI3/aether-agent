@@ -59,9 +59,14 @@ function canonicalizeCandidate(candidate: string): string {
 }
 
 export function confineToWorkspace(cwd: string, candidate: string, mustExist = false): string {
+  // Keep the lexical and canonical checks on matching path representations.
+  // Windows runners can expose the temp directory through an alias whose
+  // realpath differs from the path returned by os.tmpdir(). Comparing that
+  // alias-form candidate to a canonical root rejects a valid in-workspace file.
+  const lexicalRoot = fold(resolve(cwd).replace(/[\\/]+$/, "") || sep);
+  const lexical = fold(resolve(lexicalRoot, candidate));
+  if (!inside(lexicalRoot, lexical)) throw new Error("path escapes workspace");
   const root = normalizeWorkspace(cwd);
-  const lexical = fold(resolve(root, candidate));
-  if (!inside(root, lexical)) throw new Error("path escapes workspace");
   const canonical = canonicalizeCandidate(lexical);
   if (!inside(root, canonical)) throw new Error("path escapes workspace through a link");
   if (mustExist && (!existsSync(canonical) || !statSync(canonical).isFile())) {
