@@ -9,6 +9,7 @@
 import type { AppContext } from "../core/context.js";
 import { cmdLogin, cmdLogout, type LoginOpts } from "./login.js";
 import { MODELS_PATH, REFRESH_PATH } from "../core/transport.js";
+import { HttpError } from "../core/errors.js";
 import { box, titledBox, hyperlink, orange, green, darkBlue, brightWhite, lightBlue } from "../ui/box.js";
 import { CLOUD } from "../ui/logo.js";
 import { theme } from "../ui/theme.js";
@@ -35,37 +36,61 @@ function centeredCloud(): string {
 
 // ── Branded status panel ──
 
-async function renderAuthBox(ctx: AppContext): Promise<string> {
+// Exported so tests can render the panel directly against a fake AppContext
+// without going through cmdAuth's stdout write.
+export async function renderAuthBox(ctx: AppContext): Promise<string> {
   const t = await ctx.tokens.get();
   if (!t) return renderLoggedOut();
 
   // Fetch tier info for display
   let tier = "";
   let defaultModel = "";
+  // A 401/403 here means the SERVER actively rejected this token (expired or
+  // revoked session) — that is a different situation from "server
+  // unreachable" and must not be swallowed the same way, or `status` would
+  // claim "Authenticated" for a dead session (the stale-AETHER_TOKEN case PR
+  // #47 fixed elsewhere). Any other failure (no HttpError, or a 5xx) is a
+  // genuine network/server problem: keep the existing silent local-only
+  // fallback for those.
+  let sessionExpired = false;
   try {
     const cat = await ctx.api.getJson<{ tier?: string; default?: string }>(MODELS_PATH);
     tier = cat.tier ?? "";
     defaultModel = cat.default ?? "";
-  } catch {
-    // Server unreachable — still show what we know locally.
+  } catch (err) {
+    if (err instanceof HttpError && (err.status === 401 || err.status === 403)) {
+      sessionExpired = true;
+    }
+    // Otherwise: server unreachable — still show what we know locally.
   }
 
   const kind = isApiToken(t) ? "API key" : "session token";
+  const header = sessionExpired
+    ? theme.yellow("⚠") + "  " + theme.bold("Aether Agent — Session expired")
+    : theme.iceBlue("☁") + "  " + theme.bold("Aether Agent — Authenticated");
   const lines: string[] = [
     "",
-    theme.iceBlue("\u2601") + "  " + theme.bold("Aether Agent \u2014 Authenticated"),
+    header,
     "",
     // No Account row: there is no account endpoint yet, and a hardcoded
-    // "(fetching\u2026)" that never resolves is a fake loading state (PR #47 UX).
+    // "(fetching…)" that never resolves is a fake loading state (PR #47 UX).
     "  " + theme.dim("Token:") + "    " + theme.bold(mask(t)) + "  " + theme.dim(`(${kind})`),
     "  " + theme.dim("API:") + "      " + ctx.cfg.baseUrl.replace("https://", ""),
   ];
 
-  if (tier) {
-    lines.push("  " + theme.dim("Tier:") + "     " + (tier === "free" ? theme.dim(tier) : theme.cyan(tier)));
-  }
-  if (defaultModel) {
-    lines.push("  " + theme.dim("Default:") + "  " + defaultModel);
+  if (sessionExpired) {
+    lines.push(
+      "",
+      "  " + theme.yellow("Server rejected this token — sign in again:"),
+      "  " + theme.bold(theme.cyan("aether auth login")),
+    );
+  } else {
+    if (tier) {
+      lines.push("  " + theme.dim("Tier:") + "     " + (tier === "free" ? theme.dim(tier) : theme.cyan(tier)));
+    }
+    if (defaultModel) {
+      lines.push("  " + theme.dim("Default:") + "  " + defaultModel);
+    }
   }
 
   lines.push(
@@ -78,7 +103,8 @@ async function renderAuthBox(ctx: AppContext): Promise<string> {
     "",
   );
 
-  return [centeredCloud(), "", titledBox(lines, "Authenticated", { width: BOX_W })].join("\n");
+  const title = sessionExpired ? "Session expired" : "Authenticated";
+  return [centeredCloud(), "", titledBox(lines, title, { width: BOX_W })].join("\n");
 }
 
 // ── Logged-out welcome panel ──

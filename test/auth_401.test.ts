@@ -1,5 +1,5 @@
 // Regression tests for the "login succeeds but model-select throws HTTP 401"
-// bug (PR #47). Three layers:
+// bug (PR #47). Four layers:
 //   1. tokenStoreFromEnv: a fresh login must PERSIST even when AETHER_TOKEN is
 //      injected — previously it vanished with the process, so every later run
 //      re-read the stale env token and 401'd despite "✓ Logged in."
@@ -7,6 +7,11 @@
 //      + retry before the 401 surfaces. aek_ API keys never trigger refresh.
 //   3. errorHint: 401 / 402 / 403 are distinct + the server's own detail
 //      (e.g. a UVT-balance message) is surfaced instead of a bare "HTTP 401".
+//   4. renderAuthBox (LOOP-06): `aether auth status` must not print
+//      "Authenticated" when the server has just rejected the stored token
+//      with a 401/403 — that used to be folded into the same silent
+//      "server unreachable, show what we know locally" catch as a genuine
+//      network outage.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
@@ -16,6 +21,9 @@ import { tokenStoreFromEnv, FileTokenStore, StaticTokenStore } from "../src/core
 import { ApiClient } from "../src/core/transport.js";
 import { errorHint, HttpError } from "../src/core/errors.js";
 import { hintFor } from "../src/core/error_hints.js";
+import { renderAuthBox } from "../src/commands/auth.js";
+import { stripAnsi } from "../src/ui/theme.js";
+import type { AppContext } from "../src/core/context.js";
 
 function withTempConfigDir<T>(fn: () => Promise<T>): Promise<T> {
   const dir = join(tmpdir(), `aether-401-${process.pid}-${Math.random().toString(36).slice(2)}`);
@@ -247,3 +255,78 @@ test("EnvOverrideTokenStore: update() (auto-refresh) swaps the active token WITH
     assert.equal(await store.get(), "sess_embedded_rotated", "active token rotated in-process");
     assert.equal(await disk.get(), "disk_standalone_login", "standalone on-disk login untouched");
   }));
+
+// ── 5. renderAuthBox (LOOP-06): 401/403 must not read as "Authenticated" ──
+
+function fakeCtx(api: ApiClient, tokens: StaticTokenStore): AppContext {
+  return {
+    cfg: { baseUrl: "https://api.example" },
+    api,
+    tokens,
+    flags: { cwd: process.cwd(), json: false, audit: false, yes: false },
+    confirm: async () => false,
+  } as unknown as AppContext;
+}
+
+test("renderAuthBox: a 401 from /models renders a distinct 'Session expired' state, not 'Authenticated'", async () => {
+  const real = globalThis.fetch;
+  // An aek_ API key never triggers refresh (see the aek_ test above), so the
+  // 401 from /models surfaces to renderAuthBox's catch untouched.
+  const tokens = new StaticTokenStore("aek_deadtoken1234");
+  stubFetch(() => jsonRes(401, { detail: "token revoked" }), []);
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const panel = stripAnsi(await renderAuthBox(fakeCtx(api, tokens)));
+    assert.match(panel, /Session expired/);
+    assert.doesNotMatch(panel, /Authenticated/, "must not claim Authenticated for a rejected token");
+    assert.match(panel, /aether auth login/);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("renderAuthBox: a 403 from /models also renders 'Session expired' (not silently 'Authenticated')", async () => {
+  const real = globalThis.fetch;
+  const tokens = new StaticTokenStore("aek_deadtoken1234");
+  stubFetch(() => jsonRes(403, { detail: "forbidden" }), []);
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const panel = stripAnsi(await renderAuthBox(fakeCtx(api, tokens)));
+    assert.match(panel, /Session expired/);
+    assert.doesNotMatch(panel, /Authenticated/);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("renderAuthBox: a genuine network outage (no HttpError) still falls back to the silent 'Authenticated' panel", async () => {
+  const real = globalThis.fetch;
+  const tokens = new StaticTokenStore("aek_deadtoken1234");
+  globalThis.fetch = (async () => {
+    throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+  }) as typeof globalThis.fetch;
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const panel = stripAnsi(await renderAuthBox(fakeCtx(api, tokens)));
+    assert.match(panel, /Authenticated/, "an unreachable server is not a rejected session");
+    assert.doesNotMatch(panel, /Session expired/);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("renderAuthBox: a successful /models call renders the normal 'Authenticated' panel with tier/default", async () => {
+  const real = globalThis.fetch;
+  const tokens = new StaticTokenStore("aek_deadtoken1234");
+  stubFetch(() => jsonRes(200, { tier: "pro", default: "aether-large" }), []);
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const panel = stripAnsi(await renderAuthBox(fakeCtx(api, tokens)));
+    assert.match(panel, /Authenticated/);
+    assert.doesNotMatch(panel, /Session expired/);
+    assert.match(panel, /pro/);
+    assert.match(panel, /aether-large/);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
