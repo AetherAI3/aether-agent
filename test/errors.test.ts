@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { HttpError, StreamTimeoutError, errorHint } from "../src/core/errors.js";
+import { HttpError, StreamIncompleteError, StreamTimeoutError, errorHint } from "../src/core/errors.js";
 
 const BASE = "https://api.aethersystems.net";
 
@@ -40,6 +40,16 @@ test("stream timeouts get a retry/doctor hint, matching error_hints.hintFor (LOO
   const h = errorHint(new StreamTimeoutError(120_000), BASE);
   assert.notEqual(h, null);
   assert.match(h ?? "", /stream went quiet/);
+  assert.match(h ?? "", /\/doctor/);
+});
+
+// LOOP-06 round 3: a stream that ends without ever sending a terminal
+// done/error frame must get the same retry/doctor hint as any other
+// unfinished-connectivity failure, matching error_hints.hintFor.
+test("a stream ending without a terminal frame gets a retry/doctor hint", () => {
+  const h = errorHint(new StreamIncompleteError(), BASE);
+  assert.notEqual(h, null);
+  assert.match(h ?? "", /retry/);
   assert.match(h ?? "", /\/doctor/);
 });
 

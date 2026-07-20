@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { runTurn, ChatTurnError, applyRestart, buildPromptContext, repaintString } from "../src/commands/chat.js";
 import { handleSlash } from "../src/commands/slash.js";
 import { ApiClient } from "../src/core/transport.js";
+import { StreamIncompleteError } from "../src/core/errors.js";
 import type { GlobalFlags, AppContext } from "../src/core/context.js";
 import type { TokenStore } from "../src/core/auth.js";
 
@@ -66,6 +67,22 @@ test("runTurn resolves cleanly on a clean stream", async () => {
   ]);
   try {
     await runTurn(ctxWith(), "hi"); // must not throw
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+// LOOP-06 round 3: a stream that ends after only `delta` frames (no `done`,
+// no `error` — e.g. a proxy/load-balancer time-boxing the SSE response and
+// closing the socket within the idle window) must NOT be treated as a
+// successful turn. decodeSse's for-await loop exits normally on a plain
+// end-of-stream, so without an explicit terminal-frame check runTurn used to
+// resolve as if the turn had completed cleanly.
+test("runTurn throws StreamIncompleteError when the stream ends with only delta frames (no done/error)", async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = sseFetch([JSON.stringify({ type: "delta", text: "partial" })]);
+  try {
+    await assert.rejects(() => runTurn(ctxWith(), "hi"), StreamIncompleteError);
   } finally {
     globalThis.fetch = real;
   }

@@ -45,6 +45,22 @@ export class StreamTimeoutError extends Error {
 }
 
 /**
+ * A chat/agent SSE stream ended (the underlying byte stream closed normally,
+ * no throw) without ever delivering a terminal `done` or `error` frame.
+ * Distinct from StreamTimeoutError (which fires on an IDLE gap while the
+ * connection is still open): this is a clean-looking close — e.g. a
+ * proxy/load-balancer that time-boxes the response and drops the socket well
+ * within the idle window — that otherwise produces zero complaint and would
+ * render a partial answer as a fully successful turn (LOOP-06 round 3).
+ */
+export class StreamIncompleteError extends Error {
+  constructor() {
+    super("the connection ended before the server finished responding");
+    this.name = "StreamIncompleteError";
+  }
+}
+
+/**
  * A non-streaming authed call (getJson/postJson/deleteJson) got no response
  * within its bound. Unlike stream()'s StreamTimeoutError, there's no partial
  * data involved — the whole request is unresolved. Distinct name so it can't
@@ -160,6 +176,13 @@ export function errorHint(err: unknown, baseUrl: string): string | null {
   // the message) and returned null — a bare error with no recovery hint.
   if (err instanceof StreamTimeoutError) {
     return "the stream went quiet - retry, or /doctor to check connectivity";
+  }
+  // Same wording as error_hints.hintFor's StreamIncompleteError branch — a
+  // clean-looking premature close must read identically whether it surfaces
+  // via the REPL's printError (this function) or a one-shot/embedder path
+  // (hintFor).
+  if (err instanceof StreamIncompleteError) {
+    return "retry, or /doctor to check connectivity";
   }
   if (err instanceof HttpError) {
     if (err.status >= 500) return `the server at ${baseUrl} had a problem — try again shortly`;

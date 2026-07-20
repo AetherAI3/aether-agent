@@ -16,7 +16,7 @@ import type { ApiClient } from "./transport.js";
 import { CHAT_STREAM_PATH, CHAT_PATH, defaultStreamTimeoutMs } from "./transport.js";
 import { buildChatRequest } from "./envelope.js";
 import { decodeSse, type StreamFrame } from "./stream.js";
-import { StreamUnavailableError } from "./errors.js";
+import { StreamIncompleteError, StreamUnavailableError } from "./errors.js";
 import { appendCustody } from "./custody.js";
 import { hintFor } from "./error_hints.js";
 
@@ -41,14 +41,18 @@ export class CloudBrain implements Brain {
     try {
       const stream = await this.api.stream(CHAT_STREAM_PATH, req);
       // The terminal done must be ground truth, never fabricated success
-      // (CONTRACTS.md invariant 5): a streamed error or a user abort ends the
-      // run ok:false. Custody receipts persist here too — the server stores
+      // (CONTRACTS.md invariant 5): a streamed error, a user abort, or the
+      // stream ending without ever sending a terminal done/error frame (a
+      // clean-looking premature close — LOOP-06 round 3) all end the run
+      // ok:false. Custody receipts persist here too — the server stores
       // nothing; the client-held log is the only copy.
       let failed: string | null = null;
+      let sawDone = false;
       for await (const frame of decodeSse(stream)) {
         if (this.aborted) break;
         if (frame.type === "custody") appendCustody(frame.custody);
         if (frame.type === "error") failed = frame.msg;
+        if (frame.type === "done") sawDone = true;
         const ev = mapFrame(frame);
         if (ev) queue.push(ev);
       }
@@ -56,6 +60,8 @@ export class CloudBrain implements Brain {
         queue.push({ type: "done", ok: false, result: failed, remaining: 0, reason: "" });
       } else if (this.aborted) {
         queue.push({ type: "done", ok: false, result: "aborted", remaining: 0, reason: "" });
+      } else if (!sawDone) {
+        queue.push({ type: "done", ok: false, result: withHint(new StreamIncompleteError()), remaining: 0, reason: "" });
       } else {
         queue.push({ type: "done", ok: true, result: "", remaining: 0, reason: "" });
       }

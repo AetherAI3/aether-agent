@@ -7,6 +7,7 @@ import {
   InsecureTransportError,
   MalformedResponseError,
   RequestTimeoutError,
+  StreamIncompleteError,
   StreamTimeoutError,
   httpStatusHint,
   isAbortError as coreIsAbortError,
@@ -37,6 +38,12 @@ export function hintFor(err: unknown): string | null {
   }
   if (err instanceof StreamTimeoutError) {
     return "the stream went quiet - retry, or /doctor to check connectivity";
+  }
+  // Same wording as errors.errorHint's StreamIncompleteError branch — see
+  // that module's note on why 401/402/403/429 are the only wording actually
+  // shared; this one has no baseUrl-dependent text so it's identical here too.
+  if (err instanceof StreamIncompleteError) {
+    return "retry, or /doctor to check connectivity";
   }
   if (err instanceof RequestTimeoutError) {
     return "the request went quiet - retry, or /doctor to check connectivity";

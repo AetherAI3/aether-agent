@@ -10,7 +10,7 @@ import { buildChatRequest } from "../core/envelope.js";
 import { CHAT_STREAM_PATH, CHAT_PATH, defaultStreamTimeoutMs } from "../core/transport.js";
 import { decodeSse } from "../core/stream.js";
 import { Renderer } from "../core/render.js";
-import { StreamUnavailableError, errorHint, isAbortError } from "../core/errors.js";
+import { StreamIncompleteError, StreamUnavailableError, errorHint, isAbortError } from "../core/errors.js";
 import { formatErrorLine } from "../ui/error_line.js";
 import { appendCustody } from "../core/custody.js";
 import { handleSlash, primeCatalog } from "./slash.js";
@@ -89,7 +89,10 @@ export async function resolveBackend(ctx: AppContext): Promise<BackendPath> {
  * `signal` cancels the turn client-side (stream AND the fail-soft fallback) —
  * orchestrator runs inherit cancelability through this same seam. Throws
  * ChatTurnError if the server streamed an `error` frame, so callers can exit
- * non-zero instead of treating a rendered "✗ msg" as a successful turn.
+ * non-zero instead of treating a rendered "✗ msg" as a successful turn. Also
+ * throws StreamIncompleteError if the stream ends without ever sending a
+ * terminal `done` or `error` frame (LOOP-06 round 3) — a clean-looking
+ * premature close must not render as a successful turn either.
  * `onPulsePaint` fires after every thinking-pulse repaint (see
  * ThinkingPulseOptions.onPaint) so the REPL can re-sync its own input-line
  * redraw — typing ahead during the pre-first-token window would otherwise
@@ -144,6 +147,13 @@ async function runCloudTurn(
   });
   pulse.start();
   let sawError: string | null = null;
+  // Whether a terminal `done` or `error` frame was actually observed. decodeSse's
+  // for-await loop exits normally (no throw) once the underlying byte stream
+  // ends — including a premature-but-clean close (proxy/load-balancer time-box,
+  // etc.) that never sent either. Without this, such a close renders whatever
+  // partial output arrived and returns as if the turn completed successfully
+  // (LOOP-06 round 3).
+  let sawTerminal = false;
   try {
     const stream = await ctx.api.stream(CHAT_STREAM_PATH, req, signal);
     for await (const frame of decodeSse(stream)) {
@@ -155,10 +165,12 @@ async function runCloudTurn(
       // locally (best-effort, never breaks the chat).
       if (frame.type === "custody") appendCustody(frame.custody);
       if (frame.type === "error") sawError = frame.msg;
+      if (frame.type === "error" || frame.type === "done") sawTerminal = true;
       onFrame?.(frame);
       renderer.frame(frame);
     }
     if (sawError) throw new ChatTurnError(sawError);
+    if (!sawTerminal) throw new StreamIncompleteError();
   } catch (err) {
     if (err instanceof StreamUnavailableError) {
       // Contract fail-soft: fall back to the non-streaming request/response.
