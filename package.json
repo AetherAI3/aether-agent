@@ -68,7 +68,7 @@
     "url": "https://github.com/DBarr3/aether-agent/issues"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.1.1",
     "typescript": "^7.0.2"
   }
 }
