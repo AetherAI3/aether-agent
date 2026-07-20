@@ -7,6 +7,7 @@ import {
   validateManifest,
   validatePack,
   validateWorkflowText,
+  verifyProduction,
   type PackReport,
 } from "../scripts/verify-production.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
@@ -67,6 +68,8 @@ test("workflow policy rejects floating actions and unbounded jobs", () => {
   const errors = validateWorkflowText("invalid.yml", invalid).join("\n");
   assert.match(errors, /not pinned/);
   assert.match(errors, /timeout-minutes/);
+  const blockScalar = valid.replace("      - run: npm ci --ignore-scripts", "      - run: |\n          npm ci");
+  assert.match(validateWorkflowText("block.yml", blockScalar).join("\n"), /ignore-scripts/);
 });
 
 test("publishing workflow must be event-gated, main-derived, and install-smoked", () => {
@@ -80,6 +83,8 @@ test("publishing workflow must be event-gated, main-derived, and install-smoked"
 test("installer policy rejects pipe-to-shell and lifecycle-enabled global installs", () => {
   assert.deepEqual(validateInstallerText("safe.sh", "npm install -g aether-agents@latest --ignore-scripts"), []);
   assert.match(validateInstallerText("bad.sh", "curl https://example.test/install.sh | sh\nnpm install -g aether-agents").join("\n"), /pipe-to-shell/);
+  assert.match(validateInstallerText("quoted.sh", "npm install -g \"aether-agents@latest\"").join("\n"), /lifecycle scripts/);
+  assert.match(validateInstallerText("readme.md", "npx aether-agents").join("\n"), /lifecycle scripts/);
 });
 
 test("checked-in workflows and installers satisfy the production policy", () => {
@@ -97,4 +102,13 @@ test("operator-facing API defaults match the production transport path", () => {
   assert.equal(DEFAULT_CONFIG.baseUrl, "https://api.aethersystems.net/cloud");
   assert.match(readFileSync(".env.example", "utf8"), /AETHER_BASE_URL=https:\/\/api\.aethersystems\.net\/cloud/);
   assert.match(readFileSync("COMMANDS.md", "utf8"), /`https:\/\/api\.aethersystems\.net\/cloud`/);
+});
+
+test("production verifier installs and launches the exact packed CLI", { timeout: 60_000 }, () => {
+  const result = verifyProduction(process.cwd(), "v0.1.0");
+  assert.equal(result.package, "aether-agents");
+  assert.equal(result.version, "0.1.0");
+  assert.equal(result.workflows, 3);
+  assert.ok(result.packedFiles > 0);
+  assert.ok(result.packedBytes > 0);
 });

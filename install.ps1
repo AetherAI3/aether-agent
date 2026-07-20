@@ -118,7 +118,7 @@ $alreadyInstalled = $false
 $aetherPath = Get-Command aether -ErrorAction SilentlyContinue
 if ($aetherPath) {
   $alreadyInstalled = $true
-  Write-Info "aether-agent already installed — will update to latest."
+  Write-Info "aether-agent already installed — will install $Version."
 }
 
 # ── Install ──

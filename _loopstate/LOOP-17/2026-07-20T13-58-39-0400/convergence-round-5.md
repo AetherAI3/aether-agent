@@ -1,0 +1,9 @@
+# Convergence round 5
+
+- verdict: CONTINUE
+- novel finding this round: no
+- consecutive no-new-finding streak: 2
+- cumulative findings: 3
+- cumulative resolved: 3
+- symptom-fix ratio: 0.00
+- breaker branch edits: 0

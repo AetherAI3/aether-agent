@@ -126,8 +126,10 @@ export function validateWorkflowText(name: string, text: string): string[] {
   const timeouts = (text.match(/^\s+timeout-minutes:/gm) ?? []).length;
   if (jobs !== timeouts) errors.push(`${name}: every runner job must set timeout-minutes`);
 
-  for (const match of text.matchAll(/^\s*run:\s*(npm ci[^\n]*)$/gm)) {
-    if (!match[1]!.includes("--ignore-scripts")) errors.push(`${name}: npm ci must use --ignore-scripts`);
+  for (const line of text.split(/\r?\n/)) {
+    if (/\bnpm ci(?:\s|$)/.test(line) && !line.trimStart().startsWith("#") && !line.includes("--ignore-scripts")) {
+      errors.push(`${name}: npm ci must use --ignore-scripts`);
+    }
   }
 
   if (/npm publish/.test(text)) {
@@ -153,8 +155,12 @@ export function validateInstallerText(name: string, text: string): string[] {
   if (/curl[^\n|]*\|\s*(?:sh|bash)\b/i.test(text) || /\birm\b[^\n|]*\|\s*iex\b/i.test(text)) {
     errors.push(`${name}: pipe-to-shell installation is forbidden`);
   }
-  if (/npm\s+install\s+-g\s+aether-agents/.test(text) && !/--ignore-scripts/.test(text)) {
-    errors.push(`${name}: global npm installation must disable lifecycle scripts`);
+  for (const line of text.split(/\r?\n/)) {
+    const globalInstall = /\bnpm\s+(?:install|i)\s+(?:--global|-g)\s+["']?aether-agents/.test(line);
+    const oneShot = /\bnpx\b[^\n]*\baether-agents/.test(line);
+    if ((globalInstall || oneShot) && !line.includes("--ignore-scripts")) {
+      errors.push(`${name}: npm execution must disable lifecycle scripts`);
+    }
   }
   if (/PIPESTATUS/.test(text)) errors.push(`${name}: bash-only PIPESTATUS is forbidden in the POSIX installer`);
   return errors;

@@ -99,7 +99,7 @@ ALREADY=""
 if command -v aether >/dev/null 2>&1; then
   AETH_V=$(aether --version 2>/dev/null || echo "unknown")
   ALREADY="yes"
-  info "aether-agent ${AETH_V} already installed — will update to latest."
+  info "aether-agent ${AETH_V} already installed — will install ${AETHER_VERSION}."
 fi
 
 # ── Install ──

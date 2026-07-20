@@ -1,0 +1,15 @@
+{
+  "node": 6,
+  "status": "complete",
+  "baseline_ref": null,
+  "delta": "initial",
+  "trend_row_appended": true,
+  "formula_changed": false,
+  "high_delta_findings": 0,
+  "confidence": {
+    "score": 0.96,
+    "evidence": ["first trend row", "scorecard formulas", "origin/main comparison"],
+    "unknown": [],
+    "missing_evidence": ["prior run"]
+  }
+}

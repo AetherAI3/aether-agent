@@ -1,0 +1,13 @@
+{
+  "node": 1,
+  "status": "complete",
+  "baseline": "descriptive-first-run",
+  "artifact": "target-architecture.json",
+  "graph": {"nodes": 128, "edges": 424, "max_dependency_depth": 10},
+  "confidence": {
+    "score": 0.89,
+    "evidence": ["architecture docs", "package entrypoints", "structured TypeScript import graph"],
+    "unknown": ["complete normative layer policy", "production traffic graph"],
+    "missing_evidence": ["prior LOOP-13 baseline"]
+  }
+}

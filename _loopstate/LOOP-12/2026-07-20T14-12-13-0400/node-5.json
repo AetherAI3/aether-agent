@@ -1,0 +1,18 @@
+{
+  "node": 5,
+  "tool": "agentic targeted source mutation",
+  "catalog_size": 10,
+  "catalog_executed": 10,
+  "killed": 10,
+  "survived": 0,
+  "equivalent": 0,
+  "mutation_score": 100.0,
+  "sampling": "100% of the declared ten high-risk production guard catalog; not an exhaustive every-operator mutation of the file",
+  "confidence_block": {
+    "confidence": 0.96,
+    "risk": "low",
+    "evidence": ["ten apply-run-revert mutation trials", "targeted failing tests"],
+    "unknown": ["unselected low-risk syntax mutations"],
+    "missing_evidence": ["future full AST mutation runner"]
+  }
+}

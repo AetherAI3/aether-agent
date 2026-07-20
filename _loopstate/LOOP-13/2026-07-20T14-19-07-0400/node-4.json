@@ -1,0 +1,20 @@
+{
+  "node": 4,
+  "status": "complete-with-unmeasured-metrics",
+  "files": 129,
+  "functions": 1306,
+  "functions_cyclomatic_over_10": 88,
+  "functions_cyclomatic_over_10_pct": 6.74,
+  "files_over_800_lines": 1,
+  "top_decile_degree_watchlist": 13,
+  "max_dependency_depth": 10,
+  "inheritance_depth": 1,
+  "cognitive_complexity": "unmeasured",
+  "call_graph_size": "unmeasured",
+  "confidence": {
+    "score": 0.90,
+    "evidence": ["TypeScript AST analysis", "static import graph", "line counts"],
+    "unknown": ["cognitive complexity", "complete runtime call graph"],
+    "missing_evidence": ["compatible cognitive-complexity analyzer", "code-graph call data"]
+  }
+}
