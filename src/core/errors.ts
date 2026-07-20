@@ -45,6 +45,19 @@ export class StreamTimeoutError extends Error {
 }
 
 /**
+ * A non-streaming authed call (getJson/postJson/deleteJson) got no response
+ * within its bound. Unlike stream()'s StreamTimeoutError, there's no partial
+ * data involved — the whole request is unresolved. Distinct name so it can't
+ * be confused with a genuine stream timeout in logs/tests.
+ */
+export class RequestTimeoutError extends Error {
+  constructor(public timeoutMs: number) {
+    super(`request timed out after ${Math.round(timeoutMs / 1000)}s with no response`);
+    this.name = "RequestTimeoutError";
+  }
+}
+
+/**
  * Refused to send the session token because the base URL is not a secure
  * transport (non-https to a non-loopback host). Prevents a cleartext credential
  * leak / token exfiltration to an arbitrary host.
@@ -68,6 +81,22 @@ export class HttpError extends Error {
   ) {
     super(message);
     this.name = "HttpError";
+  }
+}
+
+/**
+ * The server returned a 2xx status but the body wasn't parseable JSON — it
+ * said "ok" without giving usable data. Extends HttpError (not a bare Error)
+ * so existing `instanceof HttpError` classification still applies, but keeps
+ * its own name/message so callers that used to get a silent `undefined` (and
+ * then crashed on their own property access, e.g. `cat.models` in slash.ts's
+ * getCatalog or `r.session_token` in auth.ts's authRefresh) instead get one
+ * coherent, hintable error.
+ */
+export class MalformedResponseError extends HttpError {
+  constructor(status: number) {
+    super(status, "malformed response from server");
+    this.name = "MalformedResponseError";
   }
 }
 
@@ -117,6 +146,12 @@ export function httpStatusHint(status: number): string | null {
  * network or a TTY. Consumed under the ✗ line as a dim hint.
  */
 export function errorHint(err: unknown, baseUrl: string): string | null {
+  // Checked before the generic HttpError branch below (MalformedResponseError
+  // extends it): a malformed 2xx body isn't one of the auth/plan statuses
+  // httpStatusHint knows about, so the generic branch would otherwise return
+  // null and print the message with no actionable next step at all.
+  if (err instanceof MalformedResponseError) return "retry, or /doctor to check connectivity";
+  if (err instanceof RequestTimeoutError) return "retry, or /doctor to check connectivity";
   if (err instanceof HttpError) {
     if (err.status >= 500) return `the server at ${baseUrl} had a problem — try again shortly`;
     return httpStatusHint(err.status);

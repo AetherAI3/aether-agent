@@ -62,13 +62,27 @@ test("the abort signal reaches fetch on the streaming leg", async () => {
 test("the abort signal reaches fetch on the fallback leg too", async () => {
   const capture: { signal?: AbortSignal | null } = {};
   const real = globalThis.fetch;
-  globalThis.fetch = stubFetch(capture);
+  // Hangs (rather than resolving immediately) so there's a genuine in-flight
+  // window to abort during — request()'s internal `net` controller is only
+  // wired to the caller's abort event while the call is still pending; once
+  // it settles, that listener is already detached (see request()'s finally).
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    capture.signal = init?.signal;
+    return new Promise<Response>(() => {});
+  }) as typeof globalThis.fetch;
   try {
     const api = new ApiClient("https://example.test", tokens);
     const ac = new AbortController();
-    const r = await api.postJson<{ response: string }>(CHAT_PATH, {}, ac.signal);
-    assert.equal(r.response, "ok");
-    assert.equal(capture.signal, ac.signal);
+    const pending = api.postJson<{ response: string }>(CHAT_PATH, {}, ac.signal);
+    ac.abort();
+    await assert.rejects(pending, (err: unknown) => isAbortError(err));
+    // request() (LOOP-01/LOOP-06 round-1: bounded-by-default timeout) now
+    // wires the caller's signal to its OWN internal `net` AbortController,
+    // same reasoning as the streaming leg above — so we assert the
+    // behavioral guarantee (aborting the caller's controller aborts whatever
+    // signal fetch got), not reference identity.
+    assert.ok(capture.signal, "fetch should have received a signal");
+    assert.equal(capture.signal?.aborted, true);
   } finally {
     globalThis.fetch = real;
   }

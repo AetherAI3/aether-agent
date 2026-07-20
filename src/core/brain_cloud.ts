@@ -13,7 +13,7 @@ import type { Brain, TaskCommand } from "./brain.js";
 import { EventQueue } from "./brain.js";
 import type { BrainEvent } from "./brain_protocol.js";
 import type { ApiClient } from "./transport.js";
-import { CHAT_STREAM_PATH, CHAT_PATH } from "./transport.js";
+import { CHAT_STREAM_PATH, CHAT_PATH, defaultStreamTimeoutMs } from "./transport.js";
 import { buildChatRequest } from "./envelope.js";
 import { decodeSse, type StreamFrame } from "./stream.js";
 import { StreamUnavailableError } from "./errors.js";
@@ -61,9 +61,12 @@ export class CloudBrain implements Brain {
       }
     } catch (err) {
       if (err instanceof StreamUnavailableError) {
-        // Fail-soft: non-streaming fallback (contract `{"stream": false}`).
+        // Fail-soft: non-streaming fallback (contract `{"stream": false}`). A
+        // full LLM turn can legitimately run long, so this opts into
+        // stream()'s own generous bound rather than request()'s 30s
+        // metadata-call default (LOOP-01/LOOP-06 round-1).
         try {
-          const r = await this.api.postJson<{ response?: string }>(CHAT_PATH, req);
+          const r = await this.api.postJson<{ response?: string }>(CHAT_PATH, req, undefined, defaultStreamTimeoutMs());
           queue.push({ type: "monologue", text: r.response ?? "", depth: 0 });
           queue.push({ type: "done", ok: true, result: r.response ?? "", remaining: 0, reason: "" });
         } catch (e2) {

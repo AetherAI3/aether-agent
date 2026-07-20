@@ -5,6 +5,7 @@ import { ApiClient } from "./transport.js";
 import {
   PROJECT_FROM_WORKFLOW_ASSESS_PATH, PROJECT_FROM_WORKFLOW_BRAINSTORM_PATH,
   PROJECT_FROM_WORKFLOW_PLAN_PATH, PROJECT_FROM_WORKFLOW_FINALIZE_PATH,
+  defaultStreamTimeoutMs,
 } from "./transport.js";
 import { listSpaces, getSpacesContent, deleteSpacesFile, uploadFile, downloadFile } from "./vault.js";
 
@@ -277,9 +278,15 @@ export function createFenceParser(): FenceParser {
 }
 
 // ── Project Conversion API Wrappers ──────────────
+// These block server-side on completed LLM generation (an assessment,
+// brainstorm round, plan, or finalized project — not a job handle), the same
+// class of long-running call as chat's non-streaming fallback. Each opts
+// into stream()'s own generous bound instead of request()'s 30s
+// metadata-call default (LOOP-01/LOOP-06 round-1) so a healthy but slow
+// generation isn't killed early.
 
 export async function assessWorkflow(api: ApiClient, workflow: Workflow): Promise<WorkflowAssessResponse> {
-  return api.postJson(PROJECT_FROM_WORKFLOW_ASSESS_PATH, { workflow });
+  return api.postJson(PROJECT_FROM_WORKFLOW_ASSESS_PATH, { workflow }, undefined, defaultStreamTimeoutMs());
 }
 
 export async function brainstormWorkflow(
@@ -289,7 +296,7 @@ export async function brainstormWorkflow(
 ): Promise<WorkflowBrainstormResponse> {
   return api.postJson(PROJECT_FROM_WORKFLOW_BRAINSTORM_PATH, {
     workflow, qa_history: qaHistory, next_index: nextIndex,
-  });
+  }, undefined, defaultStreamTimeoutMs());
 }
 
 export async function planWorkflow(
@@ -297,7 +304,7 @@ export async function planWorkflow(
 ): Promise<WorkflowPlanResponse> {
   return api.postJson(PROJECT_FROM_WORKFLOW_PLAN_PATH, {
     workflow, brainstorm_summary: brainstormSummary, mode,
-  });
+  }, undefined, defaultStreamTimeoutMs());
 }
 
 export async function finalizeWorkflow(
@@ -305,7 +312,7 @@ export async function finalizeWorkflow(
 ): Promise<WorkflowFinalizeResponse> {
   return api.postJson(PROJECT_FROM_WORKFLOW_FINALIZE_PATH, {
     workflow, plan_md: planMd, edited_by_user: false,
-  });
+  }, undefined, defaultStreamTimeoutMs());
 }
 
 // ── Vault-Based Workflow CRUD ────────────────────

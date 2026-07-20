@@ -7,7 +7,7 @@ import { StringDecoder } from "node:string_decoder";
 import type { AppContext, GlobalFlags } from "../core/context.js";
 import { theme, errTheme } from "../ui/theme.js";
 import { buildChatRequest } from "../core/envelope.js";
-import { CHAT_STREAM_PATH, CHAT_PATH } from "../core/transport.js";
+import { CHAT_STREAM_PATH, CHAT_PATH, defaultStreamTimeoutMs } from "../core/transport.js";
 import { decodeSse } from "../core/stream.js";
 import { Renderer } from "../core/render.js";
 import { StreamUnavailableError, errorHint, isAbortError } from "../core/errors.js";
@@ -161,8 +161,12 @@ async function runCloudTurn(
   } catch (err) {
     if (err instanceof StreamUnavailableError) {
       // Contract fail-soft: fall back to the non-streaming request/response.
-      // Same signal — the fallback leg is cancelable too (arena AT-3d).
-      const r = await ctx.api.postJson<ChatJsonResponse>(CHAT_PATH, req, signal);
+      // Same signal — the fallback leg is cancelable too (arena AT-3d). A
+      // full LLM turn can legitimately run long, so this explicitly opts
+      // into stream()'s own generous bound instead of request()'s 30s
+      // metadata-call default (LOOP-01/LOOP-06 round-1) — otherwise a
+      // perfectly healthy but slow completion would be killed early.
+      const r = await ctx.api.postJson<ChatJsonResponse>(CHAT_PATH, req, signal, defaultStreamTimeoutMs());
       pulse.stop();
       process.stdout.write((r.response ?? "") + "\n");
       if (ctx.flags.audit && r.commitment_hash) {

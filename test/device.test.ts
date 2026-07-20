@@ -4,6 +4,18 @@ import { classifyPoll, pollForToken, type DeviceCode } from "../src/core/device.
 import { ApiClient } from "../src/core/transport.js";
 import { StaticTokenStore } from "../src/core/auth.js";
 
+const REQUEST_TIMEOUT_ENV_KEY = "AETHER_REQUEST_TIMEOUT_MS";
+
+function setRequestTimeoutMs(value: string | undefined): () => void {
+  const original = process.env[REQUEST_TIMEOUT_ENV_KEY];
+  if (value === undefined) delete process.env[REQUEST_TIMEOUT_ENV_KEY];
+  else process.env[REQUEST_TIMEOUT_ENV_KEY] = value;
+  return () => {
+    if (original === undefined) delete process.env[REQUEST_TIMEOUT_ENV_KEY];
+    else process.env[REQUEST_TIMEOUT_ENV_KEY] = original;
+  };
+}
+
 test("classifyPoll maps server responses to poll actions", () => {
   assert.equal(classifyPoll({ error: "authorization_pending" }), "wait");
   assert.equal(classifyPoll({ error: "slow_down" }), "slow_down");
@@ -147,6 +159,38 @@ test("pollForToken: real authorization_pending (HttpError with body) times out w
   } finally {
     fetchStub.restore();
     clock.restore();
+    stderr.restore();
+  }
+});
+
+// ── LOOP-01 round-1 regression: a single STALLED (never-settling) poll ──
+// request must not sit past its own deadline. Before ApiClient.request() had
+// a default timeout, `while (Date.now() < deadline)`'s re-check could never
+// re-execute until a hung fetch settled — which, for a silently-dropped
+// connection, was never. Now request() itself gives up after
+// AETHER_REQUEST_TIMEOUT_MS and pollForToken treats that like any other
+// network failure and moves on to its next attempt.
+test("pollForToken: a single stalled (hanging) poll request times out instead of blocking the loop forever", async () => {
+  const restoreEnv = setRequestTimeoutMs("5");
+  const real = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls++;
+    if (calls === 1) return new Promise<Response>(() => {}); // the exact "stalled" scenario
+    return jsonRes(200, { access_token: "aek_after_stall" });
+  }) as typeof globalThis.fetch;
+  const stderr = captureStderr();
+  try {
+    const api = new ApiClient("https://api.example", new StaticTokenStore("aek_key"));
+    // Real deadline (60s out) + a no-op injected sleep: only the ApiClient
+    // request-level timeout (real setTimeout, 5ms) governs how long this
+    // test actually takes, decoupled from the fake-clock polling interval.
+    const token = await pollForToken(api, { ...CODE, expires_in: 60 }, async () => {});
+    assert.equal(token, "aek_after_stall");
+    assert.equal(calls, 2, "the stalled first attempt timed out and the loop moved on to a second attempt");
+  } finally {
+    globalThis.fetch = real;
+    restoreEnv();
     stderr.restore();
   }
 });

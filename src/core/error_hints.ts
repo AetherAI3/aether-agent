@@ -2,11 +2,21 @@
 // The REPL's printError appends this as a dim second line, so "✗ HTTP 401"
 // becomes recoverable instead of a dead end.
 
-import { HttpError, InsecureTransportError, StreamTimeoutError, httpStatusHint } from "./errors.js";
+import {
+  HttpError,
+  InsecureTransportError,
+  MalformedResponseError,
+  RequestTimeoutError,
+  StreamTimeoutError,
+  httpStatusHint,
+} from "./errors.js";
 
 /** One-line recovery hint for a thrown error, or null when there's nothing
  *  actionable to add. */
 export function hintFor(err: unknown): string | null {
+  // Checked before the generic HttpError branch (MalformedResponseError
+  // extends it) — same reasoning as errors.errorHint.
+  if (err instanceof MalformedResponseError) return "retry, or /doctor to check connectivity";
   if (err instanceof HttpError) {
     if (err.status >= 500) return "server hiccup — retry, or /doctor to check connectivity";
     // Shared wording with errors.errorHint so the streamed-turn path and the
@@ -15,6 +25,9 @@ export function hintFor(err: unknown): string | null {
   }
   if (err instanceof StreamTimeoutError) {
     return "the stream went quiet - retry, or /doctor to check connectivity";
+  }
+  if (err instanceof RequestTimeoutError) {
+    return "the request went quiet - retry, or /doctor to check connectivity";
   }
   if (err instanceof InsecureTransportError) return "set AETHER_BASE_URL to an https endpoint";
   if (err instanceof Error) {

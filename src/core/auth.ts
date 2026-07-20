@@ -21,7 +21,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { configDir } from "./config.js";
-import { LOGIN_PATH, isCredentialSafeUrl } from "./transport.js";
+import { LOGIN_PATH, defaultRequestTimeoutMs, isCredentialSafeUrl } from "./transport.js";
 
 export interface TokenStore {
   get(): Promise<string | null>;
@@ -179,6 +179,14 @@ export async function loginWithPassword(
   creds: { username: string; password: string; licenseKey?: string },
 ): Promise<LoginResult> {
   if (!isCredentialSafeUrl(baseUrl)) throw new Error("login refused: insecure transport");
+  // Bounded on its own: this runs before any token exists, so it can't go
+  // through ApiClient.request()'s default timeout — without one, a stalled
+  // /auth/login response would hang the headless `--username/--password` flow
+  // (login.ts's CI/scripts path) forever with no other cancellation mechanism.
+  // Shares AETHER_REQUEST_TIMEOUT_MS with ApiClient so one env var controls
+  // both; 0 (explicitly disabled) is honored rather than passing a
+  // zero-length AbortSignal.timeout(), which would abort immediately.
+  const timeoutMs = defaultRequestTimeoutMs();
   const res = await fetch(baseUrl.replace(/\/$/, "") + LOGIN_PATH, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -187,6 +195,7 @@ export async function loginWithPassword(
       password: creds.password,
       license_key: creds.licenseKey ?? null,
     }),
+    ...(timeoutMs > 0 ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
   });
   let body: LoginResponseBody;
   try {

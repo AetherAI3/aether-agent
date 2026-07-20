@@ -8,7 +8,7 @@
 // AETHER_BASE_URL, so the desktop routes its chat through this without owning
 // any transport logic.
 
-import { ApiClient, CHAT_STREAM_PATH, CHAT_PATH, MODELS_PATH } from "./transport.js";
+import { ApiClient, CHAT_STREAM_PATH, CHAT_PATH, MODELS_PATH, defaultStreamTimeoutMs } from "./transport.js";
 import { decodeSse, type StreamFrame } from "./stream.js";
 import { buildChatRequest } from "./envelope.js";
 import { StreamUnavailableError } from "./errors.js";
@@ -76,7 +76,10 @@ export class AetherClient {
       for await (const frame of decodeSse(stream)) yield frame;
     } catch (err) {
       if (err instanceof StreamUnavailableError) {
-        const r = await this.api.postJson<{ response?: string }>(CHAT_PATH, req);
+        // A full LLM turn can legitimately run long, so this opts into
+        // stream()'s own generous bound rather than request()'s 30s
+        // metadata-call default (LOOP-01/LOOP-06 round-1).
+        const r = await this.api.postJson<{ response?: string }>(CHAT_PATH, req, undefined, defaultStreamTimeoutMs());
         yield { type: "delta", text: r.response ?? "" };
         yield { type: "done", uvt: 0, cents: 0 };
         return;
