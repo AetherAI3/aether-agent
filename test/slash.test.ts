@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolveSelection, handleSlash, primeCatalog } from "../src/commands/slash.js";
+import { resolveSelection, handleSlash, primeCatalog, confirmSwitch } from "../src/commands/slash.js";
 import type { CatalogItem } from "../src/types.js";
 import type { AppContext } from "../src/core/context.js";
 
@@ -111,4 +111,41 @@ test("/gather rejects when no orchestrator active", async () => {
   const res = await handleSlash(fakeCtx(true), "/gather all", { write: (s: string) => out.push(s) } as never);
   assert.equal(res.exit, false);
   assert.match(out.join(""), /requires an active orchestrator/i);
+});
+
+// ── confirmSwitch: a locked (tier-gated) item (LOOP-06) ──
+//
+// Tested directly against confirmSwitch (rather than through handleSlash)
+// because the module-level catalog cache in slash.ts is populated once per
+// process by the /model tests above and never refetched for a plain id — a
+// second, differently-available "opus" wouldn't reach the handler at all.
+// confirmSwitch is the exact function this fix touches, so this exercises it
+// without fighting that cache.
+
+test("confirmSwitch: a locked item never signals a restart", async () => {
+  const out: string[] = [];
+  const ctx = { flags: { yes: false }, confirm: async () => true } as unknown as AppContext;
+  const locked = item("gpt5-pro");
+  locked.available = false;
+  const res = await confirmSwitch(ctx, { write: (s: string) => out.push(s) } as never, locked, "model", "free");
+  assert.equal(res, null, "a locked item must not produce a restart signal");
+});
+
+test("confirmSwitch: locked-item message matches the 403 tier-restriction wording", async () => {
+  const out: string[] = [];
+  const ctx = { flags: { yes: false }, confirm: async () => true } as unknown as AppContext;
+  const locked = item("gpt5-pro");
+  locked.available = false;
+  await confirmSwitch(ctx, { write: (s: string) => out.push(s) } as never, locked, "model", "free");
+  const printed = out.join("");
+  assert.match(printed, /gpt5-pro is locked on tier free/);
+  // Same actionable pointer as httpStatusHint(403) in errors.ts, so a
+  // tier-lock reached via the picker reads the same as one reached over
+  // the wire, not as a dead end with no next step.
+  assert.match(printed, /check: \/tier or `aether models`/);
+  // theme is disabled (non-TTY) in this test harness, so theme.dim() is a
+  // no-op passthrough here and the plain wording above is the reachable
+  // proxy for "goes through the same theme.dim(...) call the restart
+  // warning two lines down already uses" — see the ANSI-wrapping assertions
+  // in test/theme_factory.test.ts for that half of the behavior.
 });
