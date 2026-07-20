@@ -8,6 +8,7 @@ import type { AppContext } from "../core/context.js";
 import type { CatalogResponse } from "../types.js";
 import { MODELS_PATH } from "../core/transport.js";
 import { fail as coreFail } from "../core/errors.js";
+import { hintFor } from "../core/error_hints.js";
 import {
   filterMediaModels, resolveModelKey, autoRouteModel,
   buildMediaPrompt, dispatchGeneration, downloadMediaFile,
@@ -206,7 +207,13 @@ async function mediaGenerate(ctx: AppContext, prompt: string, kind: MediaKind, f
         process.stdout.write(theme.dim(`  ${text.slice(0, 200)}\n`));
       }
     } catch (err) {
-      process.stdout.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+      // LOOP-01 round 2: dispatchGeneration()/downloadMediaFile() already
+      // throw a classified HttpError (401/402/403/5xx) — this used to print
+      // only the raw message with no actionable next step at all.
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stdout.write(`✗ ${msg}\n`);
+      const hint = hintFor(err);
+      if (hint) process.stdout.write(theme.dim(`  ⤷ ${hint}\n`));
     }
   }
   process.stdout.write(theme.dim(`\noutput: ${outdir}/\nview: aether output\n`));
@@ -230,6 +237,7 @@ function printMediaHelp(kind: MediaKind): void {
   ].join("\n"));
 }
 
+// See vault.ts's identical fix for why hintFor() replaces the hardcoded hint.
 function fail(err: unknown): number {
-  return coreFail(err, "are you logged in? run: aether auth login");
+  return coreFail(err, hintFor(err) ?? undefined);
 }
