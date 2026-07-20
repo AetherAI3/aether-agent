@@ -72,6 +72,86 @@ test("uploadFile: 401 with a session token triggers one /auth/refresh then a ret
     }
   }));
 
+// LOOP-01 round 2: uploadFile() used to fs.readFileSync() the ENTIRE local
+// file into a Buffer and then copy it a second time into an in-memory
+// Blob([data]) before any bytes went over the wire — an unbounded-memory gap
+// downloadFile()'s stream-to-disk fix (1d33357) never addressed on the upload
+// side. It now hands FormData an fs.openAsBlob() Blob backed by the open file
+// handle itself, so the file is never buffered whole in JS-land.
+//
+// That's hard to observe directly (dynamic `import("node:fs")` snapshots its
+// named exports, so spying on fs.readFileSync doesn't see calls made through
+// a separately-obtained import binding). Instead this pins the OBSERVABLE
+// consequence of no-longer-buffering: fs.openAsBlob() re-validates the file
+// on disk at read time and throws if it's gone, whereas the old
+// readFileSync()+new Blob([data]) copy would happily still contain the bytes
+// even after the source file vanished. So: delete the source file out from
+// under the (mock) in-flight request and assert the Blob read fails — proof
+// the upload body is still tied to the file, not an already-buffered copy.
+test("uploadFile: the multipart body is a file-backed Blob (fs.openAsBlob), not an already-buffered copy — reading it after the source file is deleted fails", () =>
+  withTempDir(async (dir) => {
+    const real = globalThis.fetch;
+    const calls: Call[] = [];
+    const filePath = join(dir, "ephemeral.txt");
+    const content = "vault-upload-content";
+    writeFileSync(filePath, content);
+
+    let blobReadFailed: unknown;
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      const form = init?.body as FormData;
+      const file = form.get("file") as Blob;
+      // Simulate the source file disappearing while the upload is mid-flight
+      // — a fully-buffered Buffer/Blob copy would be immune to this; a
+      // genuine file-handle-backed Blob is not.
+      rmSync(filePath, { force: true });
+      try {
+        await file.text();
+      } catch (e) {
+        blobReadFailed = e;
+      }
+      return jsonRes(200, { key: "k1", filename: "ephemeral.txt", size: content.length, content_type: "text/plain" });
+    }) as typeof globalThis.fetch;
+
+    try {
+      const api = new ApiClient("https://api.example", new StaticTokenStore("sess_1"));
+      const out = await uploadFile(api, filePath);
+      assert.deepEqual(out, { key: "k1", filename: "ephemeral.txt", size: content.length, content_type: "text/plain" });
+      assert.ok(
+        blobReadFailed,
+        "the Blob handed to FormData must still be tied to the on-disk file (fs.openAsBlob) — if " +
+          "uploadFile ever reverts to readFileSync()+new Blob([data]), this read would keep succeeding " +
+          "even after the source file was deleted, because the whole file would already be buffered in memory",
+      );
+    } finally {
+      globalThis.fetch = real;
+    }
+  }));
+
+// A plain correctness check alongside the above: normal (non-adversarial)
+// uploads still carry the exact file bytes end to end.
+test("uploadFile: uploads the exact file content via the file-backed Blob", () =>
+  withTempDir(async (dir) => {
+    const real = globalThis.fetch;
+    const calls: Call[] = [];
+    const filePath = join(dir, "big.txt");
+    const content = "vault-upload-content-".repeat(500); // several KB, not just a few bytes
+    writeFileSync(filePath, content);
+    stubFetch(() => jsonRes(200, { key: "k1", filename: "big.txt", size: content.length, content_type: "text/plain" }), calls);
+    try {
+      const api = new ApiClient("https://api.example", new StaticTokenStore("sess_1"));
+      const out = await uploadFile(api, filePath);
+      assert.deepEqual(out, { key: "k1", filename: "big.txt", size: content.length, content_type: "text/plain" });
+      const body = calls[0]!.init.body;
+      assert.ok(body instanceof FormData, "upload body must still be multipart FormData");
+      const file = body.get("file");
+      assert.ok(file instanceof Blob, "the file part must still be a Blob-like object");
+      assert.equal(await (file as Blob).text(), content, "the file-backed Blob still carries the exact file content");
+    } finally {
+      globalThis.fetch = real;
+    }
+  }));
+
 // ── downloadFile ──────────────────────────────────────────────────────────
 
 test("downloadFile: 401 triggers refresh + retry, and streams the body to disk", () =>

@@ -111,16 +111,27 @@ export async function getSpacesUsage(api: ApiClient): Promise<VaultSpacesUsage> 
   return api.getJson(VAULT_SPACES_USAGE_PATH);
 }
 
-/** Upload a local file to the vault. Uses multipart form upload. */
+/**
+ * Upload a local file to the vault. Uses multipart form upload.
+ *
+ * The file is handed to FormData as an fs.openAsBlob() Blob — backed by the
+ * open file handle itself — instead of fs.readFileSync() + new Blob([data]).
+ * The old path buffered the ENTIRE file into a Buffer and then copied it a
+ * second time into an in-memory Blob before any bytes went over the wire;
+ * openAsBlob() defers reading to whenever the multipart encoder actually
+ * streams the part out, so a large vault upload no longer holds the whole
+ * file in memory twice (mirrors downloadFile()'s stream-straight-to-disk fix
+ * for the download side, 1d33357).
+ */
 export async function uploadFile(
   api: ApiClient, filePath: string,
 ): Promise<{ key: string; filename: string; size: number; content_type: string }> {
   const fs = await import("node:fs");
   const path = await import("node:path");
-  const data = fs.readFileSync(filePath);
   const filename = path.basename(filePath);
+  const blob = await fs.openAsBlob(filePath);
   const formData = new FormData();
-  formData.append("file", new Blob([data]), filename);
+  formData.append("file", blob, filename);
   return api.postForm(VAULT_SPACES_UPLOAD_PATH, formData);
 }
 
