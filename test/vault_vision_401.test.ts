@@ -145,12 +145,16 @@ test("deleteSpacesFile: a non-retryable 401 (aek_ key) surfaces as HttpError, an
 
 // ── downloadMediaFile ─────────────────────────────────────────────────────
 
-test("downloadMediaFile: 401 triggers refresh + retry, and streams the body to disk", () =>
+test("downloadMediaFile: 401 triggers refresh + retry, and streams the body to disk (media host is the SAME origin as the API)", () =>
   withTempDir(async (dir) => {
     const real = globalThis.fetch;
     const calls: Call[] = [];
     const store = new StaticTokenStore("sess_expired");
-    const mediaUrl = "https://media.example/output/abc.png";
+    // Same origin as the ApiClient's baseUrl ("https://api.example") so the
+    // bearer is attached and the refresh-on-401 retry applies — the
+    // cross-origin case (no bearer attached at all, no refresh) is covered
+    // separately below and in test/transport_getbinary.test.ts.
+    const mediaUrl = "https://api.example/output/abc.png";
     stubFetch((url, init) => {
       if (url.endsWith("/auth/refresh")) return jsonRes(200, { session_token: "sess_fresh" });
       if (url === mediaUrl && bearer(init) === "Bearer sess_fresh") return new Response("PNGDATA");
@@ -162,20 +166,62 @@ test("downloadMediaFile: 401 triggers refresh + retry, and streams the body to d
       assert.equal(savedPath, join(dir, "myimage.png"));
       assert.equal(readFileSync(savedPath, "utf-8"), "PNGDATA");
       const urls = calls.map((c) => c.url.replace("https://api.example", ""));
-      assert.deepEqual(urls, [mediaUrl, "/auth/refresh", mediaUrl]);
+      assert.deepEqual(urls, [mediaUrl.replace("https://api.example", ""), "/auth/refresh", mediaUrl.replace("https://api.example", "")]);
     } finally {
       globalThis.fetch = real;
     }
   }));
 
-test("downloadMediaFile: refuses to attach the bearer over an insecure (non-loopback http) media host", async () => {
+// LOOP-01 round 2 (HIGH): isCredentialSafeUrl() only checked scheme, so a
+// cross-origin (or even a same-scheme-but-different-host) media_url used to
+// get the live session bearer attached anyway. It's now gated on
+// same-origin-as-baseUrl instead, and a cross-origin target is fetched
+// UNAUTHENTICATED rather than failing the whole download closed.
+test("downloadMediaFile: does NOT attach the bearer to a cross-origin https media host, and still succeeds unauthenticated", () =>
+  withTempDir(async (dir) => {
+    const real = globalThis.fetch;
+    const calls: Call[] = [];
+    const mediaUrl = "https://media.example/output/abc.png"; // different host than https://api.example
+    stubFetch((url, init) => {
+      assert.equal(bearer(init), "", "no Authorization header should be sent to a cross-origin host");
+      return url === mediaUrl ? new Response("PNGDATA") : jsonRes(404, {});
+    }, calls);
+    try {
+      const api = new ApiClient("https://api.example", new StaticTokenStore("aek_live_session_token"));
+      const savedPath = await downloadMediaFile(api, mediaUrl, dir, "vision_nano_pro", "image", "myimage.png");
+      assert.equal(readFileSync(savedPath, "utf-8"), "PNGDATA");
+      assert.equal(calls.length, 1, "no refresh attempted — no token was ever sent, so a 401 can't occur here");
+    } finally {
+      globalThis.fetch = real;
+    }
+  }));
+
+test("downloadMediaFile: a cross-origin media host is fetched unauthenticated even over PLAIN http (non-loopback) — no InsecureTransportError, no credential sent", () =>
+  withTempDir(async (dir) => {
+    const real = globalThis.fetch;
+    const calls: Call[] = [];
+    stubFetch((_url, init) => {
+      assert.equal(bearer(init), "", "no Authorization header should ever reach a foreign http host");
+      return new Response("PNGDATA");
+    }, calls);
+    try {
+      const api = new ApiClient("https://api.example", new StaticTokenStore("aek_test"));
+      const savedPath = await downloadMediaFile(api, "http://evil.example.com/media.png", dir, "vision_nano_pro", "image", "m.png");
+      assert.equal(readFileSync(savedPath, "utf-8"), "PNGDATA");
+      assert.equal(calls.length, 1);
+    } finally {
+      globalThis.fetch = real;
+    }
+  }));
+
+test("downloadMediaFile: SAME-origin download still fails closed when the API's own baseUrl itself is an insecure (non-loopback http) transport", async () => {
   const real = globalThis.fetch;
   const calls: Call[] = [];
   stubFetch(() => { throw new Error("must not fetch — should fail closed before any network call"); }, calls);
   try {
-    const api = new ApiClient("https://api.example", new StaticTokenStore("aek_test"));
+    const api = new ApiClient("http://not-localhost.example", new StaticTokenStore("aek_test"));
     await assert.rejects(
-      () => downloadMediaFile(api, "http://evil.example.com/media.png", "/tmp", "vision_nano_pro", "image"),
+      () => downloadMediaFile(api, "http://not-localhost.example/media.png", "/tmp", "vision_nano_pro", "image"),
       /insecure transport/,
     );
     assert.equal(calls.length, 0, "no fetch attempted once the guard fires");

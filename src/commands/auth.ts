@@ -10,13 +10,17 @@ import type { AppContext } from "../core/context.js";
 import { cmdLogin, cmdLogout, type LoginOpts } from "./login.js";
 import { MODELS_PATH, REFRESH_PATH } from "../core/transport.js";
 import { HttpError } from "../core/errors.js";
+import { isApiKeyToken } from "../core/auth.js";
 import { box, titledBox, hyperlink, orange, green, darkBlue, brightWhite, lightBlue } from "../ui/box.js";
 import { CLOUD } from "../ui/logo.js";
 import { theme } from "../ui/theme.js";
 
-/** A long-lived API token (PAT) starts with `aek_`; otherwise it's a session token. */
+/** A long-lived API token (PAT) starts with `aek_`; otherwise it's a session
+ *  token. Thin wrapper so callers of THIS module keep importing `isApiToken`
+ *  from here — the actual `aek_` prefix check is canonical in core/auth.ts's
+ *  isApiKeyToken (shared with transport.ts's refreshSession). */
 export function isApiToken(token: string | null | undefined): boolean {
-  return typeof token === "string" && token.startsWith("aek_");
+  return isApiKeyToken(token);
 }
 
 function mask(t: string): string {

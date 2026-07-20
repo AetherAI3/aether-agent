@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, statSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isApiToken } from "../src/commands/auth.js";
-import { FileTokenStore, StaticTokenStore, loginWithPassword } from "../src/core/auth.js";
+import { FileTokenStore, StaticTokenStore, loginWithPassword, isApiKeyToken } from "../src/core/auth.js";
 
 const REQUEST_TIMEOUT_ENV_KEY = "AETHER_REQUEST_TIMEOUT_MS";
 
@@ -41,6 +41,21 @@ test("isApiToken detects an aek_ API token vs a session token", () => {
   assert.equal(isApiToken(null), false);
   assert.equal(isApiToken(undefined), false);
   assert.equal(isApiToken(""), false);
+});
+
+// LOOP-01 round 2 (LOW): the aek_ prefix check used to be hand-duplicated in
+// commands/auth.ts's isApiToken AND transport.ts's refreshSession. Both now
+// delegate to this one canonical core/auth.ts export — test it directly (not
+// just transitively through isApiToken above) so a regression in the shared
+// definition can't hide behind commands/auth.ts's wrapper alone.
+test("isApiKeyToken (the canonical core/auth.ts definition shared by commands/auth.ts's isApiToken and transport.ts's refreshSession) detects the aek_ prefix", () => {
+  assert.equal(isApiKeyToken("aek_abc123"), true);
+  assert.equal(isApiKeyToken("sess-xyz"), false);
+  assert.equal(isApiKeyToken(null), false);
+  assert.equal(isApiKeyToken(undefined), false);
+  assert.equal(isApiKeyToken(""), false);
+  // isApiToken is a thin wrapper — the two must never drift apart.
+  assert.equal(isApiToken("aek_abc123"), isApiKeyToken("aek_abc123"));
 });
 
 test("FileTokenStore writes the token owner-only (0600) and round-trips", async () => {

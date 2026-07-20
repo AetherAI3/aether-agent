@@ -11,7 +11,7 @@ import {
   StreamTimeoutError,
   StreamUnavailableError,
 } from "./errors.js";
-import type { TokenStore } from "./auth.js";
+import { isApiKeyToken, type TokenStore } from "./auth.js";
 
 /**
  * Is `base` a transport we will attach the session token to? https is allowed to
@@ -30,6 +30,26 @@ export function isCredentialSafeUrl(base: string): boolean {
   if (u.protocol !== "http:") return false;
   const host = u.hostname.replace(/^\[|\]$/g, ""); // strip IPv6 brackets
   return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+/**
+ * Does `target` share `baseUrl`'s origin (scheme+host+port)? getBinary() uses
+ * this — NOT isCredentialSafeUrl() — to decide whether the live session
+ * bearer token should be attached to a caller-supplied absolute URL at all.
+ * isCredentialSafeUrl() only checks scheme (any https host passes); reusing
+ * it here would attach the token to ANY https host, including a third-party
+ * host a server response (or a compromised/malicious one) pointed at, leaking
+ * the token to it. A target that isn't the API's own origin gets no
+ * Authorization header, regardless of its own scheme.
+ */
+export function isSameOrigin(target: string, baseUrl: string): boolean {
+  try {
+    const t = new URL(target);
+    const b = new URL(baseUrl);
+    return t.protocol === b.protocol && t.host === b.host;
+  } catch {
+    return false;
+  }
 }
 
 // Aether API routes.
@@ -124,7 +144,7 @@ export class ApiClient {
    */
   private async refreshSession(failedPath: string, usedToken: string | null): Promise<boolean> {
     if (failedPath.startsWith("/auth/")) return false;
-    if (!usedToken || usedToken.startsWith("aek_")) return false;
+    if (!usedToken || isApiKeyToken(usedToken)) return false;
     // Same fail-closed rule as authHeaders(): never POST a session token over
     // an insecure transport — not even to refresh it.
     if (!isCredentialSafeUrl(this.baseUrl)) return false;
@@ -293,30 +313,69 @@ export class ApiClient {
    * so errorHint()/hintFor() can classify it (the seam vault.ts and vision.ts
    * used to bypass via a private-member cast — see git history). Accepts
    * either a path relative to this.baseUrl OR an absolute http(s) URL, since
-   * media assets can live on a different host than the API itself. When a
-   * bearer token would be attached, that target host must ALSO be a
-   * credential-safe transport — the API's own baseUrl being https doesn't
-   * vouch for some other (possibly cleartext) host the token would otherwise
-   * leak to.
+   * media assets can live on a different host than the API itself.
+   *
+   * The bearer token is attached ONLY when `target` shares baseUrl's origin
+   * (isSameOrigin — scheme+host+port), never merely because it's https: a
+   * media asset on a different host (a presumably presigned or public CDN)
+   * has no business receiving the user's live session token just because
+   * that host also happens to be https. A cross-origin target is fetched
+   * unauthenticated instead of failing closed — refusing the whole download
+   * would be worse than simply not sending credentials it was never entitled
+   * to.
+   *
+   * `timeoutMs` (default AETHER_REQUEST_TIMEOUT_MS, 30s; 0 disables) bounds
+   * the connect/response-headers phase, same as request() — this previously
+   * had NO timeout at all. Once headers arrive, the body is wrapped with the
+   * same idle/quiet-period timeout stream() uses (withIdleTimeout) rather
+   * than a flat overall cap, so a large-but-healthy download can't be killed
+   * mid-flight just for taking a while.
    */
-  async getBinary(pathOrUrl: string, signal?: AbortSignal): Promise<Response> {
+  async getBinary(pathOrUrl: string, signal?: AbortSignal, timeoutMs?: number): Promise<Response> {
     const target = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : this.url(pathOrUrl);
-    let used: string | null = null;
-    const send = async (): Promise<Response> => {
-      used = await this.tokens.get();
-      const headers = await this.authHeaders(used);
-      if ("Authorization" in headers && !isCredentialSafeUrl(target)) {
-        throw new InsecureTransportError(target);
-      }
-      return fetch(target, { headers, ...(signal ? { signal } : {}) });
-    };
-    let res = await send();
-    if (res.status === 401 && (await this.refreshSession(pathOrUrl, used))) {
-      void res.body?.cancel().catch(() => {});
-      res = await send();
+    const attachAuth = isSameOrigin(target, this.baseUrl);
+    const effTimeoutMs = normalizeTimeoutMs(timeoutMs ?? defaultRequestTimeoutMs());
+    const net = new AbortController();
+    const releaseNet = (): void => net.abort();
+    if (signal) {
+      if (signal.aborted) releaseNet();
+      else signal.addEventListener("abort", releaseNet, { once: true });
     }
-    if (!res.ok) throw await toHttpError(res);
-    return res;
+    const cleanup = (): void => signal?.removeEventListener("abort", releaseNet);
+    try {
+      let used: string | null = null;
+      const send = async (): Promise<Response> => {
+        let headers: Record<string, string> = {};
+        if (attachAuth) {
+          used = await this.tokens.get();
+          headers = await this.authHeaders(used);
+        }
+        return raceAgainst(
+          fetch(target, { headers, signal: net.signal }),
+          signal,
+          effTimeoutMs,
+          () => new RequestTimeoutError(effTimeoutMs),
+        );
+      };
+      let res = await send();
+      if (res.status === 401 && (await this.refreshSession(pathOrUrl, used))) {
+        void res.body?.cancel().catch(() => {});
+        res = await send();
+      }
+      if (!res.ok) throw await toHttpError(res);
+      if (!res.body) {
+        cleanup();
+        return res;
+      }
+      const wrapped = toReadableStream(
+        withIdleTimeout(res.body as unknown as AsyncIterable<Uint8Array>, signal, effTimeoutMs, releaseNet, cleanup),
+      );
+      return new Response(wrapped, { status: res.status, statusText: res.statusText, headers: res.headers });
+    } catch (err) {
+      releaseNet();
+      cleanup();
+      throw err;
+    }
   }
 
   /**
@@ -324,25 +383,46 @@ export class ApiClient {
    * HttpError classification as request(). Content-Type is left for fetch()
    * itself to set (so it can add the multipart boundary); only the bearer
    * header, if any, is layered on top of the caller's FormData body.
+   *
+   * `timeoutMs` (default AETHER_REQUEST_TIMEOUT_MS, 30s; 0 disables) bounds
+   * the request the same way request() does — this previously had NO timeout
+   * at all, so a stalled upload connection would hang forever.
    */
-  async postForm<T>(path: string, form: FormData, signal?: AbortSignal): Promise<T> {
-    let used: string | null = null;
-    const send = async (): Promise<Response> => {
-      used = await this.tokens.get();
-      return fetch(this.url(path), {
-        method: "POST",
-        headers: await this.authHeaders(used),
-        body: form,
-        ...(signal ? { signal } : {}),
-      });
-    };
-    let res = await send();
-    if (res.status === 401 && (await this.refreshSession(path, used))) {
-      void res.body?.cancel().catch(() => {});
-      res = await send();
+  async postForm<T>(path: string, form: FormData, signal?: AbortSignal, timeoutMs?: number): Promise<T> {
+    const effTimeoutMs = normalizeTimeoutMs(timeoutMs ?? defaultRequestTimeoutMs());
+    const net = new AbortController();
+    const releaseNet = (): void => net.abort();
+    if (signal) {
+      if (signal.aborted) releaseNet();
+      else signal.addEventListener("abort", releaseNet, { once: true });
     }
-    if (!res.ok) throw await toHttpError(res);
-    return parseOkBody<T>(res);
+    try {
+      let used: string | null = null;
+      const send = async (): Promise<Response> => {
+        used = await this.tokens.get();
+        return raceAgainst(
+          fetch(this.url(path), {
+            method: "POST",
+            headers: await this.authHeaders(used),
+            body: form,
+            signal: net.signal,
+          }),
+          signal,
+          effTimeoutMs,
+          () => new RequestTimeoutError(effTimeoutMs),
+        );
+      };
+      let res = await send();
+      if (res.status === 401 && (await this.refreshSession(path, used))) {
+        void res.body?.cancel().catch(() => {});
+        res = await send();
+      }
+      if (!res.ok) throw await toHttpError(res);
+      return await parseOkBody<T>(res);
+    } finally {
+      releaseNet();
+      signal?.removeEventListener("abort", releaseNet);
+    }
   }
 
   private async request<T>(
@@ -577,4 +657,27 @@ async function* withIdleTimeout(
     // promise rejection (which the REPL's global handler turns into a crash).
     iterator.return?.()?.catch(() => {});
   }
+}
+
+/**
+ * Wrap an async iterable (withIdleTimeout()'s output) as a Web ReadableStream
+ * so getBinary() can hand back a genuine Response whose `.body` still behaves
+ * like a normal fetch body for its callers (vault.ts/vision.ts pipe it
+ * straight to disk). A pull() rejection — an idle-timeout or abort surfacing
+ * from the wrapped iterator — errors the stream instead of hanging it; per
+ * the Streams spec a rejected pull() automatically errors the stream with
+ * that reason, so no separate try/catch is needed here.
+ */
+function toReadableStream(iterable: AsyncIterable<Uint8Array>): ReadableStream<Uint8Array> {
+  const iterator = iterable[Symbol.asyncIterator]();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const next = await iterator.next();
+      if (next.done) controller.close();
+      else controller.enqueue(next.value);
+    },
+    async cancel(reason) {
+      await iterator.return?.(reason);
+    },
+  });
 }

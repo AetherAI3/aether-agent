@@ -92,6 +92,20 @@ export function defaultTokenStore(): TokenStore {
 }
 
 /**
+ * A long-lived API token (PAT) starts with `aek_`; a session token (minted by
+ * /auth/login or /auth/refresh) doesn't. The one canonical definition of that
+ * prefix, shared by transport.ts's refreshSession() (an `aek_` token never
+ * expires, so a 401 on one is never retried) and commands/auth.ts's
+ * isApiToken (status/token display) — previously hand-duplicated in both
+ * places, risking silent drift if the prefix scheme ever changes (LOOP-01
+ * round 2; mirrors this file's own tokenStoreForInjected, added for the same
+ * "one canonical decision" reason).
+ */
+export function isApiKeyToken(token: string | null | undefined): boolean {
+  return typeof token === "string" && token.startsWith("aek_");
+}
+
+/**
  * The one canonical "injected token -> TokenStore" decision, shared by every
  * surface that resolves an embedded/injected session token (tokenStoreFromEnv
  * for the CLI entry, AetherClient's constructor for library embedders) so the
