@@ -164,7 +164,6 @@ export class ApiClient {
     return this.baseUrl.replace(/\/$/, "") + path;
   }
 
-  // Kept as the stable seam vision.ts borrows (via cast) for its own fetches.
   // Internal retry paths pass the token used by that exact attempt; callers
   // that omit it read the current token from the store.
   private async authHeaders(token?: string | null): Promise<Record<string, string>> {
@@ -267,6 +266,69 @@ export class ApiClient {
 
   async deleteJson<T>(path: string, signal?: AbortSignal): Promise<T> {
     return this.request<T>("DELETE", path, { signal });
+  }
+
+  /**
+   * Authed GET for binary/streaming reads — vault file downloads, media asset
+   * downloads. Goes through the same refresh-on-401 retry as request()/
+   * stream(), and throws HttpError (not a plain Error) on a non-2xx response
+   * so errorHint()/hintFor() can classify it (the seam vault.ts and vision.ts
+   * used to bypass via a private-member cast — see git history). Accepts
+   * either a path relative to this.baseUrl OR an absolute http(s) URL, since
+   * media assets can live on a different host than the API itself. When a
+   * bearer token would be attached, that target host must ALSO be a
+   * credential-safe transport — the API's own baseUrl being https doesn't
+   * vouch for some other (possibly cleartext) host the token would otherwise
+   * leak to.
+   */
+  async getBinary(pathOrUrl: string, signal?: AbortSignal): Promise<Response> {
+    const target = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : this.url(pathOrUrl);
+    let used: string | null = null;
+    const send = async (): Promise<Response> => {
+      used = await this.tokens.get();
+      const headers = await this.authHeaders(used);
+      if ("Authorization" in headers && !isCredentialSafeUrl(target)) {
+        throw new InsecureTransportError(target);
+      }
+      return fetch(target, { headers, ...(signal ? { signal } : {}) });
+    };
+    let res = await send();
+    if (res.status === 401 && (await this.refreshSession(pathOrUrl, used))) {
+      void res.body?.cancel().catch(() => {});
+      res = await send();
+    }
+    if (!res.ok) throw await toHttpError(res);
+    return res;
+  }
+
+  /**
+   * Authed multipart POST — vault file upload. Same refresh-on-401 retry and
+   * HttpError classification as request(). Content-Type is left for fetch()
+   * itself to set (so it can add the multipart boundary); only the bearer
+   * header, if any, is layered on top of the caller's FormData body.
+   */
+  async postForm<T>(path: string, form: FormData, signal?: AbortSignal): Promise<T> {
+    let used: string | null = null;
+    const send = async (): Promise<Response> => {
+      used = await this.tokens.get();
+      return fetch(this.url(path), {
+        method: "POST",
+        headers: await this.authHeaders(used),
+        body: form,
+        ...(signal ? { signal } : {}),
+      });
+    };
+    let res = await send();
+    if (res.status === 401 && (await this.refreshSession(path, used))) {
+      void res.body?.cancel().catch(() => {});
+      res = await send();
+    }
+    if (!res.ok) throw await toHttpError(res);
+    try {
+      return (await res.json()) as T;
+    } catch {
+      return undefined as T;
+    }
   }
 
   private async request<T>(
