@@ -238,7 +238,7 @@ export async function auditReceiptSlash(ctx: AppContext, out: Writable, arg: str
     const oid = (String(c.order_id ?? "—")).slice(0, H_ORDER - 1).padEnd(H_ORDER);
     const evt = "chat_turn".padEnd(H_EVENT);
     const comm = shortCustodyHash(c.commitment).slice(0, H_COMMIT - 1).padEnd(H_COMMIT);
-    const pathCol = String(c.path ?? "—").slice(0, H_PATH - 1).padEnd(H_PATH);
+    const pathCol = String(c["path"] ?? "—").slice(0, H_PATH - 1).padEnd(H_PATH);
     out.write(`  ${theme.dim(ts)}${oid}${theme.cyan(evt)}${theme.dim(comm)}${pathCol}\n`);
   }
 
@@ -268,7 +268,7 @@ export async function auditReceiptSlash(ctx: AppContext, out: Writable, arg: str
 
 // ── /purge ─────────────────────────────────────
 
-export async function purgeSlash(ctx: AppContext, out: Writable): Promise<void> {
+export async function purgeSlash(_ctx: AppContext, out: Writable): Promise<void> {
   const registry = getRegistry();
   const { clearedPins, removedFiles } = registry.purge();
 

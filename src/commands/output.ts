@@ -7,7 +7,7 @@ import { listOutput, findOutput, openOutput, clearOutput } from "../core/vision.
 import { theme } from "../ui/theme.js";
 import { fail } from "../core/errors.js";
 
-export async function cmdOutput(ctx: AppContext, argv: string[]): Promise<number> {
+export async function cmdOutput(_ctx: AppContext, argv: string[]): Promise<number> {
   const sub = (argv[0] ?? "").toLowerCase();
   if (sub === "open" || sub === "o") return outputOpen(argv[1]);
   if (sub === "clean" || sub === "clear") return outputClean();

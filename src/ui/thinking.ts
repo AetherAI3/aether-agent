@@ -20,10 +20,6 @@ export function thinkingFrame(tick: number, stalled: boolean): string {
   return stalled ? `${base} — still waiting · Ctrl+C cancels the turn` : base;
 }
 
-interface MinimalWriter {
-  write(s: string): boolean;
-}
-
 export interface ThinkingPulseOptions {
   /** Write target (default process.stdout — callers may inject stderr). */
   write?: (s: string) => void;

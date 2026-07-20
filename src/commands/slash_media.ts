@@ -15,7 +15,7 @@ import {
   buildMediaPrompt, dispatchGeneration, downloadMediaFile,
   ensureOutputDir, recordOutput, listOutput, findOutput, openOutput, clearOutput,
   parseStoryboard, saveStoryboard, loadStoryboard, listStoryboards,
-  type MediaKind, type GenFlags, type GenResult,
+  type MediaKind, type GenFlags, type GenResult, type Storyboard,
 } from "../core/vision.js";
 
 // Media pipeline state — persists across turns in the same REPL session.
@@ -168,7 +168,7 @@ export async function recutSlash(ctx: AppContext, out: Writable, arg: string): P
   } catch (err) { out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`); }
 }
 
-export async function outputSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
+export async function outputSlash(_ctx: AppContext, out: Writable, arg: string): Promise<void> {
   const parts = arg.split(/\s+/);
   const sub = parts[0]?.toLowerCase();
   const ref = parts.slice(1).join(" ");
@@ -253,7 +253,7 @@ function sbFlagParse(raw: string): { scenes?: number; style?: string } {
   return r;
 }
 
-function sbPreview(sb: any, out: Writable): void {
+function sbPreview(sb: Storyboard, out: Writable): void {
   out.write(`\n${theme.iceBlue("🎬")}  STORYBOARD: ${sb.title}\n`);
   out.write(SF(`   style: ${sb.style}  |  scenes: ${sb.total_scenes}  |  status: ${sb.status}\n\n`));
   for (const s of sb.scenes) {
@@ -266,7 +266,7 @@ function sbPreview(sb: any, out: Writable): void {
   }
 }
 
-async function sbRender(ctx: AppContext, sb: any, phase: string, out: Writable): Promise<void> {
+async function sbRender(ctx: AppContext, sb: Storyboard, phase: string, out: Writable): Promise<void> {
   if (phase === "generate" || phase === "render") {
     out.write(SF(`generating ${sb.total_scenes} keyframes...\n\n`));
     for (const s of sb.scenes) {
@@ -285,7 +285,7 @@ async function sbRender(ctx: AppContext, sb: any, phase: string, out: Writable):
     sb.status = "keyframes_generated"; saveStoryboard(sb);
   }
   if (phase === "animate" || phase === "render") {
-    const anim = sb.scenes.filter((s: any) => s.generated_frame_url);
+    const anim = sb.scenes.filter((s) => s.generated_frame_url);
     out.write(SF(`animating ${anim.length} scenes...\n\n`));
     for (const s of anim) {
       out.write(SF(`  scene ${s.index}: ${s.camera_movement} over ${s.duration_sec}s\n`));

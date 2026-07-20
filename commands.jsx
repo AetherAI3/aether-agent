@@ -315,7 +315,7 @@ const CARDS = [
   {
     n: '01', tag: 'INSTALL', Icon: IconInstall,
     title: 'Drop it in',
-    sub: 'one global install · Node ≥ 20',
+    sub: 'one global install · Node ≥ 24',
     lines: [
       { p: '$', cmd: 'npm i -g aether-agents' },
     ],

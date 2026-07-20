@@ -6,8 +6,7 @@
 //   --username/--password   headless credential login
 //   --no-browser        print the URL instead of opening it
 
-import { createInterface } from "node:readline";
-import { stdin, stdout } from "node:process";
+import { stdin } from "node:process";
 import type { AppContext } from "../core/context.js";
 import { loginWithPassword } from "../core/auth.js";
 import { LOGOUT_PATH } from "../core/transport.js";
@@ -106,20 +105,5 @@ function readStdin(): Promise<string> {
     stdin.setEncoding("utf8");
     stdin.on("data", (c) => (data += c));
     stdin.on("end", () => resolve(data));
-  });
-}
-
-function promptHidden(q: string): Promise<string> {
-  const rl = createInterface({ input: stdin, output: stdout, terminal: true });
-  const rlAny = rl as unknown as { _writeToOutput: (s: string) => void };
-  rlAny._writeToOutput = (s: string): void => {
-    if (s.includes(q)) stdout.write(q);
-  };
-  return new Promise((resolve) => {
-    rl.question(q, (ans) => {
-      stdout.write("\n");
-      rl.close();
-      resolve(ans.trim());
-    });
   });
 }

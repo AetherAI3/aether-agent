@@ -103,7 +103,7 @@ const BOX_WIDTH = 64;
 /** Render the full picker menu as a single string. */
 export function renderPicker(
   groups: ModelGroup[],
-  flat: { item: CatalogItem; groupIdx: number }[],
+  _flat: { item: CatalogItem; groupIdx: number }[],
   selectedIdx: number,
 ): string {
   const innerWidth = BOX_WIDTH - 6; // account for │  ...  │
@@ -259,7 +259,7 @@ export async function pickModel(
       process.stdin.removeListener("data", onKey);
       // Re-attach the REPL's original listeners
       for (const l of oldListeners) {
-        process.stdin.on("data", l as (...args: any[]) => void);
+        process.stdin.on("data", l as (...args: unknown[]) => void);
       }
     };
 

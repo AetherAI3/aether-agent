@@ -2,9 +2,6 @@
 
 import type { ApiClient } from "./transport.js";
 import { AGENT_TEST_DRIVE_PATH } from "./transport.js";
-import type { AppContext } from "./context.js";
-import type { Writable } from "node:stream";
-import { requireOrchestrator } from "./orchestrator.js";
 import { execSync } from "node:child_process";
 
 export interface TestDriveRequest {
@@ -52,8 +49,13 @@ export function runTests(testCmd = "npx jest --json 2>&1"): TestResult {
       maxBuffer: 10 * 1024 * 1024,
     });
     return parseTestOutput(output);
-  } catch (err: any) {
-    const output = err.stdout ?? err.stderr ?? String(err);
+  } catch (err: unknown) {
+    const details = err as { stdout?: unknown; stderr?: unknown };
+    const output = typeof details.stdout === "string"
+      ? details.stdout
+      : typeof details.stderr === "string"
+        ? details.stderr
+        : String(err);
     return parseTestOutput(output);
   }
 }

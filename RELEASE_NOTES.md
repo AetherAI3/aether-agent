@@ -1,4 +1,20 @@
-# Aether AI — June 2026 Release Notes
+# Aether Agent — July 2026 engineering update
+
+**July 20, 2026**
+
+- **TypeScript 7 native compiler** — repository builds are about 3.4x faster on
+  the migration benchmark, with stricter whole-project checks enabled.
+- **Cleaner npm package** — compiled tests no longer ship, the tarball is about
+  26% smaller, and the CLI again has zero runtime dependencies.
+- **ESM command reliability** — interactive media, workflow brainstorming,
+  context purge, rollback, and revert no longer depend on unavailable CommonJS
+  `require(...)` calls.
+- **Public-repo cleanup** — internal execution notes and an unfiled third-party
+  abuse-report draft were removed from the published source tree.
+
+---
+
+## Aether AI — June 2026 release
 
 **June 9, 2026** — AetherCloud + Aether Agent
 
