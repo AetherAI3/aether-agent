@@ -374,6 +374,12 @@ async function showPicker(
   const items = byKind(cat, kind);
 
   const picked = await pickModel(items, out);
+  if (picked === undefined) {
+    // pickModel hit an internal fault and already printed its own distinct
+    // diagnostic — printing the generic "kept current session." below too
+    // would show the same failure as two back-to-back, redundant lines.
+    return null;
+  }
   if (!picked) {
     // pickModel returned null — either cancelled (Esc) or non-TTY fallback.
     // If non-TTY, render a flat numbered list so the user can still /model <n>.

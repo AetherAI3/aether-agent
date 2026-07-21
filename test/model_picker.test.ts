@@ -2,7 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { groupItems, flattenGroups, currentIndex, renderPicker, pickModel } from "../src/ui/model_picker.js";
 import { theme } from "../src/ui/theme.js";
+import { handleSlash } from "../src/commands/slash.js";
 import type { CatalogItem } from "../src/types.js";
+import type { AppContext } from "../src/core/context.js";
 import type { Writable } from "node:stream";
 
 function item(overrides: Partial<CatalogItem> & { id: string }): CatalogItem {
@@ -216,7 +218,11 @@ test("pickModel: a fault inside the key handler prints a distinct diagnostic, no
     assert.ok(captured.feed, "pickModel must attach a stdin 'data' listener");
     captured.feed!(Buffer.from("\x1b[A", "utf8")); // up arrow -> rerender() -> throws
     const picked = await result;
-    assert.equal(picked, null, "a caught fault still resolves null (session isn't bricked)");
+    assert.equal(
+      picked,
+      undefined,
+      "a caught fault resolves undefined (not null) so the caller can tell it apart from a deliberate Escape and skip printing its own redundant 'kept current session.' line",
+    );
     assert.ok(
       writes.some((w) => /picker error/.test(w)),
       "a distinct diagnostic must be written so this isn't indistinguishable from Escape",
@@ -272,6 +278,49 @@ test("pickModel: a deliberate Escape resolves null WITHOUT the fault diagnostic"
       !writes.some((w) => /picker error/.test(w)),
       "a deliberate cancel must NOT print the internal-fault diagnostic",
     );
+  } finally {
+    restoreStdin(saved);
+  }
+});
+
+// ── showPicker (slash.ts) composition: no duplicate message on a fault ──
+//
+// pickModel resolving `undefined` (not `null`) on an internal fault is only
+// half the fix — showPicker must actually read that signal, or a real fault
+// still shows its own diagnostic AND the generic "kept current session."
+// line back to back. This exercises the full handleSlash -> showPicker ->
+// pickModel path, not pickModel in isolation.
+
+function fakeModelCtx(): AppContext {
+  return {
+    flags: { yes: false, json: false, audit: false, cwd: "." },
+    cfg: { defaultModel: "haiku", baseUrl: "x" },
+    api: { getJson: async () => ({ tier: "pro", default: "haiku", models: [item({ id: "opus" })] }) },
+    confirm: async () => false,
+  } as unknown as AppContext;
+}
+
+test("showPicker: a picker fault prints exactly ONE message, not the diagnostic plus a redundant 'kept current session.'", async () => {
+  const captured: { feed: ((chunk: Buffer) => void) | null } = { feed: null };
+  const saved = patchStdinAsTTY((cb) => {
+    captured.feed = cb;
+  });
+  const { out, writes } = fakeOut("\x1b[H"); // rerender() write throws -> simulated fault
+  try {
+    const resultPromise = handleSlash(fakeModelCtx(), "/model", out, undefined);
+    // Give getCatalog's fetch + pickModel's render a tick to attach the listener.
+    for (let i = 0; i < 20 && !captured.feed; i++) await Promise.resolve();
+    assert.ok(captured.feed, "pickModel must attach a stdin 'data' listener via the /model (bare) path");
+    captured.feed!(Buffer.from("\x1b[A", "utf8")); // up arrow -> rerender() -> throws
+    const res = await resultPromise;
+    assert.equal(res.restart, undefined, "a faulted picker must not signal a model switch");
+    const faultLines = writes.filter((w) => /kept current session/.test(w));
+    assert.equal(
+      faultLines.length,
+      1,
+      `expected exactly one 'kept current session' message, got ${faultLines.length}: ${JSON.stringify(writes)}`,
+    );
+    assert.ok(faultLines[0] && /picker error/.test(faultLines[0]), "the surviving message must be pickModel's own distinct diagnostic");
   } finally {
     restoreStdin(saved);
   }
