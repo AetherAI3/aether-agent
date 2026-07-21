@@ -8,6 +8,7 @@
 import type { Writable } from "node:stream";
 import type { AppContext } from "../core/context.js";
 import { theme } from "../ui/theme.js";
+import { sanitizeTerm } from "../ui/text.js";
 import { hintFor } from "../core/error_hints.js";
 import { basename } from "node:path";
 import { existsSync as fsExistsSync } from "node:fs";
@@ -63,8 +64,12 @@ const SF = theme.dim;
 // `out` stream instead of stderr, and preserves each call site's original
 // indentation.
 function writeErr(out: Writable, err: unknown, indent = ""): void {
+  // Sanitized: dispatchGeneration/downloadMediaFile can fail on a hostile
+  // server-controlled media_url, whose bytes would otherwise land in
+  // err.message verbatim (same OSC/CSI-injection class formatErrorLine and
+  // sanitizeServerText close everywhere else this diff touched).
   const msg = err instanceof Error ? err.message : String(err);
-  out.write(`${indent}✗ ${msg}\n`);
+  out.write(`${indent}✗ ${sanitizeTerm(msg)}\n`);
   const hint = hintFor(err);
   if (hint) out.write(SF(`${indent}  ⤷ ${hint}\n`));
 }

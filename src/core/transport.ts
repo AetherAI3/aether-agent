@@ -374,6 +374,25 @@ export class ApiClient {
     } catch (err) {
       releaseNet();
       cleanup();
+      // `target` can be a server-controlled absolute URL (media_url in a
+      // generation response) with embedded control bytes. Every OTHER thrown
+      // error here is a typed class this module controls the wording of;
+      // fetch()'s OWN url-parse failure is a plain TypeError that echoes the
+      // raw `target` string verbatim in err.message — the one path an OSC/CSI
+      // sequence from a hostile backend could still reach the terminal
+      // unsanitized. Strip it the same way every other server-supplied string
+      // in this module is stripped (sanitizeServerText).
+      if (
+        err instanceof Error &&
+        !(err instanceof HttpError) &&
+        !(err instanceof RequestTimeoutError) &&
+        !(err instanceof InsecureTransportError) &&
+        !(err instanceof StreamTimeoutError) &&
+        !(err instanceof StreamUnavailableError) &&
+        err.name !== "AbortError"
+      ) {
+        throw new Error(sanitizeServerText(err.message));
+      }
       throw err;
     }
   }

@@ -17,6 +17,7 @@ import {
   type MediaKind, type MediaModel, type GenFlags, type GenResult,
 } from "../core/vision.js";
 import { theme } from "../ui/theme.js";
+import { sanitizeTerm } from "../ui/text.js";
 import { basename } from "node:path";
 import { createInterface, type Interface } from "node:readline";
 
@@ -197,21 +198,27 @@ async function mediaGenerate(ctx: AppContext, prompt: string, kind: MediaKind, f
           url: resp.media_url, timestamp: new Date().toISOString(), flags,
         };
         const entry = recordOutput(result);
+        // resp.media_url and resp.text/response below are server-controlled
+        // (an LLM generation response) — sanitized before hitting the
+        // terminal, same as every other server-supplied string in this flow
+        // (see sanitizeServerText's own doc comment in transport.ts).
         process.stdout.write(
           `  ${theme.iceBlue("↓")} #${entry.index}  ${entry.filename}\n` +
-          `  ${theme.dim(`url: ${resp.media_url}`)}\n\n`
+          `  ${theme.dim(`url: ${sanitizeTerm(resp.media_url)}`)}\n\n`
         );
         if (flags.open) openOutput(entry);
       } else {
         process.stdout.write(theme.dim("  no media URL in response\n"));
-        process.stdout.write(theme.dim(`  ${text.slice(0, 200)}\n`));
+        process.stdout.write(theme.dim(`  ${sanitizeTerm(text.slice(0, 200))}\n`));
       }
     } catch (err) {
       // LOOP-01 round 2: dispatchGeneration()/downloadMediaFile() already
       // throw a classified HttpError (401/402/403/5xx) — this used to print
-      // only the raw message with no actionable next step at all.
+      // only the raw message with no actionable next step at all. Sanitized:
+      // a raw fetch()-level failure on a hostile media_url can otherwise
+      // carry attacker-controlled bytes straight from err.message.
       const msg = err instanceof Error ? err.message : String(err);
-      process.stdout.write(`✗ ${msg}\n`);
+      process.stdout.write(`✗ ${sanitizeTerm(msg)}\n`);
       const hint = hintFor(err);
       if (hint) process.stdout.write(theme.dim(`  ⤷ ${hint}\n`));
     }
