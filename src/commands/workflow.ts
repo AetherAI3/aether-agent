@@ -387,5 +387,5 @@ async function workflowStatus(ctx: AppContext): Promise<number> {
 // ── Helpers ──────────────────────────────────────
 
 function fail(err: unknown): number {
-  return coreFail(err, "are you logged in? run: aether auth login");
+  return coreFail(err, hintFor(err) ?? undefined);
 }
