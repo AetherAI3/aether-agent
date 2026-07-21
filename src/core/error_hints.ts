@@ -5,30 +5,27 @@
 import {
   HttpError,
   InsecureTransportError,
-  MalformedResponseError,
   NETWORK_CODES,
-  RequestTimeoutError,
-  StreamIncompleteError,
-  StreamTimeoutError,
   httpStatusHint,
+  nonHttpErrorHint,
   isAbortError as coreIsAbortError,
 } from "./errors.js";
 
 /** One-line recovery hint for a thrown error, or null when there's nothing
  *  actionable to add.
  *
- *  Only 401/402/403/429 wording is actually shared with errors.errorHint (via
- *  httpStatusHint — see its own doc comment). The 5xx and network-failure
- *  branches below are intentionally separate per-surface: errorHint (REPL)
- *  knows the configured baseUrl and names it; hintFor (one-shot CLI /
- *  embedders, via the public `hintFor` export in index.ts) has no baseUrl to
- *  hand it and stays generic instead. Don't "fix" that divergence by trying
- *  to merge the wording without also plumbing a baseUrl through hintFor's
- *  public signature. */
+ *  The baseUrl-independent shapes (malformed response, stream/request
+ *  timeout, incomplete stream) and the 401/402/403/429 wording are shared
+ *  with errors.errorHint via nonHttpErrorHint()/httpStatusHint() (see their
+ *  own doc comments). Only the 5xx and network-failure branches below stay
+ *  separate per-surface: errorHint (REPL) knows the configured baseUrl and
+ *  names it; hintFor (one-shot CLI / embedders, via the public `hintFor`
+ *  export in index.ts) has no baseUrl to hand it and stays generic instead.
+ *  Don't "fix" that divergence by trying to merge the wording without also
+ *  plumbing a baseUrl through hintFor's public signature. */
 export function hintFor(err: unknown): string | null {
-  // Checked before the generic HttpError branch (MalformedResponseError
-  // extends it) — same reasoning as errors.errorHint.
-  if (err instanceof MalformedResponseError) return "retry, or /doctor to check connectivity";
+  const shared = nonHttpErrorHint(err);
+  if (shared !== null) return shared;
   if (err instanceof HttpError) {
     // Deliberately worded differently from errorHint's >=500 branch (no
     // baseUrl available here) — see the module-level note above.
@@ -36,18 +33,6 @@ export function hintFor(err: unknown): string | null {
     // Shared wording with errors.errorHint so the streamed-turn path and the
     // slash path never show two different hints for the same status.
     return httpStatusHint(err.status);
-  }
-  if (err instanceof StreamTimeoutError) {
-    return "the stream went quiet - retry, or /doctor to check connectivity";
-  }
-  // Same wording as errors.errorHint's StreamIncompleteError branch — see
-  // that module's note on why 401/402/403/429 are the only wording actually
-  // shared; this one has no baseUrl-dependent text so it's identical here too.
-  if (err instanceof StreamIncompleteError) {
-    return "retry, or /doctor to check connectivity";
-  }
-  if (err instanceof RequestTimeoutError) {
-    return "the request went quiet - retry, or /doctor to check connectivity";
   }
   if (err instanceof InsecureTransportError) return "set AETHER_BASE_URL to an https endpoint";
   if (err instanceof Error) {

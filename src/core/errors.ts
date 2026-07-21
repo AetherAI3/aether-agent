@@ -160,33 +160,37 @@ export function httpStatusHint(status: number): string | null {
 }
 
 /**
+ * The ONE wording for the baseUrl-independent thrown-error shapes (malformed
+ * response, stream timeout, incomplete stream, request timeout) — shared by
+ * errorHint (REPL) and error_hints.hintFor (embedders/one-shot CLI). These
+ * hints never mention baseUrl, unlike the HttpError-5xx and network-outage
+ * branches each caller keeps separately (see errorHint's/hintFor's own doc
+ * comments for why those two stay per-surface) — so hand-duplicating THESE
+ * branches instead of sharing them serves no purpose and risks exactly the
+ * kind of silent wording drift the RequestTimeoutError branch had picked up
+ * (this function used to be two copies with two different strings for it).
+ * Checked before the generic HttpError branch in both callers
+ * (MalformedResponseError extends HttpError): a malformed 2xx body isn't one
+ * of the auth/plan statuses httpStatusHint knows about, so the generic
+ * branch would otherwise return null and print the message with no
+ * actionable next step at all.
+ */
+export function nonHttpErrorHint(err: unknown): string | null {
+  if (err instanceof MalformedResponseError) return "retry, or /doctor to check connectivity";
+  if (err instanceof StreamTimeoutError) return "the stream went quiet - retry, or /doctor to check connectivity";
+  if (err instanceof StreamIncompleteError) return "retry, or /doctor to check connectivity";
+  if (err instanceof RequestTimeoutError) return "the request went quiet - retry, or /doctor to check connectivity";
+  return null;
+}
+
+/**
  * One actionable next step for a failed turn, or null when there is nothing
  * better to say than the error itself. Pure — safe to unit test without a
  * network or a TTY. Consumed under the ✗ line as a dim hint.
  */
 export function errorHint(err: unknown, baseUrl: string): string | null {
-  // Checked before the generic HttpError branch below (MalformedResponseError
-  // extends it): a malformed 2xx body isn't one of the auth/plan statuses
-  // httpStatusHint knows about, so the generic branch would otherwise return
-  // null and print the message with no actionable next step at all.
-  if (err instanceof MalformedResponseError) return "retry, or /doctor to check connectivity";
-  if (err instanceof RequestTimeoutError) return "retry, or /doctor to check connectivity";
-  // Same wording as error_hints.hintFor's StreamTimeoutError branch — a
-  // mid-turn stream timeout must read identically whether it surfaces via
-  // the REPL's printError (this function) or a one-shot/embedder path
-  // (hintFor). Previously unhandled here, so it fell through to the generic
-  // Error branch below (no NETWORK_CODES/cause.code, no "fetch failed" in
-  // the message) and returned null — a bare error with no recovery hint.
-  if (err instanceof StreamTimeoutError) {
-    return "the stream went quiet - retry, or /doctor to check connectivity";
-  }
-  // Same wording as error_hints.hintFor's StreamIncompleteError branch — a
-  // clean-looking premature close must read identically whether it surfaces
-  // via the REPL's printError (this function) or a one-shot/embedder path
-  // (hintFor).
-  if (err instanceof StreamIncompleteError) {
-    return "retry, or /doctor to check connectivity";
-  }
+  const shared = nonHttpErrorHint(err);
+  if (shared !== null) return shared;
   if (err instanceof HttpError) {
     if (err.status >= 500) return `the server at ${baseUrl} had a problem — try again shortly`;
     return httpStatusHint(err.status);
