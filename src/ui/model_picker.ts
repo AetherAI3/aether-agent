@@ -171,7 +171,7 @@ export async function pickModel(
   out: Writable,
 ): Promise<CatalogItem | null> {
   if (items.length === 0) {
-    out.write("no models available.\n");
+    out.write(theme.dim("no models available.") + "\n");
     return null;
   }
 
@@ -184,7 +184,7 @@ export async function pickModel(
   const groups = groupItems(items);
   const flat = flattenGroups(groups);
   if (flat.length === 0) {
-    out.write("no models available.\n");
+    out.write(theme.dim("no models available.") + "\n");
     return null;
   }
 

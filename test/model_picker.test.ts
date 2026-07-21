@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { groupItems, flattenGroups, currentIndex, renderPicker, pickModel } from "../src/ui/model_picker.js";
+import { theme } from "../src/ui/theme.js";
 import type { CatalogItem } from "../src/types.js";
 import type { Writable } from "node:stream";
 
@@ -222,6 +223,35 @@ test("pickModel: a fault inside the key handler prints a distinct diagnostic, no
     );
   } finally {
     restoreStdin(saved);
+  }
+});
+
+// ── pickModel (LOOP-06): empty-state line matches the picker's dim styling ──
+//
+// theme is disabled (non-TTY) in this test harness, so theme.dim() is a
+// no-op passthrough — a plain-text assertion here would pass identically
+// against the pre-fix `out.write("no models available.\n")` and tell us
+// nothing about the fix. To make this a real regression test, monkeypatch
+// the shared theme singleton (model_picker.ts imports the same object
+// instance, so the patch is visible inside pickModel) and assert the
+// message is actually routed through it.
+
+test("pickModel: empty items routes the no-models message through theme.dim", async () => {
+  const origDim = theme.dim;
+  theme.dim = (s: string): string => `[dim]${s}[/dim]`;
+  try {
+    const { out, writes } = fakeOut();
+    const picked = await pickModel([], out);
+    assert.equal(picked, null, "no items means nothing to pick");
+    assert.match(
+      writes.join(""),
+      /\[dim\]no models available\.\[\/dim\]/,
+      "the empty-state line must be wrapped in theme.dim like the rest of the picker (footer hints, locked-item marker)",
+    );
+  } finally {
+    // MUST restore: --test-isolation=none shares this singleton across
+    // every test in the process, so a leaked patch would corrupt others.
+    theme.dim = origDim;
   }
 });
 
