@@ -21,6 +21,23 @@ test("network failures point at connectivity", () => {
   assert.match(hintFor(new Error("connect ECONNREFUSED 1.2.3.4:443"))!, /network/);
 });
 
+// LOOP-06 round 3: undici puts the failure code on err.cause.code, not in
+// the message text, for real fetch failures — errors.errorHint already
+// checked this via NETWORK_CODES; hintFor only pattern-matched the message
+// and silently returned null for this entire shape. Mirrors
+// errors.test.ts's "network failures hint at /doctor with the base url".
+test("network failures with the code on err.cause (undici shape) are still detected", () => {
+  const withCause = new Error("request to host failed");
+  (withCause as { cause?: unknown }).cause = { code: "ECONNREFUSED" };
+  assert.match(hintFor(withCause)!, /aether api/i);
+
+  // The code undici throws for a body/socket death after headers were
+  // already received — i.e. a mid-stream drop, not a connect-time failure.
+  const midStreamDrop = new Error("terminated");
+  (midStreamDrop as { cause?: unknown }).cause = { code: "UND_ERR_SOCKET" };
+  assert.match(hintFor(midStreamDrop)!, /aether api/i);
+});
+
 test("insecure transport points at the base URL", () => {
   assert.match(hintFor(new InsecureTransportError("http://evil"))!, /https/);
 });

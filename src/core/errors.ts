@@ -117,8 +117,11 @@ export class MalformedResponseError extends HttpError {
 }
 
 // Network-cause codes that mean "the server never answered" (undici surfaces
-// these on err.cause.code for fetch failures).
-const NETWORK_CODES = new Set([
+// these on err.cause.code for fetch failures). Exported so error_hints.hintFor
+// can check the same set instead of pattern-matching err.message substrings
+// only — undici puts the code on err.cause.code, not in the message text
+// (LOOP-06 round 3).
+export const NETWORK_CODES = new Set([
   "ECONNREFUSED",
   "ENOTFOUND",
   "ETIMEDOUT",

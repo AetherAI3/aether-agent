@@ -6,6 +6,7 @@ import {
   HttpError,
   InsecureTransportError,
   MalformedResponseError,
+  NETWORK_CODES,
   RequestTimeoutError,
   StreamIncompleteError,
   StreamTimeoutError,
@@ -52,9 +53,18 @@ export function hintFor(err: unknown): string | null {
   if (err instanceof Error) {
     if (err.name === "AbortError") return null; // user-initiated, already explained
     const m = err.message;
+    // undici puts the failure code on err.cause.code (not in the message
+    // text) for most real fetch failures — e.g. `new Error("request to host
+    // failed", { cause: { code: "ECONNREFUSED" } })`. The message-substring
+    // checks below only catch errors that happen to embed the code in their
+    // text, which errors.errorHint's own test suite shows is not the shape
+    // undici actually throws. Check cause.code first so this class of error
+    // isn't silently missed (LOOP-06 round 3) — mirrors errors.errorHint.
+    const code = (err.cause as { code?: string } | undefined)?.code ?? "";
     // Deliberately worded differently from errorHint's network branch (no
     // baseUrl to name here) — see the module-level note above.
     if (
+      NETWORK_CODES.has(code) ||
       m.includes("fetch failed") ||
       m.includes("ECONNREFUSED") ||
       m.includes("ENOTFOUND") ||
