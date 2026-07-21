@@ -374,6 +374,12 @@ async function showPicker(
   const items = byKind(cat, kind);
 
   const picked = await pickModel(items, out);
+  if (picked === undefined) {
+    // pickModel hit an internal fault and already printed its own distinct
+    // diagnostic — printing the generic "kept current session." below too
+    // would show the same failure as two back-to-back, redundant lines.
+    return null;
+  }
   if (!picked) {
     // pickModel returned null — either cancelled (Esc) or non-TTY fallback.
     // If non-TTY, render a flat numbered list so the user can still /model <n>.
@@ -420,7 +426,7 @@ async function select(
 
 /** Shared by showPicker/select once a target item is resolved: lock check,
  * restart warning, and the y/N gate that produces the caller's restart signal. */
-async function confirmSwitch(
+export async function confirmSwitch(
   ctx: AppContext,
   out: Writable,
   item: CatalogItem,
@@ -428,7 +434,11 @@ async function confirmSwitch(
   tier: string,
 ): Promise<{ model?: string; agent?: string } | null> {
   if (!item.available) {
-    out.write(`${item.id} is locked on tier ${tier}\n`);
+    // Same dim styling + "check: /tier or `aether models`" pointer as
+    // httpStatusHint(403) (errors.ts) — a tier lock reached via the picker
+    // must read the same as the functionally identical 403 reached over the
+    // wire, not as unstyled text with no next step. LOOP-06.
+    out.write(theme.dim(`${item.id} is locked on tier ${tier} — check: /tier or \`aether models\`\n`));
     return null;
   }
   out.write(

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { runTurn, ChatTurnError, applyRestart, buildPromptContext, repaintString } from "../src/commands/chat.js";
 import { handleSlash } from "../src/commands/slash.js";
 import { ApiClient } from "../src/core/transport.js";
+import { StreamIncompleteError } from "../src/core/errors.js";
 import type { GlobalFlags, AppContext } from "../src/core/context.js";
 import type { TokenStore } from "../src/core/auth.js";
 
@@ -68,6 +69,61 @@ test("runTurn resolves cleanly on a clean stream", async () => {
     await runTurn(ctxWith(), "hi"); // must not throw
   } finally {
     globalThis.fetch = real;
+  }
+});
+
+// LOOP-06 round 3: a stream that ends after only `delta` frames (no `done`,
+// no `error` — e.g. a proxy/load-balancer time-boxing the SSE response and
+// closing the socket within the idle window) must NOT be treated as a
+// successful turn. decodeSse's for-await loop exits normally on a plain
+// end-of-stream, so without an explicit terminal-frame check runTurn used to
+// resolve as if the turn had completed cleanly.
+test("runTurn throws StreamIncompleteError when the stream ends with only delta frames (no done/error)", async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = sseFetch([JSON.stringify({ type: "delta", text: "partial" })]);
+  try {
+    await assert.rejects(() => runTurn(ctxWith(), "hi"), StreamIncompleteError);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+// LOOP-01/LOOP-06 round-1 regression: request()'s new bounded-by-default
+// timeout (AETHER_REQUEST_TIMEOUT_MS, 30s) must NOT apply to the
+// non-streaming CHAT_PATH fallback — a full LLM turn can legitimately run
+// long, so chat.ts opts that call into stream()'s own generous bound instead.
+test("runTurn's non-streaming fallback survives a response slower than the metadata-call timeout default", async () => {
+  const real = globalThis.fetch;
+  const ENV_KEY = "AETHER_REQUEST_TIMEOUT_MS";
+  const prevEnv = process.env[ENV_KEY];
+  process.env[ENV_KEY] = "5"; // far shorter than the fallback response's own delay below
+  let call = 0;
+  globalThis.fetch = (async () => {
+    call++;
+    if (call === 1) {
+      // Streaming leg: server signals fail-soft `{"stream": false}`.
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ stream: false }),
+      } as unknown as Response;
+    }
+    // Fallback leg: deliberately slower than the 5ms metadata-call default —
+    // this only survives because chat.ts opts into defaultStreamTimeoutMs().
+    await new Promise((r) => setTimeout(r, 20));
+    return new Response(JSON.stringify({ response: "ok" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof globalThis.fetch;
+  try {
+    await runTurn(ctxWith(), "hi"); // must not throw/time out
+    assert.equal(call, 2, "both the streaming leg and the fallback leg were called");
+  } finally {
+    globalThis.fetch = real;
+    if (prevEnv === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = prevEnv;
   }
 });
 

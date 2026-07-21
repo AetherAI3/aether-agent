@@ -8,13 +8,12 @@
 // AETHER_BASE_URL, so the desktop routes its chat through this without owning
 // any transport logic.
 
-import { ApiClient, CHAT_STREAM_PATH, CHAT_PATH, MODELS_PATH } from "./transport.js";
+import { ApiClient, CHAT_STREAM_PATH, CHAT_PATH, MODELS_PATH, defaultStreamTimeoutMs } from "./transport.js";
 import { decodeSse, type StreamFrame } from "./stream.js";
 import { buildChatRequest } from "./envelope.js";
 import { StreamUnavailableError } from "./errors.js";
 import {
-  defaultTokenStore,
-  StaticTokenStore,
+  tokenStoreForInjected,
   loginWithPassword,
   type LoginResult,
   type TokenStore,
@@ -49,8 +48,13 @@ export class AetherClient {
     this.baseUrl = opts.baseUrl ?? process.env["AETHER_BASE_URL"] ?? loadConfig().baseUrl;
     const envToken = process.env["AETHER_TOKEN"];
     const injected = opts.token ?? envToken;
-    this.tokens =
-      opts.tokenStore ?? (injected ? new StaticTokenStore(injected) : defaultTokenStore());
+    // In-process only (persistOnLogin: false): AetherClient is an embeddable
+    // library surface (desktop in-process embed, Aether AI on the web), so an
+    // explicit login() must not clobber the standalone CLI's on-disk session.
+    // Shares the injected-token decision with tokenStoreFromEnv via
+    // tokenStoreForInjected so the two surfaces can't silently diverge
+    // (LOOP-01 round 1).
+    this.tokens = opts.tokenStore ?? tokenStoreForInjected(injected, { persistOnLogin: false });
     this.api = new ApiClient(this.baseUrl, this.tokens);
   }
 
@@ -76,7 +80,10 @@ export class AetherClient {
       for await (const frame of decodeSse(stream)) yield frame;
     } catch (err) {
       if (err instanceof StreamUnavailableError) {
-        const r = await this.api.postJson<{ response?: string }>(CHAT_PATH, req);
+        // A full LLM turn can legitimately run long, so this opts into
+        // stream()'s own generous bound rather than request()'s 30s
+        // metadata-call default (LOOP-01/LOOP-06 round-1).
+        const r = await this.api.postJson<{ response?: string }>(CHAT_PATH, req, undefined, defaultStreamTimeoutMs());
         yield { type: "delta", text: r.response ?? "" };
         yield { type: "done", uvt: 0, cents: 0 };
         return;

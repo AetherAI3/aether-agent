@@ -3,7 +3,7 @@
 import { existsSync, readFileSync, writeFileSync, statSync, mkdirSync, readdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import type { ApiClient } from "./transport.js";
-import { UVT_PORT_PATH } from "./transport.js";
+import { UVT_PORT_PATH, defaultStreamTimeoutMs } from "./transport.js";
 
 export interface PortRequest {
   files: Array<{ path: string; content: string }>;
@@ -26,11 +26,13 @@ export async function portCode(
   targetLanguage: string,
   sourceLanguage?: string,
 ): Promise<PortResponse> {
+  // Deep multi-file translation, same class as dispatchGeneration (vision.ts)
+  // — opt into the 120s stream-class timeout instead of the 30s request default.
   return api.postJson<PortResponse>(UVT_PORT_PATH, {
     files,
     target_language: targetLanguage,
     source_language: sourceLanguage,
-  } as PortRequest);
+  } as PortRequest, undefined, defaultStreamTimeoutMs());
 }
 
 // ── File I/O helpers ────────────────────────

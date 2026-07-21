@@ -185,8 +185,15 @@ async function workflowSave(ctx: AppContext, name?: string, templateArg?: string
     }
     wf = { ...WORKFLOW_TEMPLATES[n - 1]!.workflow, name: name || WORKFLOW_TEMPLATES[n - 1]!.name };
   } else if (name) {
-    // Try loading existing workflow from vault, or create from template by name
-    wf = await getWorkflow(ctx.api, name);
+    // Try loading existing workflow from vault, or create from template by name.
+    // getWorkflow now propagates a real failure (LOOP-01 round 3) instead of
+    // swallowing it to null, so this needs its own try/catch — otherwise a
+    // 401/5xx here would escape past this function's own try block below
+    // (which only starts once wf is resolved) all the way to main.ts's bare
+    // top-level catch, printing a hint-less raw error message.
+    try {
+      wf = await getWorkflow(ctx.api, name);
+    } catch (err) { return fail(err); }
     if (!wf) {
       // Check if name matches a template id
       const tpl = WORKFLOW_TEMPLATES.find(t => t.id === name);
@@ -380,5 +387,5 @@ async function workflowStatus(ctx: AppContext): Promise<number> {
 // ── Helpers ──────────────────────────────────────
 
 function fail(err: unknown): number {
-  return coreFail(err, "are you logged in? run: aether auth login");
+  return coreFail(err, hintFor(err) ?? undefined);
 }

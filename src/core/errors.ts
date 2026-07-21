@@ -45,6 +45,35 @@ export class StreamTimeoutError extends Error {
 }
 
 /**
+ * A chat/agent SSE stream ended (the underlying byte stream closed normally,
+ * no throw) without ever delivering a terminal `done` or `error` frame.
+ * Distinct from StreamTimeoutError (which fires on an IDLE gap while the
+ * connection is still open): this is a clean-looking close — e.g. a
+ * proxy/load-balancer that time-boxes the response and drops the socket well
+ * within the idle window — that otherwise produces zero complaint and would
+ * render a partial answer as a fully successful turn (LOOP-06 round 3).
+ */
+export class StreamIncompleteError extends Error {
+  constructor() {
+    super("the connection ended before the server finished responding");
+    this.name = "StreamIncompleteError";
+  }
+}
+
+/**
+ * A non-streaming authed call (getJson/postJson/deleteJson) got no response
+ * within its bound. Unlike stream()'s StreamTimeoutError, there's no partial
+ * data involved — the whole request is unresolved. Distinct name so it can't
+ * be confused with a genuine stream timeout in logs/tests.
+ */
+export class RequestTimeoutError extends Error {
+  constructor(public timeoutMs: number) {
+    super(`request timed out after ${Math.round(timeoutMs / 1000)}s with no response`);
+    this.name = "RequestTimeoutError";
+  }
+}
+
+/**
  * Refused to send the session token because the base URL is not a secure
  * transport (non-https to a non-loopback host). Prevents a cleartext credential
  * leak / token exfiltration to an arbitrary host.
@@ -71,9 +100,28 @@ export class HttpError extends Error {
   }
 }
 
+/**
+ * The server returned a 2xx status but the body wasn't parseable JSON — it
+ * said "ok" without giving usable data. Extends HttpError (not a bare Error)
+ * so existing `instanceof HttpError` classification still applies, but keeps
+ * its own name/message so callers that used to get a silent `undefined` (and
+ * then crashed on their own property access, e.g. `cat.models` in slash.ts's
+ * getCatalog or `r.session_token` in auth.ts's authRefresh) instead get one
+ * coherent, hintable error.
+ */
+export class MalformedResponseError extends HttpError {
+  constructor(status: number) {
+    super(status, "malformed response from server");
+    this.name = "MalformedResponseError";
+  }
+}
+
 // Network-cause codes that mean "the server never answered" (undici surfaces
-// these on err.cause.code for fetch failures).
-const NETWORK_CODES = new Set([
+// these on err.cause.code for fetch failures). Exported so error_hints.hintFor
+// can check the same set instead of pattern-matching err.message substrings
+// only — undici puts the code on err.cause.code, not in the message text
+// (LOOP-06 round 3).
+export const NETWORK_CODES = new Set([
   "ECONNREFUSED",
   "ENOTFOUND",
   "ETIMEDOUT",
@@ -112,11 +160,37 @@ export function httpStatusHint(status: number): string | null {
 }
 
 /**
+ * The ONE wording for the baseUrl-independent thrown-error shapes (malformed
+ * response, stream timeout, incomplete stream, request timeout) — shared by
+ * errorHint (REPL) and error_hints.hintFor (embedders/one-shot CLI). These
+ * hints never mention baseUrl, unlike the HttpError-5xx and network-outage
+ * branches each caller keeps separately (see errorHint's/hintFor's own doc
+ * comments for why those two stay per-surface) — so hand-duplicating THESE
+ * branches instead of sharing them serves no purpose and risks exactly the
+ * kind of silent wording drift the RequestTimeoutError branch had picked up
+ * (this function used to be two copies with two different strings for it).
+ * Checked before the generic HttpError branch in both callers
+ * (MalformedResponseError extends HttpError): a malformed 2xx body isn't one
+ * of the auth/plan statuses httpStatusHint knows about, so the generic
+ * branch would otherwise return null and print the message with no
+ * actionable next step at all.
+ */
+export function nonHttpErrorHint(err: unknown): string | null {
+  if (err instanceof MalformedResponseError) return "retry, or /doctor to check connectivity";
+  if (err instanceof StreamTimeoutError) return "the stream went quiet - retry, or /doctor to check connectivity";
+  if (err instanceof StreamIncompleteError) return "retry, or /doctor to check connectivity";
+  if (err instanceof RequestTimeoutError) return "the request went quiet - retry, or /doctor to check connectivity";
+  return null;
+}
+
+/**
  * One actionable next step for a failed turn, or null when there is nothing
  * better to say than the error itself. Pure — safe to unit test without a
  * network or a TTY. Consumed under the ✗ line as a dim hint.
  */
 export function errorHint(err: unknown, baseUrl: string): string | null {
+  const shared = nonHttpErrorHint(err);
+  if (shared !== null) return shared;
   if (err instanceof HttpError) {
     if (err.status >= 500) return `the server at ${baseUrl} had a problem — try again shortly`;
     return httpStatusHint(err.status);

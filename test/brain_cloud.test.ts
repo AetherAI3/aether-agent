@@ -58,6 +58,17 @@ test("a clean stream still ends done ok:true", async () => {
   assert.ok(done && done.type === "done" && done.ok === true);
 });
 
+// LOOP-06 round 3: the sibling gap to chat.ts's runCloudTurn — a stream that
+// ends after only `delta` frames (no `done`, no `error`) must not be
+// fabricated into a successful run either.
+test("a stream that ends with only delta frames (no done/error) ends done ok:false, not fabricated success", async () => {
+  const events = await runCloud([JSON.stringify({ type: "delta", text: "partial" })]);
+  const done = events.find((e) => e.type === "done");
+  assert.ok(done && done.type === "done");
+  assert.equal(done.ok, false);
+  assert.match(done.result, /connection ended|before the server finished/i);
+});
+
 // Finding E's Tier-2/3 metrics (docs/specs/2026-07-10-workflow-viewer-agent-panel-design.md)
 // must survive the REAL cloud path (SSE -> stream.ts's normalizeFrame -> here),
 // not just brain_protocol.ts's separate NDJSON decoder — that decoder is never

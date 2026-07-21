@@ -8,6 +8,8 @@
 import type { Writable } from "node:stream";
 import type { AppContext } from "../core/context.js";
 import { theme } from "../ui/theme.js";
+import { sanitizeTerm } from "../ui/text.js";
+import { hintFor } from "../core/error_hints.js";
 import { basename } from "node:path";
 import { existsSync as fsExistsSync } from "node:fs";
 import {
@@ -54,6 +56,24 @@ function parseSlashFlags(raw: string, _kind: MediaKind): { prompt: string; flags
 
 const SF = theme.dim;
 
+// LOOP-01 round 2: dispatchGeneration()/downloadMediaFile() already throw a
+// classified HttpError (401/402/403/5xx) or the shared network-outage/timeout
+// errors — every catch block in this file used to print only the raw
+// `err.message` with no actionable next step. This mirrors chat.ts's
+// printError / workflow.ts's fail() but writes to the slash command's own
+// `out` stream instead of stderr, and preserves each call site's original
+// indentation.
+function writeErr(out: Writable, err: unknown, indent = ""): void {
+  // Sanitized: dispatchGeneration/downloadMediaFile can fail on a hostile
+  // server-controlled media_url, whose bytes would otherwise land in
+  // err.message verbatim (same OSC/CSI-injection class formatErrorLine and
+  // sanitizeServerText close everywhere else this diff touched).
+  const msg = err instanceof Error ? err.message : String(err);
+  out.write(`${indent}✗ ${sanitizeTerm(msg)}\n`);
+  const hint = hintFor(err);
+  if (hint) out.write(SF(`${indent}  ⤷ ${hint}\n`));
+}
+
 export async function photogenSlash(ctx: AppContext, out: Writable, arg: string, _framed: boolean): Promise<void> {
   const { prompt, flags } = parseSlashFlags(arg, "image");
   if (!prompt) {
@@ -86,7 +106,7 @@ export async function photogenSlash(ctx: AppContext, out: Writable, arg: string,
       } else {
         out.write(SF("  no media URL returned\n"));
       }
-    } catch (err) { out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+    } catch (err) { writeErr(out, err); }
   }
 }
 
@@ -104,7 +124,7 @@ export async function reframeSlash(ctx: AppContext, out: Writable, arg: string):
       out.write(`${theme.iceBlue("↓")} #${entry.index}  ${entry.filename}\n`);
       _lastMediaUrl = resp.media_url; _lastMediaModel = "vision_gpt_image2";
     }
-  } catch (err) { out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+  } catch (err) { writeErr(out, err); }
 }
 
 export async function videogenSlash(ctx: AppContext, out: Writable, arg: string, cinematic: boolean): Promise<void> {
@@ -124,7 +144,7 @@ export async function videogenSlash(ctx: AppContext, out: Writable, arg: string,
       out.write(`${theme.iceBlue("↓")} #${entry.index}  ${entry.filename}\n  ${SF(resp.media_url)}\n\n`);
       _lastMediaUrl = resp.media_url; _lastMediaModel = modelKey; _lastMediaKind = kind;
     }
-  } catch (err) { out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+  } catch (err) { writeErr(out, err); }
 }
 
 export async function animateSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
@@ -148,7 +168,7 @@ export async function animateSlash(ctx: AppContext, out: Writable, arg: string):
       out.write(`${theme.iceBlue("↓")} #${entry.index}  ${entry.filename}\n`);
       _lastMediaUrl = resp.media_url; _lastMediaModel = "vision_seedance"; _lastMediaKind = "video";
     }
-  } catch (err) { out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+  } catch (err) { writeErr(out, err); }
 }
 
 export async function recutSlash(ctx: AppContext, out: Writable, arg: string): Promise<void> {
@@ -165,7 +185,7 @@ export async function recutSlash(ctx: AppContext, out: Writable, arg: string): P
       out.write(`${theme.iceBlue("↓")} #${entry.index}  ${entry.filename}\n`);
       _lastMediaUrl = resp.media_url;
     }
-  } catch (err) { out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+  } catch (err) { writeErr(out, err); }
 }
 
 export async function outputSlash(_ctx: AppContext, out: Writable, arg: string): Promise<void> {
@@ -177,7 +197,7 @@ export async function outputSlash(_ctx: AppContext, out: Writable, arg: string):
     const entry = findOutput(ref);
     if (!entry) { out.write(SF(`  no output matching "${ref}"\n`)); return; }
     try { openOutput(entry); out.write(`${theme.iceBlue("→")} opened ${entry.filename}\n`); }
-    catch (err) { out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+    catch (err) { writeErr(out, err); }
     return;
   }
   if (sub === "clean" || sub === "clear") { out.write(SF(`  cleared ${clearOutput()} entries\n`)); return; }
@@ -239,7 +259,7 @@ export async function storyboardSlash(ctx: AppContext, out: Writable, arg: strin
     out.write(SF("\n/storyboard --generate   to generate all keyframes\n"));
     out.write(SF("/storyboard --animate    to animate the sequence\n"));
     out.write(SF("/storyboard --render     full pipeline\n"));
-  } catch (err) { out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+  } catch (err) { writeErr(out, err); }
 }
 
 function sbFlagParse(raw: string): { scenes?: number; style?: string } {
@@ -280,7 +300,7 @@ async function sbRender(ctx: AppContext, sb: Storyboard, phase: string, out: Wri
           recordOutput({ model: mk, prompt: s.keyframe_prompt, kind: "image", filepath: fp, filename: basename(fp), url: resp.media_url, timestamp: new Date().toISOString(), flags: {} });
           out.write(`    ${theme.iceBlue("✓")} scene ${s.index}\n`);
         }
-      } catch (err) { out.write(`    ✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+      } catch (err) { writeErr(out, err, "    "); }
     }
     sb.status = "keyframes_generated"; saveStoryboard(sb);
   }
@@ -296,7 +316,7 @@ async function sbRender(ctx: AppContext, sb: Storyboard, phase: string, out: Wri
           recordOutput({ model: "vision_seedance", prompt: s.animation_prompt, kind: "video", filepath: fp, filename: basename(fp), url: resp.media_url, timestamp: new Date().toISOString(), flags: {} });
           out.write(`    ${theme.iceBlue("✓")} scene ${s.index}\n`);
         }
-      } catch (err) { out.write(`    ✗ ${err instanceof Error ? err.message : String(err)}\n`); }
+      } catch (err) { writeErr(out, err, "    "); }
     }
     sb.status = "animated"; saveStoryboard(sb);
   }

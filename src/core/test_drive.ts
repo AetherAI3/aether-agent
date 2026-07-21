@@ -1,7 +1,7 @@
 // UVT /test-drive — autonomous TDD loop. Orchestrator-gated.
 
 import type { ApiClient } from "./transport.js";
-import { AGENT_TEST_DRIVE_PATH } from "./transport.js";
+import { AGENT_TEST_DRIVE_PATH, defaultStreamTimeoutMs } from "./transport.js";
 import { execSync } from "node:child_process";
 
 export interface TestDriveRequest {
@@ -32,12 +32,17 @@ export async function startTestDrive(
   cwd: string,
   testCmd?: string,
 ): Promise<TestDriveResponse> {
-  return api.postJson<TestDriveResponse>(AGENT_TEST_DRIVE_PATH, {
-    agent,
-    target,
-    cwd,
-    test_cmd: testCmd,
-  } as TestDriveRequest);
+  // Blocks server-side through the whole iterate-until-green loop (returns
+  // final_result/patches, not a job handle) — same class of long-running
+  // call as chat's non-streaming fallback, so it opts into stream()'s own
+  // generous bound instead of request()'s 30s metadata-call default
+  // (LOOP-01/LOOP-06 round-1).
+  return api.postJson<TestDriveResponse>(
+    AGENT_TEST_DRIVE_PATH,
+    { agent, target, cwd, test_cmd: testCmd } as TestDriveRequest,
+    undefined,
+    defaultStreamTimeoutMs(),
+  );
 }
 
 export function runTests(testCmd = "npx jest --json 2>&1"): TestResult {

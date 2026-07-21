@@ -1,9 +1,11 @@
 // src/core/vault.ts — vault API client, same pattern as github.ts
 //
-// Every function wraps a single ApiClient call. Download/delete use raw fetch()
-// because ApiClient doesn't expose those methods yet. Same auth header pattern.
+// Every function wraps a single ApiClient call. Download/upload/delete go
+// through ApiClient's authed getBinary()/postForm()/deleteJson() (not raw
+// fetch()) so they get the same refresh-on-401 retry and HttpError
+// classification as every other call.
 
-import { ApiClient, isCredentialSafeUrl } from "./transport.js";
+import { ApiClient, defaultStreamTimeoutMs } from "./transport.js";
 import {
   VAULT_LIST_PATH, VAULT_BROWSE_PATH,
   VAULT_SPACES_LIST_PATH, VAULT_SPACES_USAGE_PATH,
@@ -14,7 +16,6 @@ import {
   VAULT_NOTES_OUTLINKS_PATH, VAULT_NOTES_TREE_PATH,
   AGENT_VAULT_SNAPSHOT_PATH, AGENT_VAULT_SLASH_PATH,
 } from "./transport.js";
-import { InsecureTransportError } from "./errors.js";
 
 // ── Response types ────────────────────────────────
 
@@ -89,33 +90,6 @@ export interface VaultSlashResponse {
   command: string; content: string; note_count: number; ok: boolean; error?: string;
 }
 
-// ── Helpers ──────────────────────────────────────
-
-/** Extract Bearer token from ApiClient's token store — same auth as every other call. */
-async function _bearerToken(api: ApiClient): Promise<string | null> {
-  // ApiClient keeps TokenStore as private `tokens`. Access via internal cast.
-  try {
-    const t = (api as unknown as { tokens: { get: () => Promise<string | null> } }).tokens;
-    return await t.get();
-  } catch {
-    return null;
-  }
-}
-
-function _baseUrl(api: ApiClient): string {
-  const b = (api as unknown as { baseUrl: string }).baseUrl;
-  return b.replace(/\/$/, "");
-}
-
-async function _authHeaders(api: ApiClient): Promise<Record<string, string>> {
-  const t = await _bearerToken(api);
-  if (!t) return {};
-  // Fail closed: never put the bearer on an insecure transport, same as ApiClient.authHeaders.
-  const base = _baseUrl(api);
-  if (!isCredentialSafeUrl(base)) throw new InsecureTransportError(base);
-  return { Authorization: `Bearer ${t}` };
-}
-
 // ── Vault list / browse ──────────────────────────
 
 export async function getVaultList(api: ApiClient): Promise<VaultListResponse> {
@@ -137,45 +111,60 @@ export async function getSpacesUsage(api: ApiClient): Promise<VaultSpacesUsage> 
   return api.getJson(VAULT_SPACES_USAGE_PATH);
 }
 
-export async function downloadSpacesFile(api: ApiClient, filename: string): Promise<ArrayBuffer> {
-  const headers = await _authHeaders(api);
-  const res = await fetch(
-    _baseUrl(api) + VAULT_SPACES_DOWNLOAD_PATH + "/" + encodeURIComponent(filename),
-    { headers },
-  );
-  if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);
-  return res.arrayBuffer();
-}
-
-/** Upload a local file to the vault. Uses multipart form upload. */
+/**
+ * Upload a local file to the vault. Uses multipart form upload.
+ *
+ * The file is handed to FormData as an fs.openAsBlob() Blob — backed by the
+ * open file handle itself — instead of fs.readFileSync() + new Blob([data]).
+ * The old path buffered the ENTIRE file into a Buffer and then copied it a
+ * second time into an in-memory Blob before any bytes went over the wire;
+ * openAsBlob() defers reading to whenever the multipart encoder actually
+ * streams the part out, so a large vault upload no longer holds the whole
+ * file in memory twice (mirrors downloadFile()'s stream-straight-to-disk fix
+ * for the download side, 1d33357).
+ *
+ * Passes defaultStreamTimeoutMs() (120s) as postForm()'s timeoutMs instead of
+ * letting it fall back to the 30s metadata-call default (AETHER_REQUEST_TIMEOUT_MS).
+ * postForm() bounds the ENTIRE request — connect + send-body + wait-for-response
+ * — with one flat timer; unlike getBinary()/stream(), it can't split that into
+ * a connect-phase timeout plus a separate idle timeout on the body, because
+ * fetch() only resolves once the *outgoing* multipart body has been fully sent
+ * and exposes no hook to observe upload progress in between. A flat 30s bound
+ * meant any upload whose transfer legitimately took longer (a large file, a
+ * slow/mobile connection) would always fail with RequestTimeoutError even while
+ * data was actively flowing. A file upload's duration profile is far closer to
+ * a full LLM turn (client.ts's/workflow.ts's CHAT_PATH fallback, which already
+ * passes this same stream-class timeout) than to a /models lookup, so it gets
+ * the same treatment. This is a partial fix, not the ideal connect-vs-idle
+ * split: an upload on a very slow link can still hit the flat 120s cap.
+ */
 export async function uploadFile(
   api: ApiClient, filePath: string,
 ): Promise<{ key: string; filename: string; size: number; content_type: string }> {
   const fs = await import("node:fs");
   const path = await import("node:path");
-  const data = fs.readFileSync(filePath);
   const filename = path.basename(filePath);
+  const blob = await fs.openAsBlob(filePath);
   const formData = new FormData();
-  formData.append("file", new Blob([data]), filename);
-  const headers = await _authHeaders(api);
-  const res = await fetch(_baseUrl(api) + VAULT_SPACES_UPLOAD_PATH, {
-    method: "POST", headers, body: formData,
-  });
-  if (!res.ok) {
-    const errBody = await res.text().catch(() => "");
-    throw new Error(`upload failed: HTTP ${res.status}${errBody ? " — " + errBody.slice(0, 200) : ""}`);
-  }
-  return res.json();
+  formData.append("file", blob, filename);
+  return api.postForm(VAULT_SPACES_UPLOAD_PATH, formData, undefined, defaultStreamTimeoutMs());
 }
 
-/** Download a vault file and save it to a local path. Returns the output path. */
+/**
+ * Download a vault file and save it to a local path. Streams the response
+ * body straight to disk (no full-file buffering) so a large or misbehaving
+ * download can't grow the CLI process's memory unbounded. Returns the
+ * output path.
+ */
 export async function downloadFile(api: ApiClient, filename: string, outputPath: string): Promise<string> {
-  const buffer = await downloadSpacesFile(api, filename);
+  const res = await api.getBinary(VAULT_SPACES_DOWNLOAD_PATH + "/" + encodeURIComponent(filename));
+  if (!res.body) throw new Error("download failed: empty body");
   const fs = await import("node:fs");
   const path = await import("node:path");
+  const { pipeline } = await import("node:stream/promises");
   const dir = path.dirname(outputPath);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(outputPath, Buffer.from(buffer));
+  await pipeline(res.body as unknown as NodeJS.ReadableStream, fs.createWriteStream(outputPath));
   return outputPath;
 }
 
@@ -188,13 +177,7 @@ export async function getSpacesContent(
 export async function deleteSpacesFile(
   api: ApiClient, filename: string,
 ): Promise<{ success: boolean; deleted: string }> {
-  const headers = await _authHeaders(api);
-  const res = await fetch(
-    _baseUrl(api) + VAULT_SPACES_DELETE_PATH + "/" + encodeURIComponent(filename),
-    { method: "DELETE", headers },
-  );
-  if (!res.ok) throw new Error(`delete failed: HTTP ${res.status}`);
-  return res.json() as Promise<{ success: boolean; deleted: string }>;
+  return api.deleteJson(VAULT_SPACES_DELETE_PATH + "/" + encodeURIComponent(filename));
 }
 
 // ── Notes search ────────────────────────────────

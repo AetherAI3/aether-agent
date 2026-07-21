@@ -163,15 +163,20 @@ const DIM_ORB   = theme.dim("\u25cb");                                   // ○ 
  * Launch an interactive model/orchestrator picker.
  *
  * Temporarily removes the REPL's data listener, renders the menu,
- * processes arrow keys, and returns the selected item or null (cancelled).
+ * processes arrow keys, and returns the selected item; null on a deliberate
+ * cancel (Escape/no models/non-TTY) — the caller is expected to print its own
+ * "kept current session" message for null. Returns undefined on an internal
+ * key-handler fault: this function has ALREADY written its own distinct
+ * diagnostic in that case, so the caller must NOT also print a generic
+ * message (that used to produce two back-to-back lines for one failure).
  * Restores the REPL listener before resolving.
  */
 export async function pickModel(
   items: CatalogItem[],
   out: Writable,
-): Promise<CatalogItem | null> {
+): Promise<CatalogItem | null | undefined> {
   if (items.length === 0) {
-    out.write("no models available.\n");
+    out.write(theme.dim("no models available.") + "\n");
     return null;
   }
 
@@ -184,7 +189,7 @@ export async function pickModel(
   const groups = groupItems(items);
   const flat = flattenGroups(groups);
   if (flat.length === 0) {
-    out.write("no models available.\n");
+    out.write(theme.dim("no models available.") + "\n");
     return null;
   }
 
@@ -240,9 +245,15 @@ export async function pickModel(
         }
       } catch {
         // If anything throws in the key handler (render, decode), bail out
-        // and restore the REPL listeners so the session isn't bricked.
+        // and restore the REPL listeners so the session isn't bricked. Write
+        // a distinct diagnostic first, then resolve undefined (not null) so
+        // the caller (slash.ts's showPicker) can tell this apart from a
+        // deliberate Escape and skip ITS OWN generic "kept current session."
+        // message — resolving null there produced two back-to-back lines
+        // for a single fault.
         cleanup();
-        resolve(null);
+        out.write(theme.dim("  picker error — kept current session.") + "\n");
+        resolve(undefined);
       }
     };
 

@@ -1,6 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classifyPoll } from "../src/core/device.js";
+import { classifyPoll, pollForToken, type DeviceCode } from "../src/core/device.js";
+import { ApiClient } from "../src/core/transport.js";
+import { StaticTokenStore } from "../src/core/auth.js";
+
+const REQUEST_TIMEOUT_ENV_KEY = "AETHER_REQUEST_TIMEOUT_MS";
+
+function setRequestTimeoutMs(value: string | undefined): () => void {
+  const original = process.env[REQUEST_TIMEOUT_ENV_KEY];
+  if (value === undefined) delete process.env[REQUEST_TIMEOUT_ENV_KEY];
+  else process.env[REQUEST_TIMEOUT_ENV_KEY] = value;
+  return () => {
+    if (original === undefined) delete process.env[REQUEST_TIMEOUT_ENV_KEY];
+    else process.env[REQUEST_TIMEOUT_ENV_KEY] = original;
+  };
+}
 
 test("classifyPoll maps server responses to poll actions", () => {
   assert.equal(classifyPoll({ error: "authorization_pending" }), "wait");
@@ -9,4 +23,228 @@ test("classifyPoll maps server responses to poll actions", () => {
   assert.equal(classifyPoll({ error: "expired_token" }), "expired");
   assert.equal(classifyPoll({ access_token: "aek_x" }), "ready");
   assert.equal(classifyPoll({}), "wait");
+});
+
+// ── pollForToken: LOOP-01 / LOOP-06 regression ───────────────────────────
+// A raw network failure (fetch throwing — server down, DNS failure, timeout)
+// must NOT be silently reclassified as `authorization_pending`. Only an
+// HttpError carrying a real body from the token endpoint (the documented 400
+// pending/slow_down/expired case) may map to ordinary polling state.
+
+function jsonRes(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+/** Fake clock driven entirely through the injected `sleep` — pollForToken's
+ *  loop checks `Date.now() < deadline` against real wall-clock otherwise,
+ *  which would hang the test for the full (realistic, multi-minute) expires_in
+ *  window instead of resolving instantly. */
+function fakeClock(): { sleep: (ms: number) => Promise<void>; restore: () => void } {
+  const real = Date.now;
+  let clock = 0;
+  Date.now = () => clock;
+  return {
+    sleep: async (ms: number) => {
+      clock += ms;
+    },
+    restore: () => {
+      Date.now = real;
+    },
+  };
+}
+
+/** Stubs global fetch to play back one Response-or-throw "act" per call,
+ *  repeating the last act once the sequence is exhausted. */
+function stubFetchSequence(acts: Array<() => Response>): { calls: () => number; restore: () => void } {
+  const real = globalThis.fetch;
+  let n = 0;
+  globalThis.fetch = (async () => {
+    const act = acts[Math.min(n, acts.length - 1)] as () => Response;
+    n++;
+    return act();
+  }) as typeof globalThis.fetch;
+  return {
+    calls: () => n,
+    restore: () => {
+      globalThis.fetch = real;
+    },
+  };
+}
+
+function captureStderr(): { text: () => string; restore: () => void } {
+  const orig = process.stderr.write.bind(process.stderr);
+  let out = "";
+  process.stderr.write = ((s: string) => ((out += s), true)) as typeof process.stderr.write;
+  return {
+    text: () => out,
+    restore: () => {
+      process.stderr.write = orig;
+    },
+  };
+}
+
+const CODE: DeviceCode = {
+  device_code: "dc_1",
+  user_code: "ABCD-1234",
+  verification_uri: "https://aethersystems.net/platform/device",
+  verification_uri_complete: "https://aethersystems.net/platform/device?u=dc_1",
+  interval: 1,
+  expires_in: 10, // with interval=1s -> 10 deterministic poll attempts via the fake clock
+};
+
+test("pollForToken: a transient network blip does not warn and does not block success", async () => {
+  const netErr = () => {
+    throw new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
+  };
+  const success = () => jsonRes(200, { access_token: "aek_success" });
+  const fetchStub = stubFetchSequence([netErr, netErr, success]);
+  const clock = fakeClock();
+  const stderr = captureStderr();
+  try {
+    const api = new ApiClient("https://api.example", new StaticTokenStore("aek_key"));
+    const token = await pollForToken(api, CODE, clock.sleep);
+    assert.equal(token, "aek_success");
+    assert.equal(stderr.text(), "", "two blips (below the 3-in-a-row threshold) must not print a warning");
+  } finally {
+    fetchStub.restore();
+    clock.restore();
+    stderr.restore();
+  }
+});
+
+test("pollForToken: a sustained network outage fails fast with a distinct message, not silent authorization_pending", async () => {
+  const netErr = () => {
+    throw new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
+  };
+  const fetchStub = stubFetchSequence([netErr]);
+  const clock = fakeClock();
+  const stderr = captureStderr();
+  try {
+    const api = new ApiClient("https://api.example", new StaticTokenStore("aek_key"));
+    await assert.rejects(
+      () => pollForToken(api, CODE, clock.sleep),
+      (e: unknown) => {
+        assert.match((e as Error).message, /couldn't reach the server/);
+        return true;
+      },
+    );
+    assert.match(stderr.text(), /can't reach the server/, "a sustained outage must surface a distinct warning, not silent waiting");
+    // All 10 attempts (interval=1, expires_in=10) hit the network branch.
+    assert.equal(fetchStub.calls(), 10);
+  } finally {
+    fetchStub.restore();
+    clock.restore();
+    stderr.restore();
+  }
+});
+
+test("pollForToken: real authorization_pending (HttpError with body) times out with the generic message and no warning", async () => {
+  const pending = () => jsonRes(400, { error: "authorization_pending" });
+  const fetchStub = stubFetchSequence([pending]);
+  const clock = fakeClock();
+  const stderr = captureStderr();
+  try {
+    const api = new ApiClient("https://api.example", new StaticTokenStore("aek_key"));
+    await assert.rejects(
+      () => pollForToken(api, CODE, clock.sleep),
+      (e: unknown) => {
+        assert.equal((e as Error).message, "login timed out — run `aether auth login` again");
+        return true;
+      },
+    );
+    assert.equal(stderr.text(), "", "ordinary authorization_pending polling must never print the outage warning");
+  } finally {
+    fetchStub.restore();
+    clock.restore();
+    stderr.restore();
+  }
+});
+
+test("pollForToken: a repeating 5xx with a parseable JSON object body (e.g. FastAPI's {detail}) is NOT folded into authorization_pending — it counts as a network error and warns/fails distinctly", async () => {
+  const serverError = () => jsonRes(500, { detail: "internal error" });
+  const fetchStub = stubFetchSequence([serverError]);
+  const clock = fakeClock();
+  const stderr = captureStderr();
+  try {
+    const api = new ApiClient("https://api.example", new StaticTokenStore("aek_key"));
+    await assert.rejects(
+      () => pollForToken(api, CODE, clock.sleep),
+      (e: unknown) => {
+        assert.match(
+          (e as Error).message,
+          /couldn't reach the server/,
+          "a sustained 500 outage must surface the distinct network-outage message, not the generic 'run login again'",
+        );
+        return true;
+      },
+    );
+    assert.match(
+      stderr.text(),
+      /can't reach the server/,
+      "a repeating 500 must trip the same outage warning as a raw network failure, not read as silent authorization_pending",
+    );
+    // All 10 attempts (interval=1, expires_in=10) hit the network-error branch.
+    assert.equal(fetchStub.calls(), 10);
+  } finally {
+    fetchStub.restore();
+    clock.restore();
+    stderr.restore();
+  }
+});
+
+test("pollForToken: a 400 with a non-string `error` field (malformed pending shape) is NOT treated as ordinary polling state", async () => {
+  const malformed = () => jsonRes(400, { error: 123 });
+  const fetchStub = stubFetchSequence([malformed]);
+  const clock = fakeClock();
+  const stderr = captureStderr();
+  try {
+    const api = new ApiClient("https://api.example", new StaticTokenStore("aek_key"));
+    await assert.rejects(
+      () => pollForToken(api, CODE, clock.sleep),
+      (e: unknown) => {
+        assert.match((e as Error).message, /couldn't reach the server/);
+        return true;
+      },
+    );
+    assert.match(stderr.text(), /can't reach the server/);
+  } finally {
+    fetchStub.restore();
+    clock.restore();
+    stderr.restore();
+  }
+});
+
+// ── LOOP-01 round-1 regression: a single STALLED (never-settling) poll ──
+// request must not sit past its own deadline. Before ApiClient.request() had
+// a default timeout, `while (Date.now() < deadline)`'s re-check could never
+// re-execute until a hung fetch settled — which, for a silently-dropped
+// connection, was never. Now request() itself gives up after
+// AETHER_REQUEST_TIMEOUT_MS and pollForToken treats that like any other
+// network failure and moves on to its next attempt.
+test("pollForToken: a single stalled (hanging) poll request times out instead of blocking the loop forever", async () => {
+  const restoreEnv = setRequestTimeoutMs("5");
+  const real = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls++;
+    if (calls === 1) return new Promise<Response>(() => {}); // the exact "stalled" scenario
+    return jsonRes(200, { access_token: "aek_after_stall" });
+  }) as typeof globalThis.fetch;
+  const stderr = captureStderr();
+  try {
+    const api = new ApiClient("https://api.example", new StaticTokenStore("aek_key"));
+    // Real deadline (60s out) + a no-op injected sleep: only the ApiClient
+    // request-level timeout (real setTimeout, 5ms) governs how long this
+    // test actually takes, decoupled from the fake-clock polling interval.
+    const token = await pollForToken(api, { ...CODE, expires_in: 60 }, async () => {});
+    assert.equal(token, "aek_after_stall");
+    assert.equal(calls, 2, "the stalled first attempt timed out and the loop moved on to a second attempt");
+  } finally {
+    globalThis.fetch = real;
+    restoreEnv();
+    stderr.restore();
+  }
 });

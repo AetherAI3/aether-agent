@@ -5,6 +5,7 @@ import { ApiClient } from "./transport.js";
 import {
   PROJECT_FROM_WORKFLOW_ASSESS_PATH, PROJECT_FROM_WORKFLOW_BRAINSTORM_PATH,
   PROJECT_FROM_WORKFLOW_PLAN_PATH, PROJECT_FROM_WORKFLOW_FINALIZE_PATH,
+  defaultStreamTimeoutMs,
 } from "./transport.js";
 import { listSpaces, getSpacesContent, deleteSpacesFile, uploadFile, downloadFile } from "./vault.js";
 
@@ -277,9 +278,15 @@ export function createFenceParser(): FenceParser {
 }
 
 // ── Project Conversion API Wrappers ──────────────
+// These block server-side on completed LLM generation (an assessment,
+// brainstorm round, plan, or finalized project — not a job handle), the same
+// class of long-running call as chat's non-streaming fallback. Each opts
+// into stream()'s own generous bound instead of request()'s 30s
+// metadata-call default (LOOP-01/LOOP-06 round-1) so a healthy but slow
+// generation isn't killed early.
 
 export async function assessWorkflow(api: ApiClient, workflow: Workflow): Promise<WorkflowAssessResponse> {
-  return api.postJson(PROJECT_FROM_WORKFLOW_ASSESS_PATH, { workflow });
+  return api.postJson(PROJECT_FROM_WORKFLOW_ASSESS_PATH, { workflow }, undefined, defaultStreamTimeoutMs());
 }
 
 export async function brainstormWorkflow(
@@ -289,7 +296,7 @@ export async function brainstormWorkflow(
 ): Promise<WorkflowBrainstormResponse> {
   return api.postJson(PROJECT_FROM_WORKFLOW_BRAINSTORM_PATH, {
     workflow, qa_history: qaHistory, next_index: nextIndex,
-  });
+  }, undefined, defaultStreamTimeoutMs());
 }
 
 export async function planWorkflow(
@@ -297,7 +304,7 @@ export async function planWorkflow(
 ): Promise<WorkflowPlanResponse> {
   return api.postJson(PROJECT_FROM_WORKFLOW_PLAN_PATH, {
     workflow, brainstorm_summary: brainstormSummary, mode,
-  });
+  }, undefined, defaultStreamTimeoutMs());
 }
 
 export async function finalizeWorkflow(
@@ -305,42 +312,47 @@ export async function finalizeWorkflow(
 ): Promise<WorkflowFinalizeResponse> {
   return api.postJson(PROJECT_FROM_WORKFLOW_FINALIZE_PATH, {
     workflow, plan_md: planMd, edited_by_user: false,
-  });
+  }, undefined, defaultStreamTimeoutMs());
 }
 
 // ── Vault-Based Workflow CRUD ────────────────────
 
 const WF_EXT = ".aetherflow.json";
 
+// listSpaces/getSpacesContent/deleteSpacesFile (vault.ts) never throw for a
+// legitimate empty-result case (an empty vault is a 200 with `files: []`; a
+// missing file's absence shows up as `content: null`/`binary`, not an
+// exception) — so a thrown error here is always a REAL failure (expired
+// session, network outage, 5xx). These used to swallow that into an empty
+// list / null / false, which the command layer then reported as "no
+// workflows" / "not found" / "delete failed", hiding e.g. a 401 session
+// expiry with zero indication to run `aether auth login`. Let it propagate
+// instead — every call site already wraps these in its own try/catch that
+// calls fail(err) (see src/commands/workflow.ts), same as vault.ts's direct
+// (uncaught) use of getSpacesContent/deleteSpacesFile.
 export async function listWorkflows(api: ApiClient): Promise<WorkflowListItem[]> {
-  try {
-    const r = await listSpaces(api);
-    return r.files
-      .filter(f => f.filename.endsWith(WF_EXT))
-      .map(f => ({
-        name: f.filename.slice(0, -WF_EXT.length),
-        filename: f.filename,
-        size: f.size,
-        lastModified: f.last_modified,
-      }));
-  } catch { return []; }
+  const r = await listSpaces(api);
+  return r.files
+    .filter(f => f.filename.endsWith(WF_EXT))
+    .map(f => ({
+      name: f.filename.slice(0, -WF_EXT.length),
+      filename: f.filename,
+      size: f.size,
+      lastModified: f.last_modified,
+    }));
 }
 
 export async function getWorkflow(api: ApiClient, name: string): Promise<Workflow | null> {
   const filename = name.endsWith(WF_EXT) ? name : name + WF_EXT;
-  try {
-    const r = await getSpacesContent(api, filename);
-    if (r.binary || !r.content) return null;
-    return JSON.parse(r.content) as Workflow;
-  } catch { return null; }
+  const r = await getSpacesContent(api, filename);
+  if (r.binary || !r.content) return null;
+  return JSON.parse(r.content) as Workflow;
 }
 
 export async function deleteWorkflow(api: ApiClient, name: string): Promise<boolean> {
   const filename = name.endsWith(WF_EXT) ? name : name + WF_EXT;
-  try {
-    await deleteSpacesFile(api, filename);
-    return true;
-  } catch { return false; }
+  await deleteSpacesFile(api, filename);
+  return true;
 }
 
 /** Save a workflow object to vault by writing JSON to temp file, uploading it. */

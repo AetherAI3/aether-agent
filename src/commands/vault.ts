@@ -4,6 +4,7 @@
 
 import type { AppContext } from "../core/context.js";
 import { fail as coreFail } from "../core/errors.js";
+import { hintFor } from "../core/error_hints.js";
 import {
   getVaultList, browseVault,
   getSpacesUsage, getSpacesContent, deleteSpacesFile,
@@ -273,6 +274,12 @@ function renderSearchResults(r: VaultSearchResponse, query: string): void {
   }
 }
 
+// LOOP-01 round 2: this used to hand every failure (401, 402 out-of-balance,
+// 403 plan/tier, 5xx, network outage) the SAME hardcoded "are you logged in?"
+// hint, even though downloadFile/uploadFile/deleteSpacesFile etc. already
+// throw a properly-classified HttpError. hintFor() (the no-baseUrl sibling of
+// errors.errorHint — see its doc comment) now picks the right wording per
+// status, matching the fix already applied to workflow.ts's `workflowNew`.
 function fail(err: unknown): number {
-  return coreFail(err, "are you logged in? run: aether auth login");
+  return coreFail(err, hintFor(err) ?? undefined);
 }

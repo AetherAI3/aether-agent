@@ -3,8 +3,15 @@
 //
 // Paths are constants so they change in one place.
 
-import { HttpError, InsecureTransportError, StreamTimeoutError, StreamUnavailableError } from "./errors.js";
-import type { TokenStore } from "./auth.js";
+import {
+  HttpError,
+  InsecureTransportError,
+  MalformedResponseError,
+  RequestTimeoutError,
+  StreamTimeoutError,
+  StreamUnavailableError,
+} from "./errors.js";
+import { isApiKeyToken, type TokenStore } from "./auth.js";
 
 /**
  * Is `base` a transport we will attach the session token to? https is allowed to
@@ -23,6 +30,26 @@ export function isCredentialSafeUrl(base: string): boolean {
   if (u.protocol !== "http:") return false;
   const host = u.hostname.replace(/^\[|\]$/g, ""); // strip IPv6 brackets
   return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+/**
+ * Does `target` share `baseUrl`'s origin (scheme+host+port)? getBinary() uses
+ * this — NOT isCredentialSafeUrl() — to decide whether the live session
+ * bearer token should be attached to a caller-supplied absolute URL at all.
+ * isCredentialSafeUrl() only checks scheme (any https host passes); reusing
+ * it here would attach the token to ANY https host, including a third-party
+ * host a server response (or a compromised/malicious one) pointed at, leaking
+ * the token to it. A target that isn't the API's own origin gets no
+ * Authorization header, regardless of its own scheme.
+ */
+export function isSameOrigin(target: string, baseUrl: string): boolean {
+  try {
+    const t = new URL(target);
+    const b = new URL(baseUrl);
+    return t.protocol === b.protocol && t.host === b.host;
+  } catch {
+    return false;
+  }
 }
 
 // Aether API routes.
@@ -86,6 +113,11 @@ export const PROJECT_FROM_WORKFLOW_PLAN_PATH = "/project/from-workflow/plan";
 export const PROJECT_FROM_WORKFLOW_FINALIZE_PATH = "/project/from-workflow/finalize";
 
 export const DEFAULT_STREAM_TIMEOUT_MS = 120_000;
+// Non-streaming authed calls (getJson/postJson/deleteJson) — /models, /tier,
+// auth status/refresh, device-poll, etc. Much shorter than the stream default
+// since these are single request/response round-trips, not a long-lived SSE
+// body: a stalled connection here should fail fast, not sit for 2 minutes.
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 export interface StreamOptions {
   signal?: AbortSignal;
@@ -112,7 +144,7 @@ export class ApiClient {
    */
   private async refreshSession(failedPath: string, usedToken: string | null): Promise<boolean> {
     if (failedPath.startsWith("/auth/")) return false;
-    if (!usedToken || usedToken.startsWith("aek_")) return false;
+    if (!usedToken || isApiKeyToken(usedToken)) return false;
     // Same fail-closed rule as authHeaders(): never POST a session token over
     // an insecure transport — not even to refresh it.
     if (!isCredentialSafeUrl(this.baseUrl)) return false;
@@ -164,7 +196,6 @@ export class ApiClient {
     return this.baseUrl.replace(/\/$/, "") + path;
   }
 
-  // Kept as the stable seam vision.ts borrows (via cast) for its own fetches.
   // Internal retry paths pass the token used by that exact attempt; callers
   // that omit it read the current token from the store.
   private async authHeaders(token?: string | null): Promise<Record<string, string>> {
@@ -257,54 +288,271 @@ export class ApiClient {
     }
   }
 
-  async postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
-    return this.request<T>("POST", path, { body, signal });
+  /** `timeoutMs` overrides the default bound (AETHER_REQUEST_TIMEOUT_MS, 30s;
+   *  0 disables it) — most callers should omit it. It exists for the rare
+   *  non-streaming call that legitimately runs long (e.g. chat.ts's/
+   *  brain_cloud.ts's/client.ts's CHAT_PATH fallback for a full LLM turn,
+   *  which passes stream()'s own 120s-class bound instead of the 30s default
+   *  meant for metadata/auth calls). */
+  async postJson<T>(path: string, body: unknown, signal?: AbortSignal, timeoutMs?: number): Promise<T> {
+    return this.request<T>("POST", path, { body, signal, timeoutMs });
   }
 
-  async getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-    return this.request<T>("GET", path, { signal });
+  async getJson<T>(path: string, signal?: AbortSignal, timeoutMs?: number): Promise<T> {
+    return this.request<T>("GET", path, { signal, timeoutMs });
   }
 
-  async deleteJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-    return this.request<T>("DELETE", path, { signal });
+  async deleteJson<T>(path: string, signal?: AbortSignal, timeoutMs?: number): Promise<T> {
+    return this.request<T>("DELETE", path, { signal, timeoutMs });
+  }
+
+  /**
+   * Authed GET for binary/streaming reads — vault file downloads, media asset
+   * downloads. Goes through the same refresh-on-401 retry as request()/
+   * stream(), and throws HttpError (not a plain Error) on a non-2xx response
+   * so errorHint()/hintFor() can classify it (the seam vault.ts and vision.ts
+   * used to bypass via a private-member cast — see git history). Accepts
+   * either a path relative to this.baseUrl OR an absolute http(s) URL, since
+   * media assets can live on a different host than the API itself.
+   *
+   * The bearer token is attached ONLY when `target` shares baseUrl's origin
+   * (isSameOrigin — scheme+host+port), never merely because it's https: a
+   * media asset on a different host (a presumably presigned or public CDN)
+   * has no business receiving the user's live session token just because
+   * that host also happens to be https. A cross-origin target is fetched
+   * unauthenticated instead of failing closed — refusing the whole download
+   * would be worse than simply not sending credentials it was never entitled
+   * to.
+   *
+   * `timeoutMs` (default AETHER_REQUEST_TIMEOUT_MS, 30s; 0 disables) bounds
+   * the connect/response-headers phase, same as request() — this previously
+   * had NO timeout at all. Once headers arrive, the body is wrapped with the
+   * same idle/quiet-period timeout stream() uses (withIdleTimeout) rather
+   * than a flat overall cap, so a large-but-healthy download can't be killed
+   * mid-flight just for taking a while.
+   */
+  async getBinary(pathOrUrl: string, signal?: AbortSignal, timeoutMs?: number): Promise<Response> {
+    const target = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : this.url(pathOrUrl);
+    const attachAuth = isSameOrigin(target, this.baseUrl);
+    const effTimeoutMs = normalizeTimeoutMs(timeoutMs ?? defaultRequestTimeoutMs());
+    const net = new AbortController();
+    const releaseNet = (): void => net.abort();
+    if (signal) {
+      if (signal.aborted) releaseNet();
+      else signal.addEventListener("abort", releaseNet, { once: true });
+    }
+    const cleanup = (): void => signal?.removeEventListener("abort", releaseNet);
+    try {
+      let used: string | null = null;
+      const send = async (): Promise<Response> => {
+        let headers: Record<string, string> = {};
+        if (attachAuth) {
+          used = await this.tokens.get();
+          headers = await this.authHeaders(used);
+        }
+        return raceAgainst(
+          fetch(target, { headers, signal: net.signal }),
+          signal,
+          effTimeoutMs,
+          () => new RequestTimeoutError(effTimeoutMs),
+        );
+      };
+      let res = await send();
+      if (res.status === 401 && (await this.refreshSession(pathOrUrl, used))) {
+        void res.body?.cancel().catch(() => {});
+        res = await send();
+      }
+      if (!res.ok) throw await toHttpError(res);
+      if (!res.body) {
+        cleanup();
+        return res;
+      }
+      const wrapped = toReadableStream(
+        withIdleTimeout(res.body as unknown as AsyncIterable<Uint8Array>, signal, effTimeoutMs, releaseNet, cleanup),
+      );
+      return new Response(wrapped, { status: res.status, statusText: res.statusText, headers: res.headers });
+    } catch (err) {
+      releaseNet();
+      cleanup();
+      // `target` can be a server-controlled absolute URL (media_url in a
+      // generation response) with embedded control bytes. Every OTHER thrown
+      // error here is a typed class this module controls the wording of;
+      // fetch()'s OWN url-parse failure is a plain TypeError that echoes the
+      // raw `target` string verbatim in err.message — the one path an OSC/CSI
+      // sequence from a hostile backend could still reach the terminal
+      // unsanitized. Strip it the same way every other server-supplied string
+      // in this module is stripped (sanitizeServerText).
+      if (
+        err instanceof Error &&
+        !(err instanceof HttpError) &&
+        !(err instanceof RequestTimeoutError) &&
+        !(err instanceof InsecureTransportError) &&
+        !(err instanceof StreamTimeoutError) &&
+        !(err instanceof StreamUnavailableError) &&
+        err.name !== "AbortError"
+      ) {
+        throw new Error(sanitizeServerText(err.message));
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Authed multipart POST — vault file upload. Same refresh-on-401 retry and
+   * HttpError classification as request(). Content-Type is left for fetch()
+   * itself to set (so it can add the multipart boundary); only the bearer
+   * header, if any, is layered on top of the caller's FormData body.
+   *
+   * `timeoutMs` (default AETHER_REQUEST_TIMEOUT_MS, 30s; 0 disables) bounds
+   * the request the same way request() does — this previously had NO timeout
+   * at all, so a stalled upload connection would hang forever.
+   */
+  async postForm<T>(path: string, form: FormData, signal?: AbortSignal, timeoutMs?: number): Promise<T> {
+    const effTimeoutMs = normalizeTimeoutMs(timeoutMs ?? defaultRequestTimeoutMs());
+    const net = new AbortController();
+    const releaseNet = (): void => net.abort();
+    if (signal) {
+      if (signal.aborted) releaseNet();
+      else signal.addEventListener("abort", releaseNet, { once: true });
+    }
+    try {
+      let used: string | null = null;
+      const send = async (): Promise<Response> => {
+        used = await this.tokens.get();
+        return raceAgainst(
+          fetch(this.url(path), {
+            method: "POST",
+            headers: await this.authHeaders(used),
+            body: form,
+            signal: net.signal,
+          }),
+          signal,
+          effTimeoutMs,
+          () => new RequestTimeoutError(effTimeoutMs),
+        );
+      };
+      let res = await send();
+      if (res.status === 401 && (await this.refreshSession(path, used))) {
+        void res.body?.cancel().catch(() => {});
+        res = await send();
+      }
+      if (!res.ok) throw await toHttpError(res);
+      return await parseOkBody<T>(res);
+    } finally {
+      releaseNet();
+      signal?.removeEventListener("abort", releaseNet);
+    }
   }
 
   private async request<T>(
     method: string,
     path: string,
-    opts: { body?: unknown; signal?: AbortSignal } = {},
+    opts: { body?: unknown; signal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<T> {
-    let used: string | null = null;
-    const send = async (): Promise<Response> => {
-      used = await this.tokens.get();
-      return fetch(this.url(path), {
-        method,
-        headers: {
-          ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
-          Accept: "application/json",
-          ...(await this.authHeaders(used)),
-        },
-        ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
-        ...(opts.signal ? { signal: opts.signal } : {}),
-      });
-    };
-    let res = await send();
-    if (res.status === 401 && (await this.refreshSession(path, used))) {
-      // Release the rejected response before retrying (see stream()).
-      void res.body?.cancel().catch(() => {});
-      res = await send();
+    // `?? ` (not `||`) so an explicit 0 (disabled) from a caller survives —
+    // only an OMITTED timeoutMs falls back to the env-driven default.
+    const timeoutMs = normalizeTimeoutMs(opts.timeoutMs ?? defaultRequestTimeoutMs());
+    const signal = opts.signal;
+    // Bounded by default (AETHER_REQUEST_TIMEOUT_MS, 30s): unlike stream(),
+    // this had NO timeout at all — a silently-dropped connection to /models,
+    // /auth/refresh, or the device-poll endpoint would hang forever with
+    // nothing but the caller's own (often absent) AbortSignal to save it.
+    // `net` is a SEPARATE controller from the caller's own `signal` (mirrors
+    // stream()) so releasing the socket on timeout can never be mistaken for
+    // the caller's own abort.
+    const net = new AbortController();
+    const releaseNet = (): void => net.abort();
+    if (signal) {
+      if (signal.aborted) releaseNet();
+      else signal.addEventListener("abort", releaseNet, { once: true });
     }
-    if (!res.ok) throw await toHttpError(res);
-    // Mirrors toHttpError()'s own defensive res.json() below: a 2xx response
-    // can still have an empty or non-JSON body (e.g. 204 No Content from the
-    // new deleteJson()), which would otherwise throw an uncaught SyntaxError
-    // here instead of letting the caller's own domain check report it.
     try {
-      return (await res.json()) as T;
-    } catch {
-      return undefined as T;
+      let used: string | null = null;
+      const send = async (): Promise<Response> => {
+        used = await this.tokens.get();
+        return raceAgainst(
+          fetch(this.url(path), {
+            method,
+            headers: {
+              ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
+              Accept: "application/json",
+              ...(await this.authHeaders(used)),
+            },
+            ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
+            signal: net.signal,
+          }),
+          signal,
+          timeoutMs,
+          () => new RequestTimeoutError(timeoutMs),
+        );
+      };
+      let res = await send();
+      if (res.status === 401 && (await this.refreshSession(path, used))) {
+        // Release the rejected response before retrying (see stream()).
+        void res.body?.cancel().catch(() => {});
+        res = await send();
+      }
+      if (!res.ok) throw await toHttpError(res);
+      return await parseOkBody<T>(res);
+    } finally {
+      releaseNet();
+      signal?.removeEventListener("abort", releaseNet);
     }
   }
+}
+
+/**
+ * Parse a 2xx response body for request()/postForm(). An EMPTY body (e.g. 204
+ * No Content from deleteJson()) is a legitimate "no data" response and yields
+ * `undefined` — but a NON-empty body that still fails to parse as JSON means
+ * the server said "ok" and then didn't give usable data (including a
+ * connection dropped mid-response, leaving truncated JSON), which is a real
+ * problem the caller's own domain check can't be expected to catch (it
+ * assumes `T`, not `T | undefined`). That case throws a typed
+ * MalformedResponseError instead of silently becoming `undefined as T`, so it
+ * flows through errorHint()/hintFor() like any other server-side failure
+ * instead of surfacing as a raw property-access TypeError one layer up
+ * (e.g. slash.ts's getCatalog -> `cat.models`, auth.ts's authRefresh ->
+ * `r.session_token`).
+ *
+ * Reads the raw text FIRST and only treats a genuinely empty (or
+ * whitespace-only) body as "no content" — classifying by the JSON.parse
+ * error's message instead (e.g. matching "Unexpected end of JSON input")
+ * would also match a truncated-but-nonempty body cut short mid-object, which
+ * is exactly the dropped-connection case this fix exists to catch, not a
+ * legitimate empty response.
+ */
+async function parseOkBody<T>(res: Response): Promise<T> {
+  let text: string;
+  try {
+    text = await res.text();
+  } catch {
+    throw new MalformedResponseError(res.status);
+  }
+  if (!text.trim()) return undefined as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new MalformedResponseError(res.status);
+  }
+}
+
+/**
+ * Server-controlled text lands raw in the terminal: strip C0+C1 control chars
+ * (ESC, single-byte CSI, newlines) and cap the length. Printable residue of a
+ * stripped escape (e.g. "[31m") is harmless text.
+ *
+ * The one canonical treatment for any raw server-supplied string that may be
+ * embedded in an Error message a caller prints to the terminal — shared by
+ * toHttpError (below, every non-2xx response) and loginWithPassword's
+ * `reason` field (auth.ts), which used to build its thrown Error directly
+ * from the unsanitized, uncapped field, bypassing this exact protection
+ * (LOOP-06 round 2: an OSC 52 clipboard-hijack payload in a login failure
+ * `reason` would otherwise reach the terminal verbatim via login.ts's
+ * headless catch).
+ */
+export function sanitizeServerText(v: string): string {
+  return v.replace(/[\x00-\x1f\x7f-\x9f]+/g, " ").trim().slice(0, 200);
 }
 
 async function toHttpError(res: Response): Promise<HttpError> {
@@ -322,10 +570,7 @@ async function toHttpError(res: Response): Promise<HttpError> {
     for (const k of ["message", "detail", "reason", "error"]) {
       const v = (body as Record<string, unknown>)[k];
       if (typeof v === "string" && v.trim()) {
-        // Server-controlled text lands raw in the terminal: strip C0+C1 control
-        // chars (ESC, single-byte CSI, newlines) and cap the length. Printable
-        // residue of a stripped escape (e.g. "[31m") is harmless text.
-        msg = `HTTP ${res.status}: ${v.replace(/[\x00-\x1f\x7f-\x9f]+/g, " ").trim().slice(0, 200)}`;
+        msg = `HTTP ${res.status}: ${sanitizeServerText(v)}`;
         break;
       }
     }
@@ -360,19 +605,47 @@ function normalizeTimeoutMs(ms: number): number {
   return Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : 0;
 }
 
+/** Exported so tests can pin AETHER_REQUEST_TIMEOUT_MS parsing without a live request. */
+export function defaultRequestTimeoutMs(): number {
+  const raw = process.env["AETHER_REQUEST_TIMEOUT_MS"];
+  if (raw == null || raw.trim() === "") return DEFAULT_REQUEST_TIMEOUT_MS;
+  const parsed = Number(raw);
+  // 0 is a valid "disabled" value (see normalizeTimeoutMs) — only fall back to
+  // the default when the env var is missing or genuinely invalid, never
+  // silently discard an explicit 0.
+  if (parsed === 0) return 0;
+  return normalizeTimeoutMs(parsed) || DEFAULT_REQUEST_TIMEOUT_MS;
+}
+
 /** Races `promise` against the caller's own abort and an independent timeout
  *  timer. Each loses its race with its own error (the caller's real
- *  AbortError, or a fresh StreamTimeoutError) — there's no shared mutable
- *  "reason" field for the two to race over, so neither can be mistaken for
- *  the other regardless of which fires first. */
-function raceAgainst<T>(promise: Promise<T>, signal: AbortSignal | undefined, timeoutMs: number): Promise<T> {
-  if (signal?.aborted) return Promise.reject(abortError(signal));
+ *  AbortError, or `onTimeout()`'s error — StreamTimeoutError for stream(),
+ *  RequestTimeoutError for request()) — there's no shared mutable "reason"
+ *  field for the two to race over, so neither can be mistaken for the other
+ *  regardless of which fires first. */
+function raceAgainst<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+  onTimeout: () => unknown = () => new StreamTimeoutError(timeoutMs),
+): Promise<T> {
+  if (signal?.aborted) {
+    // `promise` (e.g. fetch(net.signal), already argument-evaluated by the
+    // caller before raceAgainst runs) is being discarded in favor of one
+    // consistent abortError(signal) result below -- but it can still go on
+    // to reject on its own (net.signal was wired to the same abort). Always
+    // attach a swallow-only catch so THAT rejection can never surface as an
+    // unhandled promise rejection (mirrors withIdleTimeout's iterator.return()
+    // handling below).
+    promise.catch(() => {});
+    return Promise.reject(abortError(signal));
+  }
   const racers: Promise<T>[] = [promise];
   let timer: ReturnType<typeof setTimeout> | undefined;
   if (timeoutMs > 0) {
     racers.push(
       new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new StreamTimeoutError(timeoutMs)), timeoutMs);
+        timer = setTimeout(() => reject(onTimeout()), timeoutMs);
         timer.unref?.();
       }),
     );
@@ -418,4 +691,27 @@ async function* withIdleTimeout(
     // promise rejection (which the REPL's global handler turns into a crash).
     iterator.return?.()?.catch(() => {});
   }
+}
+
+/**
+ * Wrap an async iterable (withIdleTimeout()'s output) as a Web ReadableStream
+ * so getBinary() can hand back a genuine Response whose `.body` still behaves
+ * like a normal fetch body for its callers (vault.ts/vision.ts pipe it
+ * straight to disk). A pull() rejection — an idle-timeout or abort surfacing
+ * from the wrapped iterator — errors the stream instead of hanging it; per
+ * the Streams spec a rejected pull() automatically errors the stream with
+ * that reason, so no separate try/catch is needed here.
+ */
+function toReadableStream(iterable: AsyncIterable<Uint8Array>): ReadableStream<Uint8Array> {
+  const iterator = iterable[Symbol.asyncIterator]();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const next = await iterator.next();
+      if (next.done) controller.close();
+      else controller.enqueue(next.value);
+    },
+    async cancel(reason) {
+      await iterator.return?.(reason);
+    },
+  });
 }

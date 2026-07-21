@@ -15,6 +15,7 @@ import { TaskLedger } from "../ui/ledger.js";
 import { errTheme } from "../ui/theme.js";
 import { sanitizeTerm } from "../ui/text.js";
 import { MdStream } from "../ui/md_stream.js";
+import { formatErrorLine } from "../ui/error_line.js";
 
 export interface RenderOptions {
   json: boolean;
@@ -159,12 +160,10 @@ export class Renderer {
     // glyph goes to stderr, or scrollback interleaves the two out of order.
     const rest = this.md.flush();
     if (rest) this.out.write(rest);
-    // errTheme.red keeps the glyph consistently red regardless of stdout's
-    // TTY-ness (it's keyed off stderr); sanitize the server-sourced fields so
-    // a hostile/buggy server can't smuggle OSC/CSI through an error message.
-    this.err.write(`\n${errTheme.red("✗")} ${sanitizeTerm(f.msg)}`);
-    if (f.errorCode) this.err.write(` [${sanitizeTerm(f.errorCode)}]`);
-    if (f.refId) this.err.write(` (ref ${sanitizeTerm(f.refId)})`);
-    this.err.write("\n");
+    // formatErrorLine (LOOP-06) owns the glyph/hint/separator convention so
+    // a mid-stream server error reads identically to chat.ts's printError
+    // for a client-caught one (e.g. the same "session expired" moment no
+    // longer looks different depending on which path caught it).
+    this.err.write(formatErrorLine(f.msg, { errorCode: f.errorCode, refId: f.refId }));
   }
 }

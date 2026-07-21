@@ -23,14 +23,13 @@ const tokens = { get: async () => "aek_t" } as unknown as TokenStore;
 test("a network-backed slash command's signal reaches fetch (so SIGINT can cancel it, not the session)", async () => {
   const captured: { signal?: AbortSignal | null } = {};
   const real = globalThis.fetch;
+  // Hangs (rather than resolving immediately) so there's a genuine in-flight
+  // window to abort during — request()'s internal `net` controller (see
+  // transport.ts, LOOP-01/LOOP-06 round-1) is only wired to the caller's
+  // abort event while the call is still pending.
   globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
     captured.signal = init?.signal;
-    return {
-      ok: true,
-      status: 200,
-      headers: new Headers({ "content-type": "application/json" }),
-      json: async () => ({ entries: [], count: 0 }),
-    } as unknown as Response;
+    return new Promise<Response>(() => {});
   }) as typeof globalThis.fetch;
   try {
     const ctx = {
@@ -45,8 +44,15 @@ test("a network-backed slash command's signal reaches fetch (so SIGINT can cance
     // catalog cache, so this assertion can't be defeated by an earlier test
     // (e.g. "/model switch...") having already warmed that cache under
     // --test-isolation=none.
-    await handleSlash(ctx, "/audit", new Capture(), ac.signal);
-    assert.equal(captured.signal, ac.signal);
+    const pending = handleSlash(ctx, "/audit", new Capture(), ac.signal);
+    ac.abort();
+    await assert.rejects(pending);
+    // request() now wires the caller's signal to its OWN internal `net`
+    // AbortController (see abort.test.ts), so we assert the behavioral
+    // guarantee — a signal reached fetch, and aborting the caller's
+    // controller aborted it — not reference identity to ac.signal.
+    assert.ok(captured.signal, "fetch should have received a signal");
+    assert.equal(captured.signal?.aborted, true);
   } finally {
     globalThis.fetch = real;
   }

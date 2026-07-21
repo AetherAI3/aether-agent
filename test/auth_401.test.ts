@@ -1,5 +1,5 @@
 // Regression tests for the "login succeeds but model-select throws HTTP 401"
-// bug (PR #47). Three layers:
+// bug (PR #47). Four layers:
 //   1. tokenStoreFromEnv: a fresh login must PERSIST even when AETHER_TOKEN is
 //      injected — previously it vanished with the process, so every later run
 //      re-read the stale env token and 401'd despite "✓ Logged in."
@@ -7,6 +7,18 @@
 //      + retry before the 401 surfaces. aek_ API keys never trigger refresh.
 //   3. errorHint: 401 / 402 / 403 are distinct + the server's own detail
 //      (e.g. a UVT-balance message) is surfaced instead of a bare "HTTP 401".
+//   4. renderAuthBox (LOOP-06): `aether auth status` must not print
+//      "Authenticated" when the server has just rejected the stored token
+//      with a 401/403 — that used to be folded into the same silent
+//      "server unreachable, show what we know locally" catch as a genuine
+//      network outage.
+//   5. cmdAuth (LOOP-06 round 2): renderAuthBox's /models call is the FIRST
+//      network round-trip either the "status" subcommand or bare `aether
+//      auth` make, and previously nothing was written to stdout until the
+//      whole thing resolved — up to DEFAULT_REQUEST_TIMEOUT_MS of silence on
+//      a slow connection ("the REPL just looks hung", the exact defect class
+//      PR #47 fixed for slash.ts's catalog fetch). cmdAuth must now print a
+//      loading line BEFORE awaiting renderAuthBox.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
@@ -16,6 +28,10 @@ import { tokenStoreFromEnv, FileTokenStore, StaticTokenStore } from "../src/core
 import { ApiClient } from "../src/core/transport.js";
 import { errorHint, HttpError } from "../src/core/errors.js";
 import { hintFor } from "../src/core/error_hints.js";
+import { renderAuthBox, cmdAuth } from "../src/commands/auth.js";
+import type { LoginOpts } from "../src/commands/login.js";
+import { stripAnsi } from "../src/ui/theme.js";
+import type { AppContext } from "../src/core/context.js";
 
 function withTempConfigDir<T>(fn: () => Promise<T>): Promise<T> {
   const dir = join(tmpdir(), `aether-401-${process.pid}-${Math.random().toString(36).slice(2)}`);
@@ -247,3 +263,257 @@ test("EnvOverrideTokenStore: update() (auto-refresh) swaps the active token WITH
     assert.equal(await store.get(), "sess_embedded_rotated", "active token rotated in-process");
     assert.equal(await disk.get(), "disk_standalone_login", "standalone on-disk login untouched");
   }));
+
+// ── 5. renderAuthBox (LOOP-06): 401/403 must not read as "Authenticated" ──
+
+function fakeCtx(api: ApiClient, tokens: StaticTokenStore): AppContext {
+  return {
+    cfg: { baseUrl: "https://api.example" },
+    api,
+    tokens,
+    flags: { cwd: process.cwd(), json: false, audit: false, yes: false },
+    confirm: async () => false,
+  } as unknown as AppContext;
+}
+
+test("renderAuthBox: a 401 from /models renders a distinct 'Session expired' state, not 'Authenticated'", async () => {
+  const real = globalThis.fetch;
+  // An aek_ API key never triggers refresh (see the aek_ test above), so the
+  // 401 from /models surfaces to renderAuthBox's catch untouched.
+  const tokens = new StaticTokenStore("aek_deadtoken1234");
+  stubFetch(() => jsonRes(401, { detail: "token revoked" }), []);
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const panel = stripAnsi(await renderAuthBox(fakeCtx(api, tokens)));
+    assert.match(panel, /Session expired/);
+    assert.doesNotMatch(panel, /Authenticated/, "must not claim Authenticated for a rejected token");
+    assert.match(panel, /aether auth login/);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("renderAuthBox: a 403 from /models also renders 'Session expired' (not silently 'Authenticated')", async () => {
+  const real = globalThis.fetch;
+  const tokens = new StaticTokenStore("aek_deadtoken1234");
+  stubFetch(() => jsonRes(403, { detail: "forbidden" }), []);
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const panel = stripAnsi(await renderAuthBox(fakeCtx(api, tokens)));
+    assert.match(panel, /Session expired/);
+    assert.doesNotMatch(panel, /Authenticated/);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("renderAuthBox: a genuine network outage (no HttpError) still falls back to the silent 'Authenticated' panel", async () => {
+  const real = globalThis.fetch;
+  const tokens = new StaticTokenStore("aek_deadtoken1234");
+  globalThis.fetch = (async () => {
+    throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+  }) as typeof globalThis.fetch;
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const panel = stripAnsi(await renderAuthBox(fakeCtx(api, tokens)));
+    assert.match(panel, /Authenticated/, "an unreachable server is not a rejected session");
+    assert.doesNotMatch(panel, /Session expired/);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("renderAuthBox: a successful /models call renders the normal 'Authenticated' panel with tier/default", async () => {
+  const real = globalThis.fetch;
+  const tokens = new StaticTokenStore("aek_deadtoken1234");
+  stubFetch(() => jsonRes(200, { tier: "pro", default: "aether-large" }), []);
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const panel = stripAnsi(await renderAuthBox(fakeCtx(api, tokens)));
+    assert.match(panel, /Authenticated/);
+    assert.doesNotMatch(panel, /Session expired/);
+    assert.match(panel, /pro/);
+    assert.match(panel, /aether-large/);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+// ── 6. cmdAuth (LOOP-06 round 2): loading feedback before the /models call ──
+//
+// These intercept the process-wide process.stdout.write, which — unlike the
+// renderAuthBox tests above — is a genuinely global stream shared with the
+// test runner's own reporter. Matching on a broad /Authenticated/ regex over
+// that captured stream is a trap: a SIBLING test's own description text
+// ("...renders the normal 'Authenticated' panel...") can be flushed by the
+// reporter through that same intercepted stream while this test's capture
+// window is open, producing a false match unrelated to cmdAuth's own output.
+// PANEL_MARKER is the exact, singular header string renderAuthBox emits
+// (auth.ts's `theme.bold("Aether Agent — Authenticated")`) — not a string
+// that appears anywhere in a test name — so a match can only come from
+// cmdAuth's own finished panel actually having been written.
+const PANEL_MARKER = "Aether Agent — Authenticated";
+
+function captureStdout(): { writes: string[]; restore: () => void } {
+  const writes: string[] = [];
+  const orig = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: unknown) => {
+    writes.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  return {
+    writes,
+    restore: () => {
+      process.stdout.write = orig;
+    },
+  };
+}
+
+test("cmdAuth 'status': prints a loading line BEFORE the /models call resolves — no silent hang", async () => {
+  const real = globalThis.fetch;
+  const tokens = new StaticTokenStore("aek_deadtoken1234");
+  let resolveFetch: (r: Response) => void = () => {};
+  const pending = new Promise<Response>((res) => {
+    resolveFetch = res;
+  });
+  // Simulate a stalled/slow connection: fetch never resolves until we say so.
+  globalThis.fetch = (async () => pending) as typeof globalThis.fetch;
+  const cap = captureStdout();
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const ctx = fakeCtx(api, tokens);
+    const done = cmdAuth(ctx, ["status"], {} as LoginOpts);
+    // Let queued microtasks (the write before the await) run while the
+    // network call is still deliberately left hanging.
+    await new Promise((r) => setImmediate(r));
+    assert.ok(
+      cap.writes.some((w) => /checking session/i.test(w)),
+      "a loading line must be written before the network call resolves",
+    );
+    assert.ok(
+      !cap.writes.some((w) => w.includes(PANEL_MARKER)),
+      "the finished panel must NOT have printed yet — /models is still pending",
+    );
+    resolveFetch(jsonRes(200, { tier: "pro", default: "aether-large" }));
+    const code = await done;
+    assert.equal(code, 0);
+    assert.ok(cap.writes.some((w) => w.includes(PANEL_MARKER)), "the panel prints once /models resolves");
+  } finally {
+    globalThis.fetch = real;
+    cap.restore();
+  }
+});
+
+test("cmdAuth bare `aether auth` (no subcommand): same loading line before the /models call resolves", async () => {
+  const real = globalThis.fetch;
+  const tokens = new StaticTokenStore("aek_deadtoken1234");
+  let resolveFetch: (r: Response) => void = () => {};
+  const pending = new Promise<Response>((res) => {
+    resolveFetch = res;
+  });
+  globalThis.fetch = (async () => pending) as typeof globalThis.fetch;
+  const cap = captureStdout();
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const ctx = fakeCtx(api, tokens);
+    const done = cmdAuth(ctx, [], {} as LoginOpts);
+    await new Promise((r) => setImmediate(r));
+    assert.ok(
+      cap.writes.some((w) => /checking session/i.test(w)),
+      "bare `aether auth` must also show loading feedback before /models resolves",
+    );
+    assert.ok(!cap.writes.some((w) => w.includes(PANEL_MARKER)));
+    resolveFetch(jsonRes(200, { tier: "pro", default: "aether-large" }));
+    const code = await done;
+    assert.equal(code, 0);
+    assert.ok(cap.writes.some((w) => w.includes(PANEL_MARKER)));
+  } finally {
+    globalThis.fetch = real;
+    cap.restore();
+  }
+});
+
+// ── 7. authRefresh (LOOP-06 round 3): the catch block must go through the
+// shared formatErrorLine/errorHint convention — same as chat.ts's printError
+// — instead of a hand-built, unstyled `✗ <message>` template string with no
+// hint and no /doctor pointer. ──
+
+function captureStderr(): { writes: string[]; restore: () => void } {
+  const writes: string[] = [];
+  const orig = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: unknown) => {
+    writes.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  return {
+    writes,
+    restore: () => {
+      process.stderr.write = orig;
+    },
+  };
+}
+
+test("cmdAuth 'refresh': a network failure prints the shared formatErrorLine glyph + a /doctor hint", async () => {
+  const real = globalThis.fetch;
+  // A session token (not aek_-prefixed) so authRefresh actually attempts the
+  // POST /auth/refresh instead of short-circuiting on "API tokens don't expire".
+  const tokens = new StaticTokenStore("sess_expiring");
+  globalThis.fetch = (async () => {
+    throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+  }) as typeof globalThis.fetch;
+  const cap = captureStderr();
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const ctx = fakeCtx(api, tokens);
+    const code = await cmdAuth(ctx, ["refresh"], {} as LoginOpts);
+    assert.equal(code, 1);
+    const out = cap.writes.join("");
+    assert.match(out, /✗/, "must use formatErrorLine's glyph, not a bare template string");
+    assert.match(out, /\/doctor/, "a network failure must surface errorHint's /doctor pointer");
+    assert.match(out, /\n\n$/, "formatErrorLine's trailing blank-line separator must be present");
+  } finally {
+    globalThis.fetch = real;
+    cap.restore();
+  }
+});
+
+test("cmdAuth 'refresh': a server-rejected refresh (HttpError) still prints the shared glyph + the re-login hint", async () => {
+  const real = globalThis.fetch;
+  const tokens = new StaticTokenStore("sess_expiring");
+  globalThis.fetch = (async () => jsonRes(401, { detail: "refresh token revoked" })) as typeof globalThis.fetch;
+  const cap = captureStderr();
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const ctx = fakeCtx(api, tokens);
+    const code = await cmdAuth(ctx, ["refresh"], {} as LoginOpts);
+    assert.equal(code, 1);
+    const out = cap.writes.join("");
+    assert.match(out, /✗/, "must use formatErrorLine's glyph, not a bare template string");
+    assert.match(out, /refresh token revoked/, "the server's detail must still surface in the message");
+    assert.match(out, /aether auth login/, "a 401 must surface errorHint's re-login pointer");
+  } finally {
+    globalThis.fetch = real;
+    cap.restore();
+  }
+});
+
+test("cmdAuth 'refresh': a 200 with no session_token also prints the shared formatErrorLine glyph (not the one bare ✗ line left in authRefresh)", async () => {
+  const real = globalThis.fetch;
+  const tokens = new StaticTokenStore("sess_expiring");
+  globalThis.fetch = (async () => jsonRes(200, {})) as typeof globalThis.fetch;
+  const cap = captureStderr();
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const ctx = fakeCtx(api, tokens);
+    const code = await cmdAuth(ctx, ["refresh"], {} as LoginOpts);
+    assert.equal(code, 1);
+    const out = cap.writes.join("");
+    assert.match(out, /✗/, "must use formatErrorLine's glyph, not a bare template string");
+    assert.match(out, /Refresh failed/);
+    assert.match(out, /aether auth login/, "must still point at re-login even with no err object to derive a hint from");
+    assert.match(out, /\n\n$/, "formatErrorLine's trailing blank-line separator must be present");
+  } finally {
+    globalThis.fetch = real;
+    cap.restore();
+  }
+});

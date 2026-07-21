@@ -21,7 +21,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { configDir } from "./config.js";
-import { LOGIN_PATH, isCredentialSafeUrl } from "./transport.js";
+import { LOGIN_PATH, defaultRequestTimeoutMs, isCredentialSafeUrl, sanitizeServerText } from "./transport.js";
 
 export interface TokenStore {
   get(): Promise<string | null>;
@@ -92,6 +92,47 @@ export function defaultTokenStore(): TokenStore {
 }
 
 /**
+ * A long-lived API token (PAT) starts with `aek_`; a session token (minted by
+ * /auth/login or /auth/refresh) doesn't. The one canonical definition of that
+ * prefix, shared by transport.ts's refreshSession() (an `aek_` token never
+ * expires, so a 401 on one is never retried) and commands/auth.ts's
+ * isApiToken (status/token display) — previously hand-duplicated in both
+ * places, risking silent drift if the prefix scheme ever changes (LOOP-01
+ * round 2; mirrors this file's own tokenStoreForInjected, added for the same
+ * "one canonical decision" reason).
+ */
+export function isApiKeyToken(token: string | null | undefined): boolean {
+  return typeof token === "string" && token.startsWith("aek_");
+}
+
+/**
+ * The one canonical "injected token -> TokenStore" decision, shared by every
+ * surface that resolves an embedded/injected session token (tokenStoreFromEnv
+ * for the CLI entry, AetherClient's constructor for library embedders) so the
+ * choice can't silently drift into hand-maintained copies (LOOP-01 round 1).
+ *
+ * An empty/whitespace token counts as unset and falls back to the file store.
+ *
+ * `persistOnLogin` is the one axis that legitimately differs by surface:
+ *  - true  (EnvOverrideTokenStore): an explicit login's fresh token persists to
+ *    disk too, so a NEW process (no env override) still sees it — this is the
+ *    CLI-entry fix for PR #47's "✓ Logged in" evaporating with the process.
+ *  - false (StaticTokenStore): the token stays in-process only. AetherClient is
+ *    an embeddable library surface (desktop in-process embed, Aether AI on the
+ *    web) whose consumers explicitly must NOT have a `.login()` call clobber
+ *    the standalone CLI's independent on-disk session — see StaticTokenStore's
+ *    doc comment below.
+ */
+export function tokenStoreForInjected(
+  injected: string | undefined | null,
+  opts: { persistOnLogin: boolean },
+): TokenStore {
+  const t = (injected ?? "").trim();
+  if (!t) return defaultTokenStore();
+  return opts.persistOnLogin ? new EnvOverrideTokenStore(t, defaultTokenStore()) : new StaticTokenStore(t);
+}
+
+/**
  * Token store for a running CLI process, choosing the source by environment.
  *
  * An injected `AETHER_TOKEN` — how the desktop app (and the web server) embed a
@@ -99,13 +140,14 @@ export function defaultTokenStore(): TokenStore {
  * store, so a user already signed into AetherCloud who opens a terminal is
  * authenticated as that same account and is NEVER asked to re-run
  * `aether auth login`. With no env token (a standalone CLI user), it falls back
- * to the file store, so the normal login flow is unaffected. An empty/whitespace
- * value counts as unset. Mirrors AetherClient's embedded-token resolution so the
- * interactive REPL and the universal chat client agree on auth.
+ * to the file store, so the normal login flow is unaffected. Mirrors
+ * AetherClient's embedded-token resolution (both go through
+ * tokenStoreForInjected) so the interactive REPL and the universal chat client
+ * agree on auth reads; only the login-persistence axis differs (see
+ * tokenStoreForInjected's doc comment).
  */
 export function tokenStoreFromEnv(env: NodeJS.ProcessEnv = process.env): TokenStore {
-  const injected = (env["AETHER_TOKEN"] ?? "").trim();
-  return injected ? new EnvOverrideTokenStore(injected, defaultTokenStore()) : defaultTokenStore();
+  return tokenStoreForInjected(env["AETHER_TOKEN"], { persistOnLogin: true });
 }
 
 /**
@@ -179,6 +221,14 @@ export async function loginWithPassword(
   creds: { username: string; password: string; licenseKey?: string },
 ): Promise<LoginResult> {
   if (!isCredentialSafeUrl(baseUrl)) throw new Error("login refused: insecure transport");
+  // Bounded on its own: this runs before any token exists, so it can't go
+  // through ApiClient.request()'s default timeout — without one, a stalled
+  // /auth/login response would hang the headless `--username/--password` flow
+  // (login.ts's CI/scripts path) forever with no other cancellation mechanism.
+  // Shares AETHER_REQUEST_TIMEOUT_MS with ApiClient so one env var controls
+  // both; 0 (explicitly disabled) is honored rather than passing a
+  // zero-length AbortSignal.timeout(), which would abort immediately.
+  const timeoutMs = defaultRequestTimeoutMs();
   const res = await fetch(baseUrl.replace(/\/$/, "") + LOGIN_PATH, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -187,6 +237,7 @@ export async function loginWithPassword(
       password: creds.password,
       license_key: creds.licenseKey ?? null,
     }),
+    ...(timeoutMs > 0 ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
   });
   let body: LoginResponseBody;
   try {
@@ -195,11 +246,27 @@ export async function loginWithPassword(
     throw new Error(`login failed (HTTP ${res.status})`);
   }
   if (!res.ok || !body.authenticated || !body.session_token) {
-    throw new Error(`login failed: ${body.reason ?? `HTTP ${res.status}`}`);
+    // body.reason is raw JSON from an un-authenticated POST /auth/login
+    // response — a compromised/misconfigured backend (or a self-hosted dev
+    // server) could otherwise inject raw control bytes, including OSC 52
+    // clipboard-hijack sequences, since login.ts's headless catch writes
+    // this message straight to stderr with no sanitization of its own
+    // (LOOP-06 round 2). Same strip-and-cap treatment toHttpError applies to
+    // every OTHER server-text path, via the shared sanitizeServerText().
+    const reason =
+      typeof body.reason === "string" && body.reason.trim() ? sanitizeServerText(body.reason) : undefined;
+    throw new Error(`login failed: ${reason ?? `HTTP ${res.status}`}`);
   }
   await store.set(body.session_token);
   const result: LoginResult = {};
-  if (body.plan != null) result.plan = body.plan;
-  if (body.commitment_hash != null) result.commitmentHash = body.commitment_hash;
+  // Same server-controlled-text hazard as `reason` above, just on the SUCCESS
+  // path: login.ts:74 writes `plan` straight to stdout
+  // (`✓ Logged in (plan: ${r.plan}).`) with no sanitization of its own, so a
+  // compromised/misconfigured backend's `plan`/`commitment_hash` fields need
+  // the same treatment before they leave loginWithPassword.
+  if (typeof body.plan === "string" && body.plan.trim()) result.plan = sanitizeServerText(body.plan);
+  if (typeof body.commitment_hash === "string" && body.commitment_hash.trim()) {
+    result.commitmentHash = sanitizeServerText(body.commitment_hash);
+  }
   return result;
 }

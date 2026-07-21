@@ -4,8 +4,7 @@
 // download helpers with streaming fetch, output manager with persistent log.
 // No terminal I/O. Every function wraps a single concept.
 
-import { ApiClient, isCredentialSafeUrl } from "./transport.js";
-import { InsecureTransportError } from "./errors.js";
+import { ApiClient, defaultStreamTimeoutMs } from "./transport.js";
 import type { CatalogItem } from "../types.js";
 import { createWriteStream, mkdirSync, readdirSync, statSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -190,13 +189,17 @@ export function buildMediaPrompt(prompt: string, flags: GenFlags, _kind: MediaKi
 export async function dispatchGeneration(
   api: ApiClient, prompt: string, modelKey: string, flags: GenFlags,
 ): Promise<ChatGenResponse> {
+  // Same generation-class call as CHAT_PATH elsewhere (chat.ts/brain_cloud.ts/
+  // client.ts) — media generation can legitimately run well past the 30s
+  // default request timeout, so it opts into the same 120s stream-class bound
+  // instead (undefined signal: this call isn't user-cancelable mid-flight).
   return api.postJson<ChatGenResponse>("/agent/chat", {
     query: prompt,
     forced_model_key: modelKey,
     media_mode: true,
     mode: "plan",
     ...(flags.ref ? { ref_image: flags.ref } : {}),
-  });
+  }, undefined, defaultStreamTimeoutMs());
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -210,12 +213,6 @@ export function ensureOutputDir(): string {
   return OUTPUT_DIR;
 }
 
-async function authHeaders(api: ApiClient): Promise<Record<string, string>> {
-  return (api as unknown as {
-    authHeaders: () => Promise<Record<string, string>>
-  }).authHeaders();
-}
-
 function mediaExt(modelKey: string, kind: MediaKind): string {
   if (kind === "video") return ".mp4";
   if (kind === "3d") return ".glb";
@@ -227,15 +224,12 @@ export async function downloadMediaFile(
   api: ApiClient, url: string, destDir: string,
   modelKey: string, kind: MediaKind, label?: string,
 ): Promise<string> {
-  const headers = await authHeaders(api);
-  // Only enforce the credential-safe-transport guard when a bearer token is
-  // actually about to be attached — mirrors transport.ts's authHeaders()/
-  // vault.ts's _authHeaders() token-conditional pattern. An anonymous session
-  // or a non-loopback self-hosted media host has nothing to leak, so it
-  // shouldn't hard-fail the download.
-  if ("Authorization" in headers && !isCredentialSafeUrl(url)) throw new InsecureTransportError(url);
-  const resp = await fetch(url, { headers });
-  if (!resp.ok) throw new Error(`download failed: HTTP ${resp.status}`);
+  // getBinary() attaches the same bearer token as every other authed call
+  // (with the same refresh-on-401 retry) and, when a token is actually about
+  // to be attached, fail-closes if `url` isn't a credential-safe transport —
+  // an anonymous session or a non-loopback self-hosted media host has
+  // nothing to leak, so that case shouldn't hard-fail the download.
+  const resp = await api.getBinary(url);
   if (!resp.body) throw new Error("download failed: empty body");
 
   let filename = label ? label.replace(/[^a-zA-Z0-9._-]/g, "_") : undefined;
@@ -404,10 +398,12 @@ export async function parseStoryboard(
 ): Promise<StoryboardParseResult> {
   const style = options?.style ?? "cinematic";
   const content = sourceType === "script_file" ? readFileSync(source, "utf-8") : source;
+  // Same generation-class call as dispatchGeneration above — opt into the
+  // 120s stream-class timeout, not the 30s request default.
   const resp = await api.postJson<ChatGenResponse>("/agent/chat", {
     query: `STORYBOARD REQUEST:\n\n${content}`,
     forced_model_key: "sonnet", mode: "plan",
-  });
+  }, undefined, defaultStreamTimeoutMs());
   const raw = resp.response || resp.text || "";
   const scenes = parseScenes(raw);
   const title = sourceType === "prompt"
