@@ -4,7 +4,7 @@
 // download helpers with streaming fetch, output manager with persistent log.
 // No terminal I/O. Every function wraps a single concept.
 
-import { ApiClient } from "./transport.js";
+import { ApiClient, defaultStreamTimeoutMs } from "./transport.js";
 import type { CatalogItem } from "../types.js";
 import { createWriteStream, mkdirSync, readdirSync, statSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -189,13 +189,17 @@ export function buildMediaPrompt(prompt: string, flags: GenFlags, _kind: MediaKi
 export async function dispatchGeneration(
   api: ApiClient, prompt: string, modelKey: string, flags: GenFlags,
 ): Promise<ChatGenResponse> {
+  // Same generation-class call as CHAT_PATH elsewhere (chat.ts/brain_cloud.ts/
+  // client.ts) — media generation can legitimately run well past the 30s
+  // default request timeout, so it opts into the same 120s stream-class bound
+  // instead (undefined signal: this call isn't user-cancelable mid-flight).
   return api.postJson<ChatGenResponse>("/agent/chat", {
     query: prompt,
     forced_model_key: modelKey,
     media_mode: true,
     mode: "plan",
     ...(flags.ref ? { ref_image: flags.ref } : {}),
-  });
+  }, undefined, defaultStreamTimeoutMs());
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -394,10 +398,12 @@ export async function parseStoryboard(
 ): Promise<StoryboardParseResult> {
   const style = options?.style ?? "cinematic";
   const content = sourceType === "script_file" ? readFileSync(source, "utf-8") : source;
+  // Same generation-class call as dispatchGeneration above — opt into the
+  // 120s stream-class timeout, not the 30s request default.
   const resp = await api.postJson<ChatGenResponse>("/agent/chat", {
     query: `STORYBOARD REQUEST:\n\n${content}`,
     forced_model_key: "sonnet", mode: "plan",
-  });
+  }, undefined, defaultStreamTimeoutMs());
   const raw = resp.response || resp.text || "";
   const scenes = parseScenes(raw);
   const title = sourceType === "prompt"

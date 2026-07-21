@@ -2,7 +2,7 @@
 // Sends template type + name to backend; backend fills via locked-down LLM prompt.
 
 import type { ApiClient } from "./transport.js";
-import { UVT_SCAFFOLD_PATH } from "./transport.js";
+import { UVT_SCAFFOLD_PATH, defaultStreamTimeoutMs } from "./transport.js";
 
 export type ScaffoldType = "component" | "route" | "module";
 
@@ -23,11 +23,13 @@ export async function generateScaffold(
   name: string,
   language = "typescript",
 ): Promise<ScaffoldResponse> {
+  // LLM-backed generation, same class as dispatchGeneration (vision.ts) —
+  // opt into the 120s stream-class timeout instead of the 30s request default.
   return api.postJson<ScaffoldResponse>(UVT_SCAFFOLD_PATH, {
     type,
     name,
     language,
-  } as ScaffoldRequest);
+  } as ScaffoldRequest, undefined, defaultStreamTimeoutMs());
 }
 
 // ── Validation ──────────────────────────────
