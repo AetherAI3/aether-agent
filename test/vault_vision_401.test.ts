@@ -128,6 +128,53 @@ test("uploadFile: the multipart body is a file-backed Blob (fs.openAsBlob), not 
     }
   }));
 
+// LOOP-01 round 3: uploadFile() used to rely on postForm()'s bare default
+// (AETHER_REQUEST_TIMEOUT_MS, 30s) to bound the WHOLE request — connect +
+// send-body + wait-for-response — with no split between a connect-phase
+// timeout and an idle/quiet-period timeout on the body the way getBinary()/
+// stream() have. Any upload whose transfer legitimately took longer than 30s
+// (a large file, a slow connection) always failed with RequestTimeoutError
+// even while data was actively flowing. uploadFile() now explicitly passes
+// defaultStreamTimeoutMs() (120s, AETHER_STREAM_TIMEOUT_MS) to postForm()
+// instead of letting it fall back to the 30s metadata-call default.
+//
+// Set AETHER_REQUEST_TIMEOUT_MS very low (what the OLD code would have used,
+// since it never overrode postForm's default) and AETHER_STREAM_TIMEOUT_MS
+// comfortably high, then have the stubbed fetch take longer than the request
+// bound but well within the stream bound. Pre-fix code races the fetch against
+// the 30s-default-turned-10ms bound and times out; post-fix code races it
+// against the 120s-default-turned-5s bound and succeeds — a fast, deterministic
+// discriminator that would fail against the old call site and pass against the
+// new one.
+test("uploadFile: opts into the stream-class timeout (defaultStreamTimeoutMs), not the 30s metadata-call default", () =>
+  withTempDir(async (dir) => {
+    const real = globalThis.fetch;
+    const prevReqTimeout = process.env["AETHER_REQUEST_TIMEOUT_MS"];
+    const prevStreamTimeout = process.env["AETHER_STREAM_TIMEOUT_MS"];
+    process.env["AETHER_REQUEST_TIMEOUT_MS"] = "10"; // what the old (un-overridden) default would be
+    process.env["AETHER_STREAM_TIMEOUT_MS"] = "5000"; // the bound uploadFile() should actually get
+    const filePath = join(dir, "slow.txt");
+    const content = "vault-upload-content";
+    writeFileSync(filePath, content);
+    globalThis.fetch = (async () => {
+      // Longer than the (old) 10ms request-default, comfortably inside the
+      // 5000ms stream-default — proves which bound was actually applied.
+      await new Promise((r) => setTimeout(r, 40));
+      return jsonRes(200, { key: "k1", filename: "slow.txt", size: content.length, content_type: "text/plain" });
+    }) as typeof globalThis.fetch;
+    try {
+      const api = new ApiClient("https://api.example", new StaticTokenStore("sess_1"));
+      const out = await uploadFile(api, filePath);
+      assert.deepEqual(out, { key: "k1", filename: "slow.txt", size: content.length, content_type: "text/plain" });
+    } finally {
+      globalThis.fetch = real;
+      if (prevReqTimeout === undefined) delete process.env["AETHER_REQUEST_TIMEOUT_MS"];
+      else process.env["AETHER_REQUEST_TIMEOUT_MS"] = prevReqTimeout;
+      if (prevStreamTimeout === undefined) delete process.env["AETHER_STREAM_TIMEOUT_MS"];
+      else process.env["AETHER_STREAM_TIMEOUT_MS"] = prevStreamTimeout;
+    }
+  }));
+
 // A plain correctness check alongside the above: normal (non-adversarial)
 // uploads still carry the exact file bytes end to end.
 test("uploadFile: uploads the exact file content via the file-backed Blob", () =>

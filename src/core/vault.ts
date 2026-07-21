@@ -5,7 +5,7 @@
 // fetch()) so they get the same refresh-on-401 retry and HttpError
 // classification as every other call.
 
-import { ApiClient } from "./transport.js";
+import { ApiClient, defaultStreamTimeoutMs } from "./transport.js";
 import {
   VAULT_LIST_PATH, VAULT_BROWSE_PATH,
   VAULT_SPACES_LIST_PATH, VAULT_SPACES_USAGE_PATH,
@@ -122,6 +122,21 @@ export async function getSpacesUsage(api: ApiClient): Promise<VaultSpacesUsage> 
  * streams the part out, so a large vault upload no longer holds the whole
  * file in memory twice (mirrors downloadFile()'s stream-straight-to-disk fix
  * for the download side, 1d33357).
+ *
+ * Passes defaultStreamTimeoutMs() (120s) as postForm()'s timeoutMs instead of
+ * letting it fall back to the 30s metadata-call default (AETHER_REQUEST_TIMEOUT_MS).
+ * postForm() bounds the ENTIRE request — connect + send-body + wait-for-response
+ * — with one flat timer; unlike getBinary()/stream(), it can't split that into
+ * a connect-phase timeout plus a separate idle timeout on the body, because
+ * fetch() only resolves once the *outgoing* multipart body has been fully sent
+ * and exposes no hook to observe upload progress in between. A flat 30s bound
+ * meant any upload whose transfer legitimately took longer (a large file, a
+ * slow/mobile connection) would always fail with RequestTimeoutError even while
+ * data was actively flowing. A file upload's duration profile is far closer to
+ * a full LLM turn (client.ts's/workflow.ts's CHAT_PATH fallback, which already
+ * passes this same stream-class timeout) than to a /models lookup, so it gets
+ * the same treatment. This is a partial fix, not the ideal connect-vs-idle
+ * split: an upload on a very slow link can still hit the flat 120s cap.
  */
 export async function uploadFile(
   api: ApiClient, filePath: string,
@@ -132,7 +147,7 @@ export async function uploadFile(
   const blob = await fs.openAsBlob(filePath);
   const formData = new FormData();
   formData.append("file", blob, filename);
-  return api.postForm(VAULT_SPACES_UPLOAD_PATH, formData);
+  return api.postForm(VAULT_SPACES_UPLOAD_PATH, formData, undefined, defaultStreamTimeoutMs());
 }
 
 /**
