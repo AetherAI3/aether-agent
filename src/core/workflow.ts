@@ -319,35 +319,40 @@ export async function finalizeWorkflow(
 
 const WF_EXT = ".aetherflow.json";
 
+// listSpaces/getSpacesContent/deleteSpacesFile (vault.ts) never throw for a
+// legitimate empty-result case (an empty vault is a 200 with `files: []`; a
+// missing file's absence shows up as `content: null`/`binary`, not an
+// exception) — so a thrown error here is always a REAL failure (expired
+// session, network outage, 5xx). These used to swallow that into an empty
+// list / null / false, which the command layer then reported as "no
+// workflows" / "not found" / "delete failed", hiding e.g. a 401 session
+// expiry with zero indication to run `aether auth login`. Let it propagate
+// instead — every call site already wraps these in its own try/catch that
+// calls fail(err) (see src/commands/workflow.ts), same as vault.ts's direct
+// (uncaught) use of getSpacesContent/deleteSpacesFile.
 export async function listWorkflows(api: ApiClient): Promise<WorkflowListItem[]> {
-  try {
-    const r = await listSpaces(api);
-    return r.files
-      .filter(f => f.filename.endsWith(WF_EXT))
-      .map(f => ({
-        name: f.filename.slice(0, -WF_EXT.length),
-        filename: f.filename,
-        size: f.size,
-        lastModified: f.last_modified,
-      }));
-  } catch { return []; }
+  const r = await listSpaces(api);
+  return r.files
+    .filter(f => f.filename.endsWith(WF_EXT))
+    .map(f => ({
+      name: f.filename.slice(0, -WF_EXT.length),
+      filename: f.filename,
+      size: f.size,
+      lastModified: f.last_modified,
+    }));
 }
 
 export async function getWorkflow(api: ApiClient, name: string): Promise<Workflow | null> {
   const filename = name.endsWith(WF_EXT) ? name : name + WF_EXT;
-  try {
-    const r = await getSpacesContent(api, filename);
-    if (r.binary || !r.content) return null;
-    return JSON.parse(r.content) as Workflow;
-  } catch { return null; }
+  const r = await getSpacesContent(api, filename);
+  if (r.binary || !r.content) return null;
+  return JSON.parse(r.content) as Workflow;
 }
 
 export async function deleteWorkflow(api: ApiClient, name: string): Promise<boolean> {
   const filename = name.endsWith(WF_EXT) ? name : name + WF_EXT;
-  try {
-    await deleteSpacesFile(api, filename);
-    return true;
-  } catch { return false; }
+  await deleteSpacesFile(api, filename);
+  return true;
 }
 
 /** Save a workflow object to vault by writing JSON to temp file, uploading it. */
