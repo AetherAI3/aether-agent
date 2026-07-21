@@ -13,6 +13,8 @@ import { LOGOUT_PATH } from "../core/transport.js";
 import { requestDeviceCode, pollForToken } from "../core/device.js";
 import { openBrowser } from "../core/browser.js";
 import { theme } from "../ui/theme.js";
+import { errorHint, errorMessage } from "../core/errors.js";
+import { formatErrorLine } from "../ui/error_line.js";
 
 export interface LoginOpts {
   token?: string;
@@ -75,7 +77,10 @@ export async function cmdLogin(ctx: AppContext, opts: LoginOpts): Promise<number
       warnEnvTokenShadow();
       return 0;
     } catch (err) {
-      process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+      // formatErrorLine (LOOP-06) owns the glyph/hint/separator convention —
+      // same as chat.ts's printError — so a headless login failure reads the
+      // same as any other auth-adjacent error instead of bare, uncolored text.
+      process.stderr.write(formatErrorLine(errorMessage(err), { hint: errorHint(err, ctx.cfg.baseUrl) }));
       return 1;
     }
   }
@@ -86,7 +91,7 @@ export async function cmdLogin(ctx: AppContext, opts: LoginOpts): Promise<number
     code = await requestDeviceCode(ctx.api);
   } catch (err) {
     process.stderr.write(
-      `✗ could not start login: ${err instanceof Error ? err.message : String(err)}\n`,
+      formatErrorLine(`could not start login: ${errorMessage(err)}`, { hint: errorHint(err, ctx.cfg.baseUrl) }),
     );
     return 1;
   }
@@ -103,7 +108,7 @@ export async function cmdLogin(ctx: AppContext, opts: LoginOpts): Promise<number
     warnEnvTokenShadow();
     return 0;
   } catch (err) {
-    process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(formatErrorLine(errorMessage(err), { hint: errorHint(err, ctx.cfg.baseUrl) }));
     return 1;
   }
 }

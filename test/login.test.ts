@@ -11,6 +11,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cmdLogin } from "../src/commands/login.js";
 import { StaticTokenStore } from "../src/core/auth.js";
+import { ApiClient } from "../src/core/transport.js";
 import type { AppContext } from "../src/core/context.js";
 
 function fakeCtx(): AppContext {
@@ -20,6 +21,32 @@ function fakeCtx(): AppContext {
     flags: { cwd: process.cwd(), json: false, audit: false, yes: false },
     confirm: async () => false,
   } as unknown as AppContext;
+}
+
+/** Same as fakeCtx() but with a real ApiClient wired in — the device-code
+ *  request/poll paths of cmdLogin go through ctx.api, unlike the headless
+ *  --username/--password path above which calls loginWithPassword directly. */
+function fakeCtxWithApi(): AppContext {
+  const tokens = new StaticTokenStore("");
+  return {
+    cfg: { baseUrl: "https://api.example" },
+    api: new ApiClient("https://api.example", tokens),
+    tokens,
+    flags: { cwd: process.cwd(), json: false, audit: false, yes: false },
+    confirm: async () => false,
+  } as unknown as AppContext;
+}
+
+function captureStderr(): { text: () => string; restore: () => void } {
+  const orig = process.stderr.write.bind(process.stderr);
+  let out = "";
+  process.stderr.write = ((s: string) => ((out += s), true)) as typeof process.stderr.write;
+  return {
+    text: () => out,
+    restore: () => {
+      process.stderr.write = orig;
+    },
+  };
 }
 
 test("cmdLogin (--username/--password): a malicious server `plan` on a SUCCESSFUL login cannot survive into the process's stdout output", async () => {
@@ -77,5 +104,91 @@ test("cmdLogin (--username/--password): a malicious server `reason` cannot survi
     globalThis.fetch = realFetch;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (process.stderr as any).write = realWrite;
+  }
+});
+
+// ── LOOP-06 round 3: every cmdLogin catch block must go through the shared
+// formatErrorLine/errorHint convention (chat.ts's printError, render.ts's
+// Renderer.error) instead of a hand-built, unstyled `✗ <message>` template
+// string with no hint and no /doctor pointer. ──
+
+test("cmdLogin (--username/--password): a network failure prints the shared formatErrorLine glyph + a /doctor hint", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+  }) as typeof fetch;
+  const stderr = captureStderr();
+  try {
+    const code = await cmdLogin(fakeCtx(), { username: "u", password: "p" });
+    assert.equal(code, 1);
+    const out = stderr.text();
+    assert.match(out, /✗/, "must use formatErrorLine's glyph, not a bare template string");
+    assert.match(out, /\/doctor/, "a network failure must surface errorHint's /doctor pointer");
+    assert.match(out, /\n\n$/, "formatErrorLine's trailing blank-line separator must be present");
+  } finally {
+    globalThis.fetch = realFetch;
+    stderr.restore();
+  }
+});
+
+test("cmdLogin (device-code flow): a network failure requesting the device code prints the shared glyph + hint", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+  }) as typeof fetch;
+  const stderr = captureStderr();
+  try {
+    const code = await cmdLogin(fakeCtxWithApi(), { noBrowser: true });
+    assert.equal(code, 1);
+    const out = stderr.text();
+    assert.match(out, /✗/, "must use formatErrorLine's glyph, not a bare template string");
+    assert.match(out, /could not start login/);
+    assert.match(out, /\/doctor/, "a network failure must surface errorHint's /doctor pointer");
+  } finally {
+    globalThis.fetch = realFetch;
+    stderr.restore();
+  }
+});
+
+test("cmdLogin (device-code flow): a denied authorization still gets the styled ✗ treatment (no hint to show)", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: unknown) => {
+    const u = String(url);
+    if (u.includes("/auth/device/code")) {
+      return new Response(
+        JSON.stringify({
+          device_code: "dc1",
+          user_code: "ABCD",
+          verification_uri: "https://x.example/device",
+          verification_uri_complete: "https://x.example/device?c=1",
+          interval: 0,
+          expires_in: 30,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (u.includes("/auth/device/token")) {
+      return new Response(JSON.stringify({ error: "access_denied" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected fetch in test: ${u}`);
+  }) as typeof fetch;
+  const realStdoutWrite = process.stdout.write.bind(process.stdout);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (process.stdout as any).write = (): boolean => true; // silence the "To sign in, open:..." prompt noise
+  const stderr = captureStderr();
+  try {
+    const code = await cmdLogin(fakeCtxWithApi(), { noBrowser: true });
+    assert.equal(code, 1);
+    const out = stderr.text();
+    assert.match(out, /✗/, "must use formatErrorLine's glyph, not a bare template string");
+    assert.match(out, /authorization denied/);
+    assert.doesNotMatch(out, /⤷/, "a plain 'denied' error has no errorHint-derived hint to show");
+  } finally {
+    globalThis.fetch = realFetch;
+    process.stdout.write = realStdoutWrite;
+    stderr.restore();
   }
 });

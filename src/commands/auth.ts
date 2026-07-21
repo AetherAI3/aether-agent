@@ -9,11 +9,12 @@
 import type { AppContext } from "../core/context.js";
 import { cmdLogin, cmdLogout, type LoginOpts } from "./login.js";
 import { MODELS_PATH, REFRESH_PATH } from "../core/transport.js";
-import { HttpError } from "../core/errors.js";
+import { HttpError, errorHint, errorMessage } from "../core/errors.js";
 import { isApiKeyToken } from "../core/auth.js";
 import { box, titledBox, hyperlink, orange, green, darkBlue, brightWhite, lightBlue } from "../ui/box.js";
 import { CLOUD } from "../ui/logo.js";
 import { theme } from "../ui/theme.js";
+import { formatErrorLine } from "../ui/error_line.js";
 
 /** A long-lived API token (PAT) starts with `aek_`; otherwise it's a session
  *  token. Thin wrapper so callers of THIS module keep importing `isApiToken`
@@ -248,10 +249,17 @@ async function authRefresh(ctx: AppContext): Promise<number> {
       process.stdout.write("✓ Session refreshed.\n");
       return 0;
     }
-    process.stderr.write("✗ Refresh failed — try: aether auth login\n");
+    // Same formatErrorLine convention as the catch below — a 200 with no
+    // session_token is still a refresh failure and must read the same as
+    // one caught via a thrown error, not as the one bare ✗ line left in
+    // this function (LOOP-06 round 3).
+    process.stderr.write(formatErrorLine("Refresh failed", { hint: "run `aether auth login`" }));
     return 1;
   } catch (err) {
-    process.stderr.write(`\u2717 ${err instanceof Error ? err.message : String(err)}\n`);
+    // formatErrorLine (LOOP-06) owns the glyph/hint/separator convention,
+    // same as chat.ts's printError, so a failed /auth/refresh reads like
+    // any other auth-adjacent error instead of bare, uncolored text.
+    process.stderr.write(formatErrorLine(errorMessage(err), { hint: errorHint(err, ctx.cfg.baseUrl) }));
     return 1;
   }
 }

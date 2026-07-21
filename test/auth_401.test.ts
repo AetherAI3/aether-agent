@@ -432,3 +432,88 @@ test("cmdAuth bare `aether auth` (no subcommand): same loading line before the /
     cap.restore();
   }
 });
+
+// ── 7. authRefresh (LOOP-06 round 3): the catch block must go through the
+// shared formatErrorLine/errorHint convention — same as chat.ts's printError
+// — instead of a hand-built, unstyled `✗ <message>` template string with no
+// hint and no /doctor pointer. ──
+
+function captureStderr(): { writes: string[]; restore: () => void } {
+  const writes: string[] = [];
+  const orig = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: unknown) => {
+    writes.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  return {
+    writes,
+    restore: () => {
+      process.stderr.write = orig;
+    },
+  };
+}
+
+test("cmdAuth 'refresh': a network failure prints the shared formatErrorLine glyph + a /doctor hint", async () => {
+  const real = globalThis.fetch;
+  // A session token (not aek_-prefixed) so authRefresh actually attempts the
+  // POST /auth/refresh instead of short-circuiting on "API tokens don't expire".
+  const tokens = new StaticTokenStore("sess_expiring");
+  globalThis.fetch = (async () => {
+    throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+  }) as typeof globalThis.fetch;
+  const cap = captureStderr();
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const ctx = fakeCtx(api, tokens);
+    const code = await cmdAuth(ctx, ["refresh"], {} as LoginOpts);
+    assert.equal(code, 1);
+    const out = cap.writes.join("");
+    assert.match(out, /✗/, "must use formatErrorLine's glyph, not a bare template string");
+    assert.match(out, /\/doctor/, "a network failure must surface errorHint's /doctor pointer");
+    assert.match(out, /\n\n$/, "formatErrorLine's trailing blank-line separator must be present");
+  } finally {
+    globalThis.fetch = real;
+    cap.restore();
+  }
+});
+
+test("cmdAuth 'refresh': a server-rejected refresh (HttpError) still prints the shared glyph + the re-login hint", async () => {
+  const real = globalThis.fetch;
+  const tokens = new StaticTokenStore("sess_expiring");
+  globalThis.fetch = (async () => jsonRes(401, { detail: "refresh token revoked" })) as typeof globalThis.fetch;
+  const cap = captureStderr();
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const ctx = fakeCtx(api, tokens);
+    const code = await cmdAuth(ctx, ["refresh"], {} as LoginOpts);
+    assert.equal(code, 1);
+    const out = cap.writes.join("");
+    assert.match(out, /✗/, "must use formatErrorLine's glyph, not a bare template string");
+    assert.match(out, /refresh token revoked/, "the server's detail must still surface in the message");
+    assert.match(out, /aether auth login/, "a 401 must surface errorHint's re-login pointer");
+  } finally {
+    globalThis.fetch = real;
+    cap.restore();
+  }
+});
+
+test("cmdAuth 'refresh': a 200 with no session_token also prints the shared formatErrorLine glyph (not the one bare ✗ line left in authRefresh)", async () => {
+  const real = globalThis.fetch;
+  const tokens = new StaticTokenStore("sess_expiring");
+  globalThis.fetch = (async () => jsonRes(200, {})) as typeof globalThis.fetch;
+  const cap = captureStderr();
+  try {
+    const api = new ApiClient("https://api.example", tokens);
+    const ctx = fakeCtx(api, tokens);
+    const code = await cmdAuth(ctx, ["refresh"], {} as LoginOpts);
+    assert.equal(code, 1);
+    const out = cap.writes.join("");
+    assert.match(out, /✗/, "must use formatErrorLine's glyph, not a bare template string");
+    assert.match(out, /Refresh failed/);
+    assert.match(out, /aether auth login/, "must still point at re-login even with no err object to derive a hint from");
+    assert.match(out, /\n\n$/, "formatErrorLine's trailing blank-line separator must be present");
+  } finally {
+    globalThis.fetch = real;
+    cap.restore();
+  }
+});
