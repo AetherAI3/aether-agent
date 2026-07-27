@@ -74,7 +74,7 @@ Every run ends with a verdict line: `✓ ok · 4 files changed · tests green ·
 |---|---|
 | `--local` | Use the local brain (Python/Ollama) instead of the cloud. |
 | `--pool <gb>` | Context pool size in GB (status-bar reach = pool × 233M tokens). |
-| `--effort <t>` | Effort tier: `LOW` \| `MED` \| `MAX` \| `ULTRA` \| `CODEPRO` (overrides the saved `/effort` dial). |
+| `--effort <t>` | Effort tier: `LOW` \| `MED` \| `HIGH` \| `MAX` \| `ULTRA` \| `CODEPRO` (overrides the saved `/effort` dial). |
 | `--test-cmd <c>` | Command the verification gate runs (unverified without it). |
 | `--quiet` | Plain output (strip the personality frames). |
 | `--interactive` | Pause at each stage boundary to type a steer (TTY only). |
@@ -188,7 +188,7 @@ aether config set autoApply true
 |---|---|---|
 | `baseUrl` | string | Aether API base URL. |
 | `defaultModel` | string | Model used when `--model` is omitted. |
-| `defaultEffort` | string | Effort tier for `aether code` when `--effort` is omitted (`LOW`\|`MED`\|`MAX`\|`ULTRA`\|`CODEPRO`, `""` = server default). Same dial as `/effort`. |
+| `defaultEffort` | string | Effort tier for `aether code` when `--effort` is omitted (`LOW`\|`MED`\|`HIGH`\|`MAX`\|`ULTRA`\|`CODEPRO`, `""` = server default). Same dial as `/effort`. |
 | `permissionMode` | `ask`\|`auto`\|`skip` | Gate edits/commands: prompt every time, auto with confirm, or fully autonomous. |
 | `autoApply` | bool | Apply streamed edits without a per-edit prompt. |
 | `telemetry` | bool | Anonymous usage telemetry opt-in. |
@@ -211,7 +211,7 @@ mirrors the live registry in `src/commands/slash_registry.ts`.
 | `/agents` | View active agent sessions (name, status, time, UVT, task). |
 | `/agent <n\|id>` | Switch orchestrator (Neo / Kronus) — opens the picker with no arg. |
 | `/tier` | Show your plan tier, default, and available counts. |
-| `/effort [tier\|1-5]` | Show or set the effort dial (`LOW`→`CODEPRO`). Persists to your Aether config and drives `aether code`. `CODEPRO` gets the banner. |
+| `/effort [tier\|1-6]` | Show or set the effort dial (`LOW`→`CODEPRO`). The dial moves phases, sub-agent fan-out, repair passes and the UVT ceiling; `CODEPRO` additionally enables System-2 review and unlimited context, and gets the banner. Persists to your Aether config and drives `aether code`. |
 | `/audit [n]` | Recent chain-of-custody receipts. |
 | `/doctor [deep]` | Run ordered diagnostics; `deep` adds bounded checks. |
 | `/clear` | Clear the screen. |

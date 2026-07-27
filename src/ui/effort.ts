@@ -6,8 +6,29 @@
 import { theme } from "./theme.js";
 import { KAOMOJI } from "./kaomoji.js";
 
-export const EFFORT_TIERS = ["LOW", "MED", "MAX", "ULTRA", "CODEPRO"] as const;
+// Must stay identical to the orchestrator's closed set —
+// lib/orchestrator/presets/contracts.py:EFFORT_TIERS. HIGH was missing here, so
+// the dial could not reach a tier the backend accepts and no CLI user could
+// select it. Names are what travel on the wire; the 1-based numeric shortcut is
+// a local convenience, which is why adding HIGH shifts /effort 5 from CODEPRO to
+// ULTRA. The slider echoes the resolved tier on every set, so a mis-numbered
+// entry is visible immediately.
+export const EFFORT_TIERS = ["LOW", "MED", "HIGH", "MAX", "ULTRA", "CODEPRO"] as const;
 export type EffortTier = (typeof EFFORT_TIERS)[number];
+
+/**
+ * What the dial actually moves, in the orchestrator's own terms
+ * (lib/orchestrator/presets/effort.py:EffectiveEffortPolicy). An effort profile
+ * may only REDUCE these envelopes, or re-bind planner/synthesizer/arbiter to
+ * models the preset already allows — it never grants new capability. Kept
+ * deliberately concrete: "more effort = better" tells a user nothing about what
+ * they are spending.
+ */
+export const EFFORT_LEGEND = "phases · sub-agent fan-out · repair passes · UVT ceiling";
+
+/** CODEPRO alone flips System-2 review (workflow_engine.py:94) and unlimited
+ *  context (deep_thinking.py:26) — a capability change, not just a bigger budget. */
+const CODEPRO_LEGEND = "+ System-2 review · unlimited context";
 
 /** Accepts a tier name (any case) or a 1-based index; null if unrecognized.
  * Coerces defensively: a hand-edited config can carry a number or null. */
@@ -55,7 +76,12 @@ export function renderEffortSlider(current: string): string[] {
     labels += i === idx && tier ? theme.bold(theme.cyan(seg)) : theme.dim(seg);
   });
 
-  return [title, track, labels];
+  // Fourth line: what moving the dial actually buys. Without it the slider is a
+  // pretty control with no stated units — a user can see they are at MAX and
+  // still not know what MAX costs or grants.
+  const legend = "  " + theme.dim(pro ? `${EFFORT_LEGEND}  ${CODEPRO_LEGEND}` : EFFORT_LEGEND);
+
+  return [title, track, labels, legend];
 }
 
 // Block-letter CODEPRO — kept ≤ 80 cols, no combining chars (width-safe).

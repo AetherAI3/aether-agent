@@ -47,7 +47,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "tier", summary: "plan tier + default model", section: "Session" },
   // effort tier persists to config and rides TaskCommand.effort into every
   // `aether code` run — see setEffort() in slash.ts for the wire contract.
-  { name: "effort", args: "[tier|1-5]", summary: "effort dial (LOW to CODEPRO), drives aether code", section: "Session" },
+  { name: "effort", args: "[tier|1-6]", summary: "effort dial (LOW to CODEPRO), drives aether code", section: "Session" },
   { name: "audit", args: "[n]", summary: "recent audit trail", section: "Session" },
   { name: "doctor", args: "[deep]", summary: "structured runtime diagnostics", section: "Session" },
   { name: "clear", summary: "clear screen", section: "Session" },

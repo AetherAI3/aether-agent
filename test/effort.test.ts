@@ -33,20 +33,35 @@ test("normalizeEffort accepts names (any case) and 1-based indexes", () => {
   assert.equal(normalizeEffort("CodePro"), "CODEPRO");
   assert.equal(normalizeEffort(" ultra "), "ULTRA");
   assert.equal(normalizeEffort("1"), "LOW");
-  assert.equal(normalizeEffort("5"), "CODEPRO");
+  // HIGH was added at index 3 to match the orchestrator's closed tier set
+  // (lib/orchestrator/presets/contracts.py), so the numeric shortcuts shifted:
+  // the top of the dial is now 6, and 5 is ULTRA.
+  assert.equal(normalizeEffort("3"), "HIGH");
+  assert.equal(normalizeEffort("5"), "ULTRA");
+  assert.equal(normalizeEffort("6"), "CODEPRO");
   assert.equal(normalizeEffort("0"), null);
-  assert.equal(normalizeEffort("6"), null);
+  assert.equal(normalizeEffort("7"), null);
   assert.equal(normalizeEffort("zzz"), null);
   assert.equal(normalizeEffort(""), null);
 });
 
 test("effort slider marks the current tier and shows the whole scale", () => {
   const s = renderEffortSlider("MAX").map(stripAnsi);
-  assert.equal(s.length, 3);
+  // Four lines now: title, track, labels, and a legend naming what the dial
+  // actually moves. The slider showed a position but never its units.
+  assert.equal(s.length, 4);
   assert.ok(s[0]?.includes("effort ▸ MAX"));
   assert.ok(s[1]?.includes("●"));
   assert.ok(s[1]?.includes("▓") && s[1]?.includes("░"));
   for (const tier of EFFORT_TIERS) assert.ok(s[2]?.includes(tier), `labels row missing ${tier}`);
+  assert.ok(s[3]?.includes("phases"), "legend should name what the dial controls");
+});
+
+test("CODEPRO's legend names the capabilities only it unlocks", () => {
+  const legend = stripAnsi(renderEffortSlider("CODEPRO")[3] ?? "");
+  assert.match(legend, /System-2/);
+  // Every other tier is a budget change, so it must NOT claim those.
+  assert.doesNotMatch(stripAnsi(renderEffortSlider("MAX")[3] ?? ""), /System-2/);
 });
 
 test("CODEPRO fills the track and swaps the knob for lightning", () => {

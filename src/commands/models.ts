@@ -5,11 +5,19 @@
 // Source: GET /models (lib/plan_tiers.TIER_MATRIX SSOT). One list, `kind`
 // distinguishes models from orchestrators. Locked (unavailable-on-tier) rows
 // are shown with a lock so users see what an upgrade unlocks.
+//
+// Layout note: columns are padded by VISIBLE width, not string length. The
+// marker column mixes "●" (one column) with "🔒" (two), and ids and labels vary
+// in length, so the previous tab-separated rows drifted out of alignment the
+// moment an id crossed a tab stop — putting the lock in a different place on
+// every row, which is exactly where the eye needs it to be steady.
 
 import type { AppContext } from "../core/context.js";
-import type { CatalogResponse } from "../types.js";
+import type { CatalogItem, CatalogResponse } from "../types.js";
 import { MODELS_PATH } from "../core/transport.js";
 import { saveConfig } from "../core/config.js";
+import { theme } from "../ui/theme.js";
+import { visibleWidth } from "../ui/text.js";
 
 export async function cmdModels(ctx: AppContext, argv: string[]): Promise<number> {
   const sub = argv[0];
@@ -31,10 +39,15 @@ export async function cmdModels(ctx: AppContext, argv: string[]): Promise<number
     return 0;
   }
   const activeDefault = ctx.cfg.defaultModel || cat.default;
-  process.stdout.write(`tier: ${cat.tier}   default: ${cat.default}\n`);
-  for (const m of cat.models) {
-    process.stdout.write(renderRow(m, activeDefault));
+  const models = cat.models.filter((m) => m.kind !== "orchestrator");
+  const orchestrators = cat.models.filter((m) => m.kind === "orchestrator");
+
+  process.stdout.write(renderHeader(cat.tier, activeDefault));
+  if (models.length) process.stdout.write(renderGroup("MODELS", models, activeDefault));
+  if (orchestrators.length) {
+    process.stdout.write(renderGroup("ORCHESTRATORS", orchestrators, activeDefault));
   }
+  process.stdout.write(renderLegend(cat.models, "aether models use <id>"));
   return 0;
 }
 
@@ -45,15 +58,69 @@ export async function cmdAgents(ctx: AppContext): Promise<number> {
     process.stdout.write(JSON.stringify(orchestrators, null, 2) + "\n");
     return 0;
   }
-  for (const a of orchestrators) {
-    process.stdout.write(renderRow(a, ctx.cfg.defaultModel || cat.default));
+  const activeDefault = ctx.cfg.defaultModel || cat.default;
+  process.stdout.write(renderHeader(cat.tier, activeDefault));
+  if (orchestrators.length) {
+    process.stdout.write(renderGroup("ORCHESTRATORS", orchestrators, activeDefault));
   }
+  process.stdout.write(renderLegend(orchestrators, "aether agent <id>"));
   return 0;
 }
 
-function renderRow(m: CatalogResponse["models"][number], activeDefault: string): string {
-  const mark = m.id === activeDefault ? "*" : m.available ? " " : "🔒";
-  const kind = m.kind === "orchestrator" ? "orch " : "model";
-  const cap = m.monthly_uvt_cap != null ? `  cap ${m.monthly_uvt_cap}` : "";
-  return `${mark} ${m.id}\t${kind}\t${m.tier_min ?? "-"}\t${m.label}${cap}\n`;
+// ── rendering ───────────────────────────────────────────────────────────────
+
+/** Pad to `w` VISIBLE columns. Styled text and wide glyphs both pad correctly. */
+export function padVisible(s: string, w: number): string {
+  return s + " ".repeat(Math.max(0, w - visibleWidth(s)));
+}
+
+/** 128000 -> "128k", 1000000 -> "1M". Long digit runs read as noise in a column. */
+export function compactNumber(n: number): string {
+  if (n >= 1_000_000) return `${Math.round(n / 100_000) / 10}M`.replace(".0M", "M");
+  if (n >= 1_000) return `${Math.round(n / 100) / 10}k`.replace(".0k", "k");
+  return String(n);
+}
+
+function renderHeader(tier: string, activeDefault: string): string {
+  return (
+    "\n  " +
+    theme.dim("tier ") + theme.bold(theme.cyan(tier)) +
+    theme.dim("   default ") + theme.bold(activeDefault) +
+    "\n"
+  );
+}
+
+function renderGroup(title: string, items: CatalogItem[], activeDefault: string): string {
+  // Size every column to its widest cell, so nothing truncates and nothing drifts.
+  const idW = Math.max(...items.map((m) => visibleWidth(m.id)), 4);
+  const provW = Math.max(...items.map((m) => visibleWidth(m.provider ?? "")), 0);
+  const labelW = Math.max(...items.map((m) => visibleWidth(m.label)), 0);
+
+  const rows = items.map((m) => {
+    const isDefault = m.id === activeDefault;
+    // The marker occupies two columns in every state, so the id column starts at
+    // the same offset whether or not the row is locked.
+    const marker = isDefault ? theme.cyan("● ") : m.available ? "  " : "🔒";
+    const id = isDefault ? theme.bold(theme.cyan(m.id)) : m.available ? m.id : theme.dim(m.id);
+    const meta = [
+      padVisible(theme.dim(m.provider ?? ""), provW),
+      padVisible(m.available ? m.label : theme.dim(m.label), labelW),
+      m.context_window != null ? theme.dim(compactNumber(m.context_window)) : "",
+    ];
+    // The one thing a locked row has to answer is "what unlocks it".
+    const gate = !m.available && m.tier_min ? theme.yellow(`needs ${m.tier_min}`) : "";
+    const cap = m.available && m.monthly_uvt_cap != null
+      ? theme.dim(`cap ${compactNumber(m.monthly_uvt_cap)}`)
+      : "";
+    return `  ${marker} ${padVisible(id, idW)}  ${meta.join("  ")}  ${gate || cap}`.trimEnd();
+  });
+
+  return `\n  ${theme.iceBlue(title)}\n${rows.join("\n")}\n`;
+}
+
+function renderLegend(items: CatalogItem[], useHint: string): string {
+  const locked = items.filter((m) => !m.available).length;
+  const parts = [theme.cyan("●") + theme.dim(" default")];
+  if (locked) parts.push("🔒" + theme.dim(` ${locked} locked on your tier`));
+  return `\n  ${parts.join(theme.dim("  ·  "))}\n  ${theme.dim(useHint)}\n\n`;
 }

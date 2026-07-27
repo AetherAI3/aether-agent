@@ -10,6 +10,7 @@ import {
   completeSlash,
   suggestCommand,
 } from "../src/commands/slash_registry.js";
+import { EFFORT_TIERS } from "../src/ui/effort.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -74,9 +75,14 @@ test("suggestCommand catches close typos, rejects garbage", () => {
 // /effort (LOW..CODEPRO dial that drives `aether code` runs) has no origin/main
 // counterpart — pin its registry entry so a future registry rewrite can't
 // silently drop the only place this command is discoverable from.
-test("effort is registered in the Session section with a tier|1-5 arg hint", () => {
+test("effort is registered in the Session section with a tier|1-6 arg hint", () => {
   const c = findCommand("effort");
   assert.ok(c, "/effort missing from registry");
   assert.equal(c!.section, "Session");
-  assert.equal(c!.args, "[tier|1-5]");
+  // 1-6, not 1-5: HIGH was added so the dial covers the orchestrator's closed
+  // tier set (lib/orchestrator/presets/contracts.py). Tied to EFFORT_TIERS.length
+  // as well as the literal, so the hint can never again advertise a range the
+  // dial does not accept — which is exactly how it went stale.
+  assert.equal(c!.args, "[tier|1-6]");
+  assert.equal(c!.args, `[tier|1-${EFFORT_TIERS.length}]`);
 });

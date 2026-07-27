@@ -11,7 +11,9 @@ export function printSlashHelp(out: Writable, target = ""): void {
     sections: SLASH_SECTIONS,
     target: target.trim().replace(/^\//, ""),
     footer: [
-      "/help <command> for detail ? Tab completes slash commands.",
+      // The separator here was a literal "?" — a mangled "·" that shipped as a
+      // question mark and read as part of the sentence.
+      "/help <command> for detail · /help <word> searches · Tab completes slash commands.",
       "/model or /agent with no argument opens the picker.",
     ],
   }));
