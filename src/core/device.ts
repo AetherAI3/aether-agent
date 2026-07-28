@@ -99,7 +99,22 @@ export async function pollForToken(
     }
     const action = classifyPoll(resp);
     if (action === "ready") return resp.access_token as string;
-    if (action === "denied") throw new Error("authorization denied in the browser");
+    // Denial is RECOVERABLE, and "authorization denied in the browser" said
+    // neither that nor what to do next — it read like a verdict on the account.
+    // It also matters that a denial is not necessarily the user's own: any
+    // signed-in account that learns a user_code can refuse it, so a denial the
+    // user did not perform means their code reached someone else.
+    //
+    // Kept to ONE line on purpose: this is rendered by formatErrorLine, which
+    // puts its glyph on the first line only — a multi-line message loses the
+    // glyph on every line after the first.
+    if (action === "denied") {
+      throw new Error(
+        "authorization denied — nothing was authorized and no key was created. " +
+          "Run `aether auth login` again to retry; if you didn't deny it, " +
+          "someone else has your login code — don't share it.",
+      );
+    }
     if (action === "expired") throw new Error("login timed out — run `aether auth login` again");
     if (action === "slow_down") interval += 5;
   }
