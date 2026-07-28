@@ -11,6 +11,17 @@ updates:
     groups:
       development-toolchain:
         dependency-type: development
+    ignore:
+      # @types/node must track the runtime floor in package.json (engines.node
+      # ">=24"), not the newest release. A major bump types the project against
+      # a Node it does not claim to support, so tsc starts accepting APIs that
+      # do not exist for users on the supported version — a type error that only
+      # surfaces at their runtime. test/migration_guard.ts asserts that pairing,
+      # so a major bump lands as red CI on main; #52 did exactly that and main
+      # stayed broken until it was reverted. Minor and patch updates still flow.
+      # Raise this deliberately, together with engines.node, when the floor moves.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: github-actions
     directory: /
