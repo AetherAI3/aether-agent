@@ -12,6 +12,7 @@ import { decodeSse } from "../core/stream.js";
 import { Renderer } from "../core/render.js";
 import { StreamUnavailableError, errorHint, isAbortError } from "../core/errors.js";
 import { appendCustody } from "../core/custody.js";
+import { makeToolGate, deniedResult } from "../core/tool_gate.js";
 import { handleSlash, primeCatalog } from "./slash.js";
 import { applyPromptMode } from "./prompt_modes.js";
 import { userInfo } from "node:os";
@@ -185,6 +186,12 @@ async function runLocalTurn(ctx: AppContext, prompt: string): Promise<void> {
   const cwd = ctx.flags.cwd;
   const brain = new OllamaBrain(ctx.flags.model ? { model: ctx.flags.model } : {});
   const exec = new ToolExecutor(cwd);
+  const gate = makeToolGate({
+    permissionMode: ctx.cfg.permissionMode,
+    autoApply: ctx.cfg.autoApply,
+    yes: ctx.flags.yes,
+    confirm: ctx.confirm,
+  });
   const renderer = new HostRenderer({ poolGb: 5, json: ctx.flags.json });
   const task: TaskCommand = {
     type: "task",
@@ -199,8 +206,16 @@ async function runLocalTurn(ctx: AppContext, prompt: string): Promise<void> {
       renderer.event(ev);
       if (ev.type === "error") sawError = ev.msg;
       if (ev.type === "tool_call") {
+        // Permission gate — identical policy to the `code` command (same decideGate,
+        // same --yes opt-out, same fail-closed-on-non-TTY). Without it this path
+        // reached ToolExecutor.run -> spawnSync with a model-chosen command string
+        // while `code` gated the very same sink. A denied call is never executed;
+        // the brain is told so and the turn continues.
         // executeAsync so the two web tools (web_search/web_fetch) work too.
-        const result = await exec.executeAsync(ev.name, ev.args);
+        const approved = await gate({ name: ev.name, args: ev.args });
+        const result = approved
+          ? await exec.executeAsync(ev.name, ev.args)
+          : deniedResult(ev.name);
         brain.sendToolResult(ev.id, result);
       }
     }

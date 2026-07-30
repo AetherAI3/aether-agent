@@ -40,12 +40,14 @@ import { resumeHint } from "./resume.js";
 import { createWorktree, mergeHint, type Worktree } from "../core/worktree.js";
 import { parseRepoSpec, ensureLocalClone, prCreateHint, type RepoSpec } from "../core/repo.js";
 import { chooseBackend } from "../core/backend.js";
-import { decideGate } from "../core/autonomy.js";
+import { makeToolGate, type ToolGate } from "../core/tool_gate.js";
 
 export { prepareWorkspace } from "./code_support.js";
 
-/** Approve (or refuse) one brain-emitted tool call before the host executes it. */
-export type ToolGate = (call: { name: string; args: Record<string, unknown> }) => Promise<boolean>;
+/** Approve (or refuse) one brain-emitted tool call before the host executes it.
+ *  Defined in core/tool_gate so `chat` and `code` cannot drift apart; re-exported
+ *  here because existing callers import the type from this module. */
+export type { ToolGate };
 
 export interface CodeOpts {
   /** Use the local Python/Ollama brain instead of the cloud API. */
@@ -231,23 +233,14 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   // apply; in `ask` (the default) on a TTY the user gets a y/N prompt, and on a
   // non-TTY (CI/pipe) an un-pre-approved call FAILS CLOSED rather than running
   // unattended. `--yes` or `permissionMode: skip` opt out.
-  const gate: ToolGate = async ({ name, args }) => {
-    const outcome = decideGate(name, ctx.cfg.permissionMode, ctx.cfg.autoApply, {
-      yes: ctx.flags.yes,
-      isTty: Boolean(process.stdin.isTTY),
-    });
-    if (outcome === "allow") return true;
-    if (outcome === "deny") {
-      process.stderr.write(
-        `✗ blocked ${name} — permission mode "${ctx.cfg.permissionMode}" needs confirmation but there is no TTY.\n` +
-          `  re-run with --yes, or set a less strict mode: aether config set permissionMode skip\n`,
-      );
-      return false;
-    }
-    const detail = String(args["command"] ?? args["path"] ?? args["message"] ?? "");
-    const shown = detail.length > 200 ? detail.slice(0, 197) + "…" : detail;
-    return ctx.confirm(`\n⚠ ${name}${shown ? ` ${shown}` : ""} — run it? [y/N] `);
-  };
+  // Built by core/tool_gate so `chat` applies the identical policy — the gate used
+  // to be inline here, which is how the local chat path ended up ungated.
+  const gate: ToolGate = makeToolGate({
+    permissionMode: ctx.cfg.permissionMode,
+    autoApply: ctx.cfg.autoApply,
+    yes: ctx.flags.yes,
+    confirm: ctx.confirm,
+  });
 
   // Presentation fork — TTY (and not --json/--quiet) gets the live animated
   // status line; everything else (pipes, --json, --quiet, CI) gets the plain
