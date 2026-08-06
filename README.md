@@ -11,7 +11,7 @@
 npm i -g aether-agents --ignore-scripts     # or run once: npx --ignore-scripts aether-agents
 ```
 
-[Install](#install-in-three-moves) · [Models & pricing](#models--pricing) · [Commands](#commands) · [Security](#security) · [Release notes](RELEASE_NOTES.md)
+[Install](#install-in-three-moves) · [Models & pricing](#models--pricing) · [Commands](#commands) · [Security](#security) · [Platform](#part-of-the-aether-platform) · [Release notes](RELEASE_NOTES.md)
 
 <a href="https://app.aethersystems.net/">
 <img width="760" alt="Aether Agent — terminal coding session" src="https://github.com/user-attachments/assets/f7a71cbb-6be2-41ea-b2a4-35c7c0d889d6" />
@@ -53,9 +53,34 @@ aether agent --local           #      …same terminal, nothing leaves the machi
 
 </div>
 
-One fleet, transparent per-token pricing — Claude, GPT, DeepSeek, Kimi, and Gemma for text & code, image and video generation, plus the **Neo · Kronus · Aether-Vision** orchestrators. On `--local`, any Ollama model you've pulled. Run `aether models` to list everything from the terminal.
+One fleet, transparent per-token pricing — Claude, GPT, DeepSeek, Kimi, Gemma and Gemini for text & code, a 32-model image / video / 3D fleet, plus the **Neo · Kronus · Aether-Vision** orchestrators. `aether models` prints what your plan can actually reach, live from the server — the tables below are the current shape of it.
 
-Usage is metered in **UVT** — one universal credit, one balance, shared across this agent, the [AetherCloud desktop](https://github.com/DBarr3/aethercloud), and Aether AI on the web. Free tier to try (no card), subscription for premium models, UVT top-ups for pay-as-you-go. **Current tiers and prices: [aethersystems.net](https://aethersystems.net/)**
+### Frontier — Pro / Team
+
+| Model | `--model` key | Context window |
+|---|---|---|
+| Claude Opus 5 | `opus5` | 1,000,000 |
+| GPT-5.6 Sol | `gpt56_sol` | 1,050,000 |
+| GPT-5.6 Terra | `gpt56_terra` | 1,050,000 |
+| GPT-5.6 Luna | `gpt56_luna` | 1,050,000 |
+| Kimi K3 | `kimi_k3` | 1,048,576 |
+| Gemini 3.6 Flash | `gemini36_flash` | 1,048,576 |
+
+Six frontier models, every one with a million-token window. In the GPT-5.6 family, Sol takes the hardest reasoning and coding work, Terra is the balanced everyday pick, Luna is the fast, cost-sensitive one — and all three are priced through their true 1,050,000-token window, with the long-context band billed exactly rather than estimated. Opus 5 is an **addition, not a replacement**: `--model opus` still resolves to Claude Opus 4.8 and nothing you have configured changes.
+
+### The rest of the fleet
+
+| Plan | What you can select |
+|---|---|
+| **Free** | Claude Haiku 4.5 · DeepSeek V4 Flash · one image model as a teaser |
+| **Solo** | + Claude Sonnet 5 · GPT-5.4 mini · the **Neo 5.1T** orchestrator · the full image fleet |
+| **Pro / Team** | + Claude Opus 4.8 · GPT-5.5 · DeepSeek V4 Pro · Kimi K2.6 · Gemma 4 31B · the six frontier models above · video & 3D generation · the **Kronus v2.4** and **Aether-Vision** orchestrators |
+
+Media is 15 image models (Nano Banana Pro & 2, FLUX.2 Klein / Pro / Flex / Max, Recraft V3 & V4, Seedream 4.5, Riverflow V2, GPT-5 Image), 16 video models (Seedance 2.0 & 1.5 Pro, Veo 3.1 / Fast / Lite, Kling 3.0 Standard & Pro, Kling Video O1, Sora 2 Pro, Wan 2.6 & 2.7, Hailuo 2.3, HunyuanVideo 1.5, Grok Imagine), and Hunyuan3D 2.1 for text-to-3D — all drivable from the prompt line with `/photogen`, `/videogen` and `/storyboard`.
+
+On `--local`, none of the above applies: you run any Ollama model you have pulled, with no account, no fleet, and no metering.
+
+Usage is metered in **UVT** — one universal credit, one balance, shared across this agent, the [AetherCloud desktop](https://github.com/DBarr3/aethercloud), and [Aether AI on the web](https://app.aethersystems.net/chat). Free tier to try (no card), subscription for premium models, UVT top-ups for pay-as-you-go. **Current tiers and prices: [aethersystems.net](https://aethersystems.net/)**
 
 ## Commands
 
@@ -81,7 +106,7 @@ Flags you can set when launching the REPL (or pass with an inline task `aether a
 | Flag | What it does |
 |---|---|
 | `--local` | Local Ollama brain instead of the hosted API. |
-| `--model <id>` | Force a model (`--model opus`, or an Ollama tag with `--local`). |
+| `--model <id>` | Force a model by key (`--model opus5`, `--model gpt56_terra`, or an Ollama tag with `--local`). |
 | `--effort <tier>` | Budget ceiling: `LOW` · `MED` · `MAX` · `ULTRA` · `CODEPRO`. |
 | `--test-cmd <cmd>` | Command the verification gate runs (default `pytest -q`). |
 | `--worktree` | Fresh git worktree on an auto-named branch (isolated). |
@@ -117,7 +142,17 @@ Found a vulnerability? See [SECURITY.md](SECURITY.md).
 
 ## Part of the Aether platform
 
-Aether Agent is the **terminal sibling** of **[AetherCloud](https://github.com/DBarr3/aethercloud)**, the agentic desktop app — same login, same UVT balance, same model fleet. Drive your repo from the command line; drive projects, workflows, and the memory Vault from the desktop. Get the desktop at **[aethersystems.net/download](https://aethersystems.net/)** — installs in about a minute, no card needed.
+Aether Agent is the **terminal** surface of Aether. Every surface below shares one login, one UVT balance, one model fleet, and one memory — start a task here, pick it up on the web, finish it in the IDE.
+
+| Surface | Where | What it is |
+|---|---|---|
+| **Aether AI on the web** | [app.aethersystems.net/chat](https://app.aethersystems.net/chat) | The Workbench — chat, agents you can launch, a work tray for everything they produce, image & video generation, your vault. |
+| **Aether Code** | [app.aethersystems.net/code](https://app.aethersystems.net/code) | The browser IDE — the agent console docked beside your files, worktree teams and per-session transcripts, Nano compile & IR export. |
+| **Aether Design** | [app.aethersystems.net/design](https://app.aethersystems.net/design) | Design Studio — canvas, creator and presets, with the agent editing the design directly. |
+| **AetherCloud desktop** | [github.com/DBarr3/aethercloud](https://github.com/DBarr3/aethercloud) | The agentic desktop app — projects, workflows, the memory Vault, and local Actions runs that can open a pull request. |
+| **Aether Terminal** | [aethersystems.net/terminal](https://aethersystems.net/terminal) | What this CLI looks like, before you install anything. |
+
+Get the desktop at **[aethersystems.net](https://aethersystems.net/)** — installs in about a minute, no card needed. Platform-wide patch notes live at **[app.aethersystems.net/release-notes](https://app.aethersystems.net/release-notes)**; terminal-specific ones are in [RELEASE_NOTES.md](RELEASE_NOTES.md).
 
 ## License
 

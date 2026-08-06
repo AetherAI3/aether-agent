@@ -1,4 +1,39 @@
-# Aether Agent — July 2026 engineering update
+# Aether Agent — August 2026 fleet update
+
+**August 6, 2026**
+
+The fleet is server-side, so everything below is already reachable from an
+installed CLI — no client upgrade required. Run `aether models` to see what
+your plan can select.
+
+- **Six frontier models on Pro/Team** *(shipped July 25)* — **Claude Opus 5**
+  (`opus5`), the full **GPT-5.6** family — Sol, Terra and Luna (`gpt56_sol`,
+  `gpt56_terra`, `gpt56_luna`) — **Kimi K3** (`kimi_k3`) and **Gemini 3.6
+  Flash** (`gemini36_flash`). Every one carries a million-token context window,
+  and each has its own monthly spend ceiling. All six are additive: `--model
+  opus` still resolves to Claude Opus 4.8.
+- **GPT-5.6 opened to its true window** — the family is priced through the full
+  1,050,000-token window with stepped rates, so prompts above 272k tokens are
+  billed exactly rather than estimated.
+- **Media fleet expanded to 32 models** *(shipped July 27)* — 15 image, 16 video
+  and text-to-3D, up from the original eight. New in the terminal's `/photogen`,
+  `/videogen` and `/storyboard` paths: FLUX.2 (Klein / Pro / Flex / Max),
+  Nano Banana 2, Recraft V4, Seedream 4.5, Riverflow V2, GPT-5 Image, Sora 2 Pro,
+  Kling 3.0 Pro, Kling Video O1, Wan 2.6 & 2.7, Hailuo 2.3, Grok Imagine and the
+  Veo 3.1 Fast / Lite tiers. Image generation is Solo and up; video stays Pro/Team.
+  *(Correction to the June notes below: the model shipped as `vision_kling` is
+  **Kling 3.0 Standard** — the old "Kling 2.5 Turbo Pro" label named a model the
+  backend does not call.)*
+- **Media spend is checked before rendering, not after** — every generation is
+  priced against your balance in a preflight, with a platform-wide kill switch.
+  Costs are computed by the platform, never reported by the model.
+- **Model selection validated on the automation path** — the loop path used to
+  accept a caller-supplied model key unchecked; it is now validated against your
+  entitlements like every other path.
+
+---
+
+## Aether Agent — July 2026 engineering update
 
 **July 20, 2026**
 
