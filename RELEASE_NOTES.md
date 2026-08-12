@@ -1,4 +1,37 @@
-# Aether Agent — August 2026 fleet update
+# Aether Agent — the API brain goes bidirectional
+
+**August 12, 2026**
+
+The hosted path is now a true coding brain for your terminal. Until today the
+cloud stream was one-way: the server reasoned and replied, but it could not
+drive the tools on your machine. That gap is closed.
+
+- **Agent dev sessions** — `aether agent` on the API path now opens a dedicated
+  coding session: the Aether API plans and reasons, and every file read, edit,
+  shell command, test run, and Git commit executes locally through the same
+  permission gate and path guards the local brain has always used. Your source
+  tree never leaves your machine.
+- **Replay-safe by construction** — every frame carries a per-session sequence
+  number. After a network drop the Agent reconnects from the last frame it saw,
+  and a redelivered `tool_call` is skipped, never re-executed. Tool results are
+  idempotent upstream: a retried POST is a no-op, a conflicting one is refused.
+- **Steer, pause, resume — for real** — `/steer`, pause, and resume now reach
+  the hosted brain mid-session and apply at the next model step. No restart, no
+  lost work.
+- **Effort reaches the cloud** — the `/effort` dial (LOW through CODEPRO) is now
+  on the wire for hosted runs; previously it only shaped local runs despite the
+  docs saying otherwise.
+- **Clean teardown** — Ctrl+C/exit now aborts the stream immediately and closes
+  the server session instead of leaving the socket to idle out for two minutes.
+- **Graceful fallback** — against an older server (or with the feature flag
+  off) the Agent silently uses the previous one-way stream. Nothing breaks.
+
+Requires a server with agent dev sessions enabled; the client negotiates the
+protocol version at session start and fails safe.
+
+---
+
+## Aether Agent — August 2026 fleet update
 
 **August 6, 2026**
 

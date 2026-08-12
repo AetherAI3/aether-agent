@@ -9,15 +9,28 @@
 // be ignored. The CF-flush preamble (`:<4096 spaces>`) and `ping` heartbeat are
 // handled here (comment lines skipped; ping surfaced as a typed liveness frame).
 
-export type StreamFrame =
+export type StreamFrame = StreamFrameBody & {
+  /** Per-session monotonic sequence number (dev-session frames only). A
+   *  reconnecting client resumes with ?last_seq=N and MUST skip seq <= N so a
+   *  replayed mutating tool_call is never executed twice. */
+  seq?: number;
+};
+
+export type StreamFrameBody =
   // shared
   | { type: "open" }
   | { type: "ping" }
   | { type: "reasoning"; text: string }
   | { type: "delta"; text: string }
   | { type: "usage"; uvt: number; cents: number }
-  | { type: "done"; uvt: number; cents: number; inputTokens?: number; outputTokens?: number }
+  | { type: "done"; uvt: number; cents: number; inputTokens?: number; outputTokens?: number; ok?: boolean }
   | { type: "error"; msg: string; errorCode?: string; refId?: string }
+  // Agent dev sessions (/agent/dev/sessions/{id}/stream) — the bidirectional
+  // coding protocol: the API brain emits tool_call, the local host executes
+  // and POSTs the result back.
+  | { type: "session"; sessionId: string; protocolVersion: number; model?: string; tools?: string[] }
+  | { type: "tool_call"; toolCallId: string; name: string; args: Record<string, unknown>; risk?: string }
+  | { type: "tool_result_ack"; toolCallId: string }
   // The server-signed chain-of-custody for this turn (commitment + attestation).
   // The server signs but never stores it — the client decides whether to persist
   // (the CLI logs it locally; a web client may show-then-discard).
@@ -77,6 +90,15 @@ export type StreamFrame =
 
 /** Normalize a parsed JSON object (snake_case wire → camelCase) into a frame. */
 export function normalizeFrame(obj: Record<string, unknown>): StreamFrame | null {
+  const frame = normalizeFrameBody(obj) as StreamFrame | null;
+  if (frame) {
+    const seq = obj["seq"];
+    if (typeof seq === "number" && Number.isFinite(seq)) frame.seq = seq;
+  }
+  return frame;
+}
+
+function normalizeFrameBody(obj: Record<string, unknown>): StreamFrameBody | null {
   const type = obj["type"];
   if (typeof type !== "string") return null;
   switch (type) {
@@ -97,13 +119,37 @@ export function normalizeFrame(obj: Record<string, unknown>): StreamFrame | null
         cents: Number(obj["cents"] ?? 0),
         inputTokens: numOrUndef(obj["input_tokens"] ?? obj["inputTokens"]),
         outputTokens: numOrUndef(obj["output_tokens"] ?? obj["outputTokens"]),
+        // Only set when the wire carried it (dev-session done frames) — legacy
+        // frames must round-trip byte-identical for the conformance tests.
+        ...(obj["ok"] === undefined ? {} : { ok: Boolean(obj["ok"]) }),
       };
     case "error":
       return {
         type: "error",
         msg: String(obj["msg"] ?? obj["message"] ?? ""),
-        errorCode: strOrUndef(obj["error_code"] ?? obj["errorCode"]),
+        errorCode: strOrUndef(obj["error_code"] ?? obj["errorCode"] ?? obj["code"]),
         refId: strOrUndef(obj["ref_id"] ?? obj["refId"]),
+      };
+    case "session":
+      return {
+        type: "session",
+        sessionId: String(obj["session_id"] ?? obj["sessionId"] ?? ""),
+        protocolVersion: Number(obj["protocol_version"] ?? obj["protocolVersion"] ?? 0),
+        model: strOrUndef(obj["model"]),
+        tools: parseStrArray(obj["tools"]),
+      };
+    case "tool_call":
+      return {
+        type: "tool_call",
+        toolCallId: String(obj["tool_call_id"] ?? obj["toolCallId"] ?? ""),
+        name: String(obj["name"] ?? ""),
+        args: (obj["args"] as Record<string, unknown>) ?? {},
+        risk: strOrUndef(obj["risk"]),
+      };
+    case "tool_result_ack":
+      return {
+        type: "tool_result_ack",
+        toolCallId: String(obj["tool_call_id"] ?? obj["toolCallId"] ?? ""),
       };
     case "custody":
       return {

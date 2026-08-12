@@ -51,6 +51,46 @@ export function buildChatRequest(args: BuildChatRequestArgs): ChatWireRequest {
   return req;
 }
 
+// ── Agent dev sessions (POST /agent/dev/sessions) ───────────────────────────
+
+/** Wire shape bound by AETHER-CLOUD api/routes/agent_dev_session_routes.py. */
+export interface DevSessionWireRequest {
+  task: string;
+  surface: "aether_agent";
+  model: string | null;
+  effort: string | null;
+  /** Tool names this host supports — the client owns the allowlist; the
+   *  server intersects with its own known set and never sends anything else. */
+  capabilities: string[];
+  max_uvt?: number;
+  repo?: Record<string, unknown>;
+  protocol_version: number;
+}
+
+export interface BuildDevSessionArgs {
+  task: string;
+  model?: string;
+  effort?: string;
+  capabilities: readonly string[];
+  maxUvt?: number;
+  repo?: Record<string, unknown>;
+  protocolVersion: number;
+}
+
+export function buildDevSessionRequest(args: BuildDevSessionArgs): DevSessionWireRequest {
+  const req: DevSessionWireRequest = {
+    task: args.task,
+    surface: "aether_agent",
+    model: args.model?.trim() || null,
+    effort: args.effort?.trim() || null,
+    capabilities: [...args.capabilities],
+    protocol_version: args.protocolVersion,
+  };
+  if (args.maxUvt && args.maxUvt > 0) req.max_uvt = args.maxUvt;
+  if (args.repo) req.repo = args.repo;
+  return req;
+}
+
 // Local-only coding envelope (kept for the future coding route + workspace).
 export interface CodingEnvelope {
   prompt: string;

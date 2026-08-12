@@ -55,6 +55,22 @@ export function isSameOrigin(target: string, baseUrl: string): boolean {
 // Aether API routes.
 export const CHAT_STREAM_PATH = "/agent/chat/stream"; // standard chat SSE
 export const CHAT_PATH = "/agent/chat"; // non-streaming fail-soft fallback
+// Agent dev sessions — the bidirectional coding protocol (API brain, local
+// host): downstream SSE with per-session `seq`, upstream idempotent POSTs.
+export const DEV_SESSIONS_PATH = "/agent/dev/sessions";
+export function devSessionStreamPath(id: string, lastSeq = 0): string {
+  const base = `${DEV_SESSIONS_PATH}/${encodeURIComponent(id)}/stream`;
+  return lastSeq > 0 ? `${base}?last_seq=${lastSeq}` : base;
+}
+export function devSessionToolResultsPath(id: string): string {
+  return `${DEV_SESSIONS_PATH}/${encodeURIComponent(id)}/tool-results`;
+}
+export function devSessionControlPath(id: string): string {
+  return `${DEV_SESSIONS_PATH}/${encodeURIComponent(id)}/control`;
+}
+export function devSessionPath(id: string): string {
+  return `${DEV_SESSIONS_PATH}/${encodeURIComponent(id)}`;
+}
 // Auth (session_token via username/password; Bearer on all authed calls).
 export const LOGIN_PATH = "/auth/login";
 export const LOGOUT_PATH = "/auth/logout";
@@ -123,6 +139,9 @@ export interface StreamOptions {
   signal?: AbortSignal;
   /** Timeout for opening the stream and for each quiet interval between chunks. 0 disables it. */
   timeoutMs?: number;
+  /** HTTP method for the stream request. Default POST (body JSON-encoded);
+   *  "GET" sends no body (dev-session downstream SSE). */
+  method?: "POST" | "GET";
 }
 
 export class ApiClient {
@@ -222,7 +241,7 @@ export class ApiClient {
     body: unknown,
     signalOrOptions?: AbortSignal | StreamOptions,
   ): Promise<AsyncIterable<Uint8Array>> {
-    const { signal, timeoutMs } = normalizeStreamOptions(signalOrOptions);
+    const { signal, timeoutMs, method } = normalizeStreamOptions(signalOrOptions);
     // `net` only tells fetch()/the body reader to release the socket on timeout
     // or abort — it is never inspected to pick the error the caller sees. That
     // classification comes solely from raceAgainst racing the caller's own
@@ -240,13 +259,13 @@ export class ApiClient {
         used = await this.tokens.get();
         return raceAgainst(
           fetch(this.url(path), {
-            method: "POST",
+            method,
             headers: {
-              "Content-Type": "application/json",
+              ...(method === "GET" ? {} : { "Content-Type": "application/json" }),
               Accept: "text/event-stream",
               ...(await this.authHeaders(used)),
             },
-            body: JSON.stringify(body),
+            ...(method === "GET" ? {} : { body: JSON.stringify(body) }),
             signal: net.signal,
           }),
           signal,
@@ -580,13 +599,18 @@ async function toHttpError(res: Response): Promise<HttpError> {
 function normalizeStreamOptions(signalOrOptions?: AbortSignal | StreamOptions): {
   signal?: AbortSignal;
   timeoutMs: number;
+  method: "POST" | "GET";
 } {
   const isSignal =
     !!signalOrOptions && "aborted" in signalOrOptions && "addEventListener" in signalOrOptions;
   const opts: StreamOptions = isSignal
     ? { signal: signalOrOptions as AbortSignal }
     : ((signalOrOptions as StreamOptions | undefined) ?? {});
-  return { signal: opts.signal, timeoutMs: normalizeTimeoutMs(opts.timeoutMs ?? defaultStreamTimeoutMs()) };
+  return {
+    signal: opts.signal,
+    timeoutMs: normalizeTimeoutMs(opts.timeoutMs ?? defaultStreamTimeoutMs()),
+    method: opts.method ?? "POST",
+  };
 }
 
 /** Exported so tests can pin AETHER_STREAM_TIMEOUT_MS parsing without a live stream. */

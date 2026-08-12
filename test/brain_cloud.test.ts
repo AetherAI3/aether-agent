@@ -10,9 +10,22 @@ import type { TokenStore } from "../src/core/auth.js";
 
 const tokens = { get: async () => "aek_t" } as unknown as TokenStore;
 
+// A LEGACY server: the dev-session route does not exist (404), so CloudBrain
+// falls back to the one-way /agent/chat/stream path these tests cover.
 function sseFetch(events: string[]): typeof globalThis.fetch {
   const body = events.map((e) => `data: ${e}\n\n`).join("");
-  return (async () => {
+  return (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/agent/dev/sessions")) {
+      return {
+        ok: false,
+        status: 404,
+        headers: new Headers({ "content-type": "application/json" }),
+        text: async () => JSON.stringify({ detail: "Not Found" }),
+        json: async () => ({ detail: "Not Found" }),
+        body: null,
+      } as unknown as Response;
+    }
     const bytes = new TextEncoder().encode(body);
     return {
       ok: true,
