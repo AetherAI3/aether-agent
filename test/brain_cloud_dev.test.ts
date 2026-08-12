@@ -1,0 +1,347 @@
+// CloudBrain dev-session protocol — the bidirectional tool round-trip.
+//
+// Proves the spec Gate-1 client half: session create (effort + capabilities on
+// the wire), tool_call frames surfacing as BrainEvents, sendToolResult POSTing
+// upstream, seq-based duplicate suppression (a replayed mutating call never
+// executes twice), reconnect-from-seq, control(), close() teardown, and the
+// legacy fallback split (404/403 → old chat stream; other errors surface).
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { CloudBrain } from "../src/core/brain_cloud.js";
+import { ApiClient } from "../src/core/transport.js";
+import type { BrainEvent } from "../src/core/brain_protocol.js";
+import type { TokenStore } from "../src/core/auth.js";
+
+const tokens = { get: async () => "aek_t" } as unknown as TokenStore;
+
+interface Call {
+  method: string;
+  url: string;
+  body: unknown;
+}
+
+/** A dev-protocol server fake: create → JSON; stream attempts → scripted SSE
+ *  bodies (one per reconnect); tool-results/control/DELETE → recorded JSON. */
+function devServer(streams: string[][], opts?: { failToolResultTimes?: number }) {
+  const calls: Call[] = [];
+  let attempt = 0;
+  let toolResultFailures = opts?.failToolResultTimes ?? 0;
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    calls.push({ method, url, body });
+
+    const json = (status: number, payload: unknown): Response =>
+      ({
+        ok: status < 400,
+        status,
+        headers: new Headers({ "content-type": "application/json" }),
+        text: async () => JSON.stringify(payload),
+        json: async () => payload,
+        body: null,
+      }) as unknown as Response;
+
+    if (url.endsWith("/agent/dev/sessions") && method === "POST") {
+      return json(200, {
+        session_id: "devs_abc",
+        protocol_version: 1,
+        model: "sonnet",
+        tools: ["read_file", "write_file"],
+      });
+    }
+    if (url.includes("/stream") && method === "GET") {
+      const frames = streams[Math.min(attempt, streams.length - 1)] ?? [];
+      attempt += 1;
+      const bytes = new TextEncoder().encode(frames.map((e) => `data: ${e}\n\n`).join(""));
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "text/event-stream" }),
+        body: (async function* (): AsyncIterable<Uint8Array> {
+          yield bytes;
+        })(),
+      } as unknown as Response;
+    }
+    if (url.includes("/tool-results")) {
+      if (toolResultFailures > 0) {
+        toolResultFailures -= 1;
+        return json(500, { detail: "transient" });
+      }
+      return json(200, { accepted: true, duplicate: false });
+    }
+    if (url.includes("/control")) return json(200, { ok: true, state: "running" });
+    if (method === "DELETE") return json(200, {});
+    return json(404, { detail: "unexpected" });
+  }) as typeof globalThis.fetch;
+  return { fetchImpl, calls };
+}
+
+async function withFetch<T>(f: typeof globalThis.fetch, run: () => Promise<T>): Promise<T> {
+  const real = globalThis.fetch;
+  globalThis.fetch = f;
+  try {
+    return await run();
+  } finally {
+    globalThis.fetch = real;
+  }
+}
+
+const TASK = { type: "task" as const, text: "fix it", cwd: ".", poolGb: 5, effort: "CODEPRO", model: "sonnet" };
+
+function frame(obj: Record<string, unknown>): string {
+  return JSON.stringify(obj);
+}
+
+test("dev session: create carries effort + capabilities; tool_call surfaces and sendToolResult POSTs upstream", async () => {
+  const { fetchImpl, calls } = devServer([
+    [
+      frame({ type: "session", seq: 1, session_id: "devs_abc", protocol_version: 1, model: "sonnet" }),
+      frame({ type: "tool_call", seq: 2, tool_call_id: "tc_1", name: "read_file", args: { path: "a.py" }, risk: "read" }),
+      frame({ type: "tool_result_ack", seq: 3, tool_call_id: "tc_1" }),
+      frame({ type: "delta", seq: 4, text: "done!" }),
+      frame({ type: "done", seq: 5, ok: true, uvt: 10, cents: 0.1 }),
+    ],
+  ]);
+  await withFetch(fetchImpl, async () => {
+    const brain = new CloudBrain(new ApiClient("https://stub.test", tokens));
+    const out: BrainEvent[] = [];
+    for await (const ev of brain.run(TASK)) {
+      out.push(ev);
+      if (ev.type === "tool_call") {
+        brain.sendToolResult(ev.id, { output: "print('hi')", exitCode: 0 });
+      }
+    }
+    // give the serialized upstream POST a tick to land
+    await new Promise((r) => setTimeout(r, 20));
+
+    const create = calls.find((c) => c.url.endsWith("/agent/dev/sessions"));
+    assert.ok(create);
+    const createBody = create.body as Record<string, unknown>;
+    assert.equal(createBody["effort"], "CODEPRO");
+    assert.equal(createBody["surface"], "aether_agent");
+    assert.ok(Array.isArray(createBody["capabilities"]));
+    assert.ok((createBody["capabilities"] as string[]).includes("run_shell"));
+
+    const tc = out.find((e) => e.type === "tool_call");
+    assert.ok(tc && tc.type === "tool_call");
+    assert.equal(tc.id, "tc_1");
+    assert.equal(tc.name, "read_file");
+    assert.deepEqual(tc.args, { path: "a.py" });
+
+    const post = calls.find((c) => c.url.includes("/tool-results"));
+    assert.ok(post, "tool result was never POSTed");
+    const postBody = post.body as Record<string, unknown>;
+    assert.equal(postBody["tool_call_id"], "tc_1");
+    assert.equal(postBody["status"], "ok");
+    assert.equal(postBody["exit_code"], 0);
+    assert.equal(postBody["output"], "print('hi')");
+
+    const done = out.find((e) => e.type === "done");
+    assert.ok(done && done.type === "done" && done.ok === true);
+  });
+});
+
+test("dev session: a replayed frame (seq <= high-water mark) is skipped — a mutating tool_call never fires twice", async () => {
+  const tcFrame = frame({ type: "tool_call", seq: 2, tool_call_id: "tc_1", name: "write_file", args: { path: "a", content: "b" }, risk: "write" });
+  const { fetchImpl } = devServer([
+    [
+      frame({ type: "delta", seq: 1, text: "x" }),
+      tcFrame,
+      tcFrame, // duplicate delivery of the same SSE frame
+      frame({ type: "done", seq: 3, ok: true, uvt: 1, cents: 0 }),
+    ],
+  ]);
+  await withFetch(fetchImpl, async () => {
+    const brain = new CloudBrain(new ApiClient("https://stub.test", tokens));
+    const out: BrainEvent[] = [];
+    for await (const ev of brain.run(TASK)) out.push(ev);
+    const toolCalls = out.filter((e) => e.type === "tool_call");
+    assert.equal(toolCalls.length, 1);
+  });
+});
+
+test("dev session: a dropped stream reconnects from last_seq and finishes", async () => {
+  const { fetchImpl, calls } = devServer([
+    [
+      frame({ type: "delta", seq: 1, text: "part one" }),
+      // stream ends here with no terminal frame — client must reconnect
+    ],
+    [
+      frame({ type: "delta", seq: 2, text: "part two" }),
+      frame({ type: "done", seq: 3, ok: true, uvt: 1, cents: 0 }),
+    ],
+  ]);
+  await withFetch(fetchImpl, async () => {
+    const brain = new CloudBrain(new ApiClient("https://stub.test", tokens));
+    const out: BrainEvent[] = [];
+    for await (const ev of brain.run(TASK)) out.push(ev);
+
+    const streamCalls = calls.filter((c) => c.url.includes("/stream"));
+    assert.equal(streamCalls.length, 2);
+    assert.ok(!streamCalls[0]!.url.includes("last_seq"));
+    assert.match(streamCalls[1]!.url, /last_seq=1/);
+
+    const done = out.find((e) => e.type === "done");
+    assert.ok(done && done.type === "done" && done.ok === true);
+  });
+});
+
+test("dev session: a server error frame ends the run done ok:false (never fabricated success)", async () => {
+  const { fetchImpl } = devServer([
+    [
+      frame({ type: "delta", seq: 1, text: "partial" }),
+      frame({ type: "error", seq: 2, msg: "host did not return a result for run_shell within 960s" }),
+    ],
+  ]);
+  await withFetch(fetchImpl, async () => {
+    const brain = new CloudBrain(new ApiClient("https://stub.test", tokens));
+    const out: BrainEvent[] = [];
+    for await (const ev of brain.run(TASK)) out.push(ev);
+    const done = out.find((e) => e.type === "done");
+    assert.ok(done && done.type === "done");
+    assert.equal(done.ok, false);
+    assert.match(done.result, /did not return a result/);
+  });
+});
+
+test("dev session: done ok:false from the server stays ok:false", async () => {
+  const { fetchImpl } = devServer([
+    [frame({ type: "done", seq: 1, ok: false, uvt: 1, cents: 0 })],
+  ]);
+  await withFetch(fetchImpl, async () => {
+    const brain = new CloudBrain(new ApiClient("https://stub.test", tokens));
+    const out: BrainEvent[] = [];
+    for await (const ev of brain.run(TASK)) out.push(ev);
+    const done = out.find((e) => e.type === "done");
+    assert.ok(done && done.type === "done" && done.ok === false);
+  });
+});
+
+test("dev session: control() posts pause/steer to the control route", async () => {
+  const { fetchImpl, calls } = devServer([
+    [frame({ type: "done", seq: 1, ok: true, uvt: 1, cents: 0 })],
+  ]);
+  await withFetch(fetchImpl, async () => {
+    const brain = new CloudBrain(new ApiClient("https://stub.test", tokens));
+    const out: BrainEvent[] = [];
+    for await (const ev of brain.run(TASK)) out.push(ev);
+    brain.control("steer", "skip the billing code");
+    await new Promise((r) => setTimeout(r, 20));
+    const ctl = calls.find((c) => c.url.includes("/control"));
+    assert.ok(ctl, "control was never POSTed");
+    const body = ctl.body as Record<string, unknown>;
+    assert.equal(body["action"], "steer");
+    assert.equal(body["note"], "skip the billing code");
+  });
+});
+
+test("dev session: close() tears the server session down (DELETE)", async () => {
+  const { fetchImpl, calls } = devServer([
+    [frame({ type: "done", seq: 1, ok: true, uvt: 1, cents: 0 })],
+  ]);
+  await withFetch(fetchImpl, async () => {
+    const brain = new CloudBrain(new ApiClient("https://stub.test", tokens));
+    const out: BrainEvent[] = [];
+    for await (const ev of brain.run(TASK)) out.push(ev);
+    brain.close();
+    await new Promise((r) => setTimeout(r, 20));
+    const del = calls.find((c) => c.method === "DELETE");
+    assert.ok(del, "session was never deleted");
+    assert.match(del.url, /\/agent\/dev\/sessions\/devs_abc$/);
+  });
+});
+
+test("dev session: a transient tool-result POST failure is retried (idempotent upstream)", async () => {
+  const { fetchImpl, calls } = devServer(
+    [
+      [
+        frame({ type: "tool_call", seq: 1, tool_call_id: "tc_1", name: "read_file", args: { path: "a" } }),
+        frame({ type: "done", seq: 2, ok: true, uvt: 1, cents: 0 }),
+      ],
+    ],
+    { failToolResultTimes: 1 },
+  );
+  await withFetch(fetchImpl, async () => {
+    const brain = new CloudBrain(new ApiClient("https://stub.test", tokens));
+    for await (const ev of brain.run(TASK)) {
+      if (ev.type === "tool_call") brain.sendToolResult(ev.id, { output: "x", exitCode: 0 });
+    }
+    await new Promise((r) => setTimeout(r, 1200));
+    const posts = calls.filter((c) => c.url.includes("/tool-results"));
+    assert.equal(posts.length, 2, "expected one failed POST and one retry");
+  });
+});
+
+test("legacy fallback: a 404 on session create degrades to the one-way chat stream", async () => {
+  const calls: Call[] = [];
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    calls.push({ method: init?.method ?? "GET", url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    if (url.includes("/agent/dev/sessions")) {
+      return {
+        ok: false,
+        status: 404,
+        headers: new Headers({ "content-type": "application/json" }),
+        text: async () => JSON.stringify({ detail: "Not Found" }),
+        json: async () => ({ detail: "Not Found" }),
+        body: null,
+      } as unknown as Response;
+    }
+    const bytes = new TextEncoder().encode(
+      [
+        `data: ${frame({ type: "delta", text: "legacy reply" })}\n\n`,
+        `data: ${frame({ type: "done", uvt: 1, cents: 0 })}\n\n`,
+      ].join(""),
+    );
+    return {
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream" }),
+      body: (async function* (): AsyncIterable<Uint8Array> {
+        yield bytes;
+      })(),
+    } as unknown as Response;
+  }) as typeof globalThis.fetch;
+
+  await withFetch(fetchImpl, async () => {
+    const brain = new CloudBrain(new ApiClient("https://stub.test", tokens));
+    const out: BrainEvent[] = [];
+    for await (const ev of brain.run(TASK)) out.push(ev);
+    assert.ok(calls.some((c) => c.url.includes("/agent/chat/stream")));
+    const done = out.find((e) => e.type === "done");
+    assert.ok(done && done.type === "done" && done.ok === true);
+    // legacy path: no server session, so tool results/control are no-ops
+    brain.sendToolResult("tc_x", { output: "x", exitCode: 0 });
+    brain.control("pause");
+    await new Promise((r) => setTimeout(r, 20));
+    assert.ok(!calls.some((c) => c.url.includes("/tool-results")));
+    assert.ok(!calls.some((c) => c.url.includes("/control")));
+  });
+});
+
+test("a non-404 create failure surfaces as an error, not a silent legacy downgrade", async () => {
+  const fetchImpl = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/agent/dev/sessions")) {
+      return {
+        ok: false,
+        status: 402,
+        headers: new Headers({ "content-type": "application/json" }),
+        text: async () => JSON.stringify({ detail: "quota exhausted" }),
+        json: async () => ({ detail: "quota exhausted" }),
+        body: null,
+      } as unknown as Response;
+    }
+    throw new Error("legacy path must not be reached");
+  }) as typeof globalThis.fetch;
+
+  await withFetch(fetchImpl, async () => {
+    const brain = new CloudBrain(new ApiClient("https://stub.test", tokens));
+    const out: BrainEvent[] = [];
+    for await (const ev of brain.run(TASK)) out.push(ev);
+    assert.ok(out.some((e) => e.type === "error"));
+    assert.ok(!out.some((e) => e.type === "monologue"));
+  });
+});
