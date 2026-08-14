@@ -107,12 +107,16 @@ function renderGroup(title: string, items: CatalogItem[], activeDefault: string)
       padVisible(m.available ? m.label : theme.dim(m.label), labelW),
       m.context_window != null ? theme.dim(compactNumber(m.context_window)) : "",
     ];
-    // The one thing a locked row has to answer is "what unlocks it".
+    // A locked row has to answer two things: what unlocks it, and what you get
+    // for unlocking it. The second used to be missing — `monthly_uvt_cap`
+    // answers for the CALLER's tier, so on a locked row it is null by
+    // construction, and the number that argues for upgrading was absent from
+    // the only row that needed it. `unlock_uvt_cap` is the cap at `tier_min`.
     const gate = !m.available && m.tier_min ? theme.yellow(`needs ${m.tier_min}`) : "";
-    const cap = m.available && m.monthly_uvt_cap != null
-      ? theme.dim(`cap ${compactNumber(m.monthly_uvt_cap)}`)
-      : "";
-    return `  ${marker} ${padVisible(id, idW)}  ${meta.join("  ")}  ${gate || cap}`.trimEnd();
+    const capValue = m.available ? m.monthly_uvt_cap : m.unlock_uvt_cap;
+    const cap = capValue != null ? theme.dim(`cap ${compactNumber(capValue)}`) : "";
+    const trailing = [gate, cap].filter(Boolean).join(theme.dim(" · "));
+    return `  ${marker} ${padVisible(id, idW)}  ${meta.join("  ")}  ${trailing}`.trimEnd();
   });
 
   return `\n  ${theme.iceBlue(title)}\n${rows.join("\n")}\n`;

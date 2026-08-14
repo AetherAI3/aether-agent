@@ -44,6 +44,13 @@ export interface CatalogItem {
   available: boolean;
   /** Hard monthly UVT ceiling on the caller's tier, or null if uncapped. */
   monthly_uvt_cap: number | null;
+  /**
+   * The ceiling this model would carry on `tier_min` — the number that argues
+   * for upgrading. On a locked row `monthly_uvt_cap` is null by construction
+   * (it answers for the caller's tier, which does not include the model), so
+   * this is the only cap a locked row can show. Optional: older servers omit it.
+   */
+  unlock_uvt_cap?: number | null;
   is_default: boolean;
 }
 
