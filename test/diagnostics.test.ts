@@ -216,15 +216,27 @@ test("a hanging backend cannot stall the fast report", async () => {
   assert.equal(report.mode, "fast");
 });
 
-test("--live refuses rather than reporting fast-mode results as verified", async () => {
+test("--live renders the live report, never the fast one relabelled", async () => {
   const { ctx, roots, store, client } = setup();
   const captured = sink();
-  const code = await cmdDoctor(ctx, ["--live"], {
+  await cmdDoctor(ctx, ["--live", "--no-ui"], {
     out: captured.out,
     dependencies: { memoryRoots: roots, mcpStore: store, mcpClient: client },
+    liveOptions: { timeoutMs: 500, mcpStore: store, mcpClient: client, skipOpenerProbe: true },
   });
-  assert.equal(code, 2);
-  assert.match(captured.text(), /--live is not available in this build/);
+  const text = captured.text();
+  assert.match(text, /Aether doctor v2 \(live\)/);
+  // The fast-mode footer must not appear on a live run.
+  assert.equal(text.includes("Remote reachability is not checked in fast mode"), false);
+  assert.match(text, /spend\.none/);
+  assert.equal(text.includes(SECRET), false);
+});
+
+test("--live and --fix are refused together rather than half-applied", async () => {
+  const { ctx } = setup();
+  const captured = sink();
+  assert.equal(await cmdDoctor(ctx, ["--live", "--fix"], { out: captured.out }), 2);
+  assert.match(captured.text(), /separate modes/);
 });
 
 test("doctor command supports JSON and rejects unknown arguments", async () => {

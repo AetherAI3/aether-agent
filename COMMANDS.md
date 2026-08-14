@@ -150,17 +150,56 @@ Exports the cryptographic proof package for one audit entry. Find ids with
 aether receipt chat_8f3a...
 ```
 
-### `aether doctor [--deep]` — runtime diagnostics
-Runs an ordered set of structured checks — auth, network reachability,
-config integrity, MCP registry health, and more — and prints a pass/fail
-summary. `--deep` adds slower, bounded checks on top of the fast baseline.
-Exits `1` if any check fails, so it's safe to gate scripts on.
+### `aether doctor [--live | --fix]` — health, proof, and repair
+Every check answers three questions separately, so "configured" is never
+mistaken for "working":
+
+```
+Agent transport
+  configured     yes
+  reachable      yes
+  verified now   yes · 15:42:08
+```
+
+A check nobody exercised reports `not checked` — never a pass. A surface this
+build genuinely does not have reports `n/a` with the reason. Exits `1` if any
+check is an error, so it is safe to gate scripts on.
+
+**`aether doctor`** — fast and strictly read-only. No network call, no model
+call, no session, no opener launch, no credential refresh, no write. Covers
+runtime, workspace, git, transport config, auth config, tools, memory, MCP
+registry, persistence, the media output index, the opener, GitHub, and
+Protocol-C receipt storage.
+
+**`aether doctor --live`** — proves the paths end to end, right now:
+authenticated catalog fetch, a dev session, sequence-numbered frames,
+pause/resume/steer acknowledgement, a sandboxed tool write/read/compare/delete
+round trip, clean session close, a real browser open confirmed by a loopback
+callback, GitHub identity, branch freshness compared **without fetching**, the
+MCP broker, and a Protocol-C receipt round trip. Billing is accounted across
+the run and reported as `spend.none`; the agent loop runs only when the server
+confirms a non-billable doctor session, and is reported as unproven otherwise.
+`--no-ui` skips the browser proof on a headless box (reported as skipped, not
+passed).
+
+**`aether doctor --fix`** — a closed allowlist of local repairs, never a repair
+agent. Prints the exact scope, action, risk, reversibility and backup of every
+planned repair and changes nothing without `--yes`. It will not rotate
+credentials, spend UVT, invoke a model, edit source, mutate a git ref, dispatch
+Actions, run Predator, or call an MCP write tool.
 
 ```bash
-aether doctor
-aether doctor --deep
-aether doctor --json
+aether doctor                      # fast, read-only
+aether doctor --live               # end-to-end proof, no spend
+aether doctor --live --no-ui       # same, on a headless box
+aether doctor --fix --dry-run      # show the repair plan, change nothing
+aether doctor --fix --yes          # apply the plan
+aether doctor --fix --only media.rebuild --yes
+aether doctor --json               # schema-versioned report for automation
 ```
+
+`--deep` still means the read-only report it always meant; it now points at
+`--live` for the end-to-end proof.
 
 ### `aether mcp [list|doctor|repair]` — manage and diagnose MCP servers
 With no subcommand (in a TTY), opens the same interactive MCP manager as the
@@ -320,7 +359,7 @@ Requires an active orchestrator — switch with `/agent neo` or `/agent kronus` 
 | `/sequence <prompt>` | Cinematic multi-shot video (routes to a cinematic model by default). |
 | `/animate <image_url\|file\|#n> [motion]` | Animate a still image into video. |
 | `/re-cut <edit>` | Re-edit the last generated video. |
-| `/output [open <n>\|clean]` | List, open, or clear recent generations. |
+| `/output [open <ref>\|clean]` | List, open, or clear recent generations. `<ref>` is a sequence number, a full artifact ID, or a unique ID prefix; an ambiguous reference lists its candidates instead of guessing. |
 | `/storyboard <prompt\|file> [--scenes --style]` | Multi-scene storyboard: parse → preview → `--generate`/`--animate`/`--render`. |
 
 ### HUD

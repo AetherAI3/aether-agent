@@ -9,6 +9,7 @@
 import type { Writable } from "node:stream";
 import type { AppContext } from "../core/context.js";
 import { diagnosticReport, type DiagnosticDependencies } from "../core/diagnostics.js";
+import { liveReport, type LiveOptions } from "../core/doctor_live.js";
 import { renderHealthReport, type HealthReport } from "../core/health.js";
 import {
   applyRepair,
@@ -22,6 +23,7 @@ export interface DoctorCommandOptions {
   out?: Writable;
   dependencies?: DiagnosticDependencies;
   repairContext?: RepairContext;
+  liveOptions?: LiveOptions;
   deep?: boolean;
 }
 
@@ -31,12 +33,14 @@ export interface DoctorFlags {
   dryRun: boolean;
   yes: boolean;
   deep: boolean;
+  noUi: boolean;
   only: string[];
   unknown: string[];
 }
 
 const USAGE =
-  "usage: aether doctor [--live | --fix] [--dry-run] [--yes] [--only <check-or-repair>] [--json]\n";
+  "usage: aether doctor [--live | --fix] [--dry-run] [--yes] [--no-ui] " +
+  "[--only <check-or-repair>] [--json]\n";
 
 export function parseDoctorArgs(argv: readonly string[]): DoctorFlags {
   const flags: DoctorFlags = {
@@ -45,6 +49,7 @@ export function parseDoctorArgs(argv: readonly string[]): DoctorFlags {
     dryRun: false,
     yes: false,
     deep: false,
+    noUi: false,
     only: [],
     unknown: [],
   };
@@ -69,6 +74,9 @@ export function parseDoctorArgs(argv: readonly string[]): DoctorFlags {
       case "--deep":
       case "deep":
         flags.deep = true;
+        break;
+      case "--no-ui":
+        flags.noUi = true;
         break;
       case "--only": {
         const value = argv[i + 1];
@@ -109,7 +117,24 @@ export async function cmdDoctor(
     return 2;
   }
 
-  // Fast inspection is the input to every mode, including --fix.
+  // --live replaces the report entirely rather than annotating the fast one:
+  // mixing "configured" rows into a live run is how a false green happens.
+  if (flags.live) {
+    const live = await liveReport(ctx, {
+      ...(options.liveOptions ?? {}),
+      ...(flags.noUi ? { headless: true } : {}),
+      ...(flags.only.length ? {} : {}),
+    });
+    const filtered = flags.only.length
+      ? { ...live, checks: live.checks.filter((check) => flags.only.includes(check.id)) }
+      : live;
+    out.write(
+      ctx.flags.json ? JSON.stringify(filtered) + "\n" : renderHealthReport(filtered),
+    );
+    return exitCode(filtered);
+  }
+
+  // Fast inspection is the input to every other mode, including --fix.
   const report = await diagnosticReport(ctx, { dependencies: options.dependencies });
 
   if (flags.fix) return runFix(report, flags, out, options);
@@ -125,15 +150,6 @@ export async function cmdDoctor(
       "\nNote: --deep is the read-only report (unchanged). " +
         "The live end-to-end proof is: aether doctor --live\n",
     );
-  }
-  if (flags.live) {
-    // Being explicit beats quietly reporting fast-mode results as live ones.
-    out.write(
-      "\n--live is not available in this build: the end-to-end session, opener-callback and " +
-        "receipt proofs are not implemented yet, and reporting fast-mode results as verified " +
-        "would be exactly the false green this command exists to remove.\n",
-    );
-    return 2;
   }
   return exitCode(report);
 }

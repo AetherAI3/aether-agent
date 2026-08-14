@@ -1,3 +1,44 @@
+# Aether Agent — your artifacts get an identity, and doctor stops guessing
+
+**August 14, 2026**
+
+Two things you can lose quietly — the record of what you generated, and the
+belief that your setup works — stop being losable.
+
+- **Every generated artifact gets a UUID** plus a persistent short reference.
+  The old log numbered entries by array length, so once retention trimmed to
+  100, the 101st generation and every one after it all answered to `101`.
+  `output open 101` picked whichever came first. That is gone.
+- **History cannot silently vanish.** Writes are locked across processes,
+  atomic, flushed, and backed up. A corrupt index recovers from backup or
+  rebuilds from the files still on disk — and always tells you which happened
+  instead of rendering an empty list. The unreadable copy is kept as evidence,
+  and an index written by a newer Aether is never overwritten.
+- **Opening a file or a URL no longer goes through a shell.** Both paths used
+  to build a command string, so a filename containing a quote or an `&` was an
+  injection primitive. One implementation now hands the target to the OS as an
+  argument array — and the Windows URL path actually works, which it did not
+  before.
+- **`aether doctor` answers three questions, not one.** Configured, reachable,
+  and verified-now are separate. A check nobody ran says `not checked`; a
+  surface this build does not have says `n/a` with the reason. Neither is a
+  green tick any more.
+- **`aether doctor --live` proves it** — a real session, sequence-numbered
+  frames, pause/resume/steer acknowledgement, a sandboxed tool round trip, a
+  browser open confirmed by a loopback callback, branch freshness compared
+  without fetching, and a Protocol-C receipt round trip. Billing is accounted
+  across the run: the agent loop runs only when the server confirms a
+  non-billable doctor session, and reports itself unproven otherwise.
+- **`aether doctor --fix`** shows its exact repair plan — scope, risk,
+  reversibility, backup — and changes nothing without `--yes`. It cannot rotate
+  credentials, spend, invoke a model, edit source, or move a git ref.
+
+Nothing to do on upgrade: `output open <number>` keeps working and existing
+history migrates on first read. Full detail in
+[docs/releases/2026-08-14.md](docs/releases/2026-08-14.md).
+
+---
+
 # Aether Agent — the API brain goes bidirectional
 
 **August 12, 2026**
