@@ -19,6 +19,7 @@ import {
   parseStoryboard, saveStoryboard, loadStoryboard, listStoryboards,
   type MediaKind, type GenFlags, type GenResult, type Storyboard,
 } from "../core/vision.js";
+import { shortId } from "../core/media_history_store.js";
 
 // Media pipeline state — persists across turns in the same REPL session.
 // Cleared on REPL restart. Used by /re-frame and /re-cut.
@@ -99,8 +100,9 @@ export async function photogenSlash(ctx: AppContext, out: Writable, arg: string,
           model: modelKey, prompt: vp, kind, filepath, filename: basename(filepath),
           url: resp.media_url, timestamp: new Date().toISOString(), flags,
         };
-        const entry = recordOutput(result);
-        out.write(`  ${theme.iceBlue("↓")} #${entry.index}  ${entry.filename}\n`);
+        const { entry, warning } = recordOutput(result);
+        if (warning) out.write(SF(`  ⚠  ${warning.message}\n`));
+        out.write(`  ${theme.iceBlue("↓")} #${entry.sequence}  ${entry.filename}\n`);
         out.write(`  ${SF(resp.media_url)}\n\n`);
         _lastMediaUrl = resp.media_url; _lastMediaModel = modelKey; _lastMediaKind = kind;
       } else {
@@ -120,8 +122,9 @@ export async function reframeSlash(ctx: AppContext, out: Writable, arg: string):
     const resp = await dispatchGeneration(ctx.api, editPrompt, "vision_gpt_image2", flags);
     if (resp.media_url) {
       const filepath = await downloadMediaFile(ctx.api, resp.media_url, ensureOutputDir(), "vision_gpt_image2", "image", resp.filename);
-      const entry = recordOutput({ model: "vision_gpt_image2", prompt: editPrompt, kind: "image", filepath, filename: basename(filepath), url: resp.media_url, timestamp: new Date().toISOString(), flags });
-      out.write(`${theme.iceBlue("↓")} #${entry.index}  ${entry.filename}\n`);
+      const { entry, warning } = recordOutput({ model: "vision_gpt_image2", prompt: editPrompt, kind: "image", filepath, filename: basename(filepath), url: resp.media_url, timestamp: new Date().toISOString(), flags });
+      if (warning) out.write(SF(`  ⚠  ${warning.message}\n`));
+      out.write(`${theme.iceBlue("↓")} #${entry.sequence}  ${entry.filename}\n`);
       _lastMediaUrl = resp.media_url; _lastMediaModel = "vision_gpt_image2";
     }
   } catch (err) { writeErr(out, err); }
@@ -140,8 +143,9 @@ export async function videogenSlash(ctx: AppContext, out: Writable, arg: string,
     if (resp.media_url) {
       out.write(SF("downloading video...\n"));
       const filepath = await downloadMediaFile(ctx.api, resp.media_url, ensureOutputDir(), modelKey, kind, resp.filename);
-      const entry = recordOutput({ model: modelKey, prompt: fullPrompt, kind, filepath, filename: basename(filepath), url: resp.media_url, timestamp: new Date().toISOString(), flags });
-      out.write(`${theme.iceBlue("↓")} #${entry.index}  ${entry.filename}\n  ${SF(resp.media_url)}\n\n`);
+      const { entry, warning } = recordOutput({ model: modelKey, prompt: fullPrompt, kind, filepath, filename: basename(filepath), url: resp.media_url, timestamp: new Date().toISOString(), flags });
+      if (warning) out.write(SF(`  ⚠  ${warning.message}\n`));
+      out.write(`${theme.iceBlue("↓")} #${entry.sequence}  ${entry.filename}\n  ${SF(resp.media_url)}\n\n`);
       _lastMediaUrl = resp.media_url; _lastMediaModel = modelKey; _lastMediaKind = kind;
     }
   } catch (err) { writeErr(out, err); }
@@ -154,9 +158,17 @@ export async function animateSlash(ctx: AppContext, out: Writable, arg: string):
   if (!ref) { out.write("usage: /animate <image_url|file.png|#n> [motion description]\n"); return; }
   let refUrl = ref;
   if (/^#?\d+$/.test(ref)) {
-    const entry = findOutput(ref.replace("#", ""));
-    if (entry) refUrl = entry.url;
-    else { out.write(SF(`  no output matching "${ref}"\n`)); return; }
+    const lookup = findOutput(ref.replace("#", ""));
+    if (lookup.warning) out.write(SF(`  ⚠  ${lookup.warning.message}\n`));
+    if (lookup.status !== "found") {
+      out.write(SF(`  no single output matching "${ref}"\n`));
+      return;
+    }
+    if (!lookup.entry.url) {
+      out.write(SF(`  #${lookup.entry.sequence} has no remote URL to animate from\n`));
+      return;
+    }
+    refUrl = lookup.entry.url;
   }
   const prompt = `Animate this image into a fluid video sequence${extraPrompt ? ": " + extraPrompt : ""}`;
   out.write(SF(`animating from ${refUrl.slice(0, 50)}...\n\n`));
@@ -164,8 +176,9 @@ export async function animateSlash(ctx: AppContext, out: Writable, arg: string):
     const resp = await dispatchGeneration(ctx.api, prompt, "vision_seedance", { model: "seedance", ref: refUrl, duration: 5 });
     if (resp.media_url) {
       const filepath = await downloadMediaFile(ctx.api, resp.media_url, ensureOutputDir(), "vision_seedance", "video", resp.filename);
-      const entry = recordOutput({ model: "vision_seedance", prompt, kind: "video", filepath, filename: basename(filepath), url: resp.media_url, timestamp: new Date().toISOString(), flags: { model: "seedance", ref: refUrl, duration: 5 } });
-      out.write(`${theme.iceBlue("↓")} #${entry.index}  ${entry.filename}\n`);
+      const { entry, warning } = recordOutput({ model: "vision_seedance", prompt, kind: "video", filepath, filename: basename(filepath), url: resp.media_url, timestamp: new Date().toISOString(), flags: { model: "seedance", ref: refUrl, duration: 5 } });
+      if (warning) out.write(SF(`  ⚠  ${warning.message}\n`));
+      out.write(`${theme.iceBlue("↓")} #${entry.sequence}  ${entry.filename}\n`);
       _lastMediaUrl = resp.media_url; _lastMediaModel = "vision_seedance"; _lastMediaKind = "video";
     }
   } catch (err) { writeErr(out, err); }
@@ -181,8 +194,9 @@ export async function recutSlash(ctx: AppContext, out: Writable, arg: string): P
     const resp = await dispatchGeneration(ctx.api, editPrompt, modelKey, { model: modelKey, ref: _lastMediaUrl });
     if (resp.media_url) {
       const filepath = await downloadMediaFile(ctx.api, resp.media_url, ensureOutputDir(), modelKey, "video", resp.filename);
-      const entry = recordOutput({ model: modelKey, prompt: editPrompt, kind: "video", filepath, filename: basename(filepath), url: resp.media_url, timestamp: new Date().toISOString(), flags: {} });
-      out.write(`${theme.iceBlue("↓")} #${entry.index}  ${entry.filename}\n`);
+      const { entry, warning } = recordOutput({ model: modelKey, prompt: editPrompt, kind: "video", filepath, filename: basename(filepath), url: resp.media_url, timestamp: new Date().toISOString(), flags: {} });
+      if (warning) out.write(SF(`  ⚠  ${warning.message}\n`));
+      out.write(`${theme.iceBlue("↓")} #${entry.sequence}  ${entry.filename}\n`);
       _lastMediaUrl = resp.media_url;
     }
   } catch (err) { writeErr(out, err); }
@@ -193,21 +207,37 @@ export async function outputSlash(_ctx: AppContext, out: Writable, arg: string):
   const sub = parts[0]?.toLowerCase();
   const ref = parts.slice(1).join(" ");
   if (sub === "open" || sub === "o") {
-    if (!ref) { out.write("usage: /output open <n|filename>\n"); return; }
-    const entry = findOutput(ref);
-    if (!entry) { out.write(SF(`  no output matching "${ref}"\n`)); return; }
-    try { openOutput(entry); out.write(`${theme.iceBlue("→")} opened ${entry.filename}\n`); }
+    if (!ref) { out.write("usage: /output open <sequence|artifact-id|filename>\n"); return; }
+    const lookup = findOutput(ref);
+    if (lookup.warning) out.write(SF(`  ⚠  ${lookup.warning.message}\n`));
+    if (lookup.status === "ambiguous") {
+      out.write(SF(`  "${ref}" matches ${lookup.candidates.length} artifacts — use a sequence number or a longer artifact ID\n`));
+      for (const c of lookup.candidates) out.write(SF(`    #${c.sequence}  ${shortId(c.artifactId)}  ${c.filename}\n`));
+      return;
+    }
+    if (lookup.status === "not-found") { out.write(SF(`  no output matching "${ref}"\n`)); return; }
+    try {
+      const outcome = openOutput(lookup.entry);
+      if (outcome.status === "spawned") out.write(`${theme.iceBlue("→")} opened ${lookup.entry.filename}\n`);
+      else out.write(SF(`  could not open ${lookup.entry.filename}: ${outcome.detail}\n`));
+    } catch (err) { writeErr(out, err); }
+    return;
+  }
+  if (sub === "clean" || sub === "clear") {
+    try { out.write(SF(`  cleared ${clearOutput()} entries\n`)); }
     catch (err) { writeErr(out, err); }
     return;
   }
-  if (sub === "clean" || sub === "clear") { out.write(SF(`  cleared ${clearOutput()} entries\n`)); return; }
-  const entries = listOutput(10);
+  const { entries, warning } = listOutput(10);
+  if (warning) out.write(SF(`  ⚠  ${warning.message}\n`));
   if (!entries.length) { out.write(SF("  (no generations yet — use /photogen or /videogen)\n")); return; }
   out.write(`${theme.iceBlue("📦")}  RECENT GENERATIONS\n\n`);
   for (const e of entries) {
     const icon = e.kind === "video" ? "🎬" : e.kind === "3d" ? "🧊" : "🖼";
-    const sp = e.prompt.length > 50 ? e.prompt.slice(0, 47) + "..." : e.prompt;
-    out.write(`  ${theme.iceBlue("#" + e.index)} ${icon}  ${e.filename}\n     ${SF(`${e.model}  ${(e.size_bytes/1024/1024).toFixed(1)}MB  ${sp}`)}\n`);
+    const detail = e.source === "recovered"
+      ? "recovered from disk — prompt and model unknown"
+      : `${e.model}  ${(e.size_bytes/1024/1024).toFixed(1)}MB  ${e.prompt.length > 50 ? e.prompt.slice(0, 47) + "..." : e.prompt}`;
+    out.write(`  ${theme.iceBlue("#" + e.sequence)} ${icon}  ${e.filename}  ${SF(shortId(e.artifactId))}\n     ${SF(detail)}\n`);
   }
   out.write(SF("\n  /output open <n>  — open in default viewer\n\n"));
 }

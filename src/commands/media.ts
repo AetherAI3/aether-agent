@@ -197,16 +197,22 @@ async function mediaGenerate(ctx: AppContext, prompt: string, kind: MediaKind, f
           model: modelKey, prompt: vp, kind, filepath, filename: basename(filepath),
           url: resp.media_url, timestamp: new Date().toISOString(), flags,
         };
-        const entry = recordOutput(result);
+        const { entry, warning } = recordOutput(result);
+        if (warning) process.stderr.write(theme.dim(`  ⚠  ${warning.message}\n`));
         // resp.media_url and resp.text/response below are server-controlled
         // (an LLM generation response) — sanitized before hitting the
         // terminal, same as every other server-supplied string in this flow
         // (see sanitizeServerText's own doc comment in transport.ts).
         process.stdout.write(
-          `  ${theme.iceBlue("↓")} #${entry.index}  ${entry.filename}\n` +
+          `  ${theme.iceBlue("↓")} #${entry.sequence}  ${entry.filename}\n` +
           `  ${theme.dim(`url: ${sanitizeTerm(resp.media_url)}`)}\n\n`
         );
-        if (flags.open) openOutput(entry);
+        if (flags.open) {
+          const outcome = openOutput(entry);
+          if (outcome.status !== "spawned") {
+            process.stderr.write(theme.dim(`  could not open: ${outcome.detail}\n`));
+          }
+        }
       } else {
         process.stdout.write(theme.dim("  no media URL in response\n"));
         process.stdout.write(theme.dim(`  ${sanitizeTerm(text.slice(0, 200))}\n`));

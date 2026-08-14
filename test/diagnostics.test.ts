@@ -102,9 +102,10 @@ test("diagnostic executor preserves declaration order under concurrency", async 
   const spec = (id: string, delay: number): DiagnosticCheckSpec => ({
     id,
     category: "test",
+    title: id,
     run: async () => {
       await new Promise((resolve) => setTimeout(resolve, delay));
-      return { status: "pass", detail: id };
+      return { configured: { state: "yes" as const, evidence: id }, severity: "info" as const };
     },
   });
   const checks = await executeDiagnosticChecks(
@@ -112,59 +113,94 @@ test("diagnostic executor preserves declaration order under concurrency", async 
     3,
   );
   assert.deepEqual(checks.map((check) => check.id), ["first", "second", "third"]);
-  assert.deepEqual(checks.map((check) => check.status), ["pass", "pass", "pass"]);
+  assert.deepEqual(checks.map((check) => check.configured.state), ["yes", "yes", "yes"]);
+  // An axis a check does not speak to defaults to not-checked, never to a pass.
+  assert.deepEqual(checks.map((check) => check.verified.state), [
+    "not-checked",
+    "not-checked",
+    "not-checked",
+  ]);
 });
 
-test("default doctor is fast/local, ordered, fail-soft, and content-redacted", async () => {
+test("fast doctor is local, ordered, fail-soft, and content-redacted", async () => {
   const { ctx, roots, store, client, counters } = setup();
-  const report = await diagnosticReport(ctx, false, {
-    now: "2026-07-10T00:00:00.000Z",
-    memoryRoots: roots,
-    mcpStore: store,
-    mcpClient: client,
-    timeoutMs: 50,
+  const report = await diagnosticReport(ctx, {
+    dependencies: {
+      now: "2026-07-10T00:00:00.000Z",
+      memoryRoots: roots,
+      mcpStore: store,
+      mcpClient: client,
+      outputDir: mkdtempSync(join(tmpdir(), "aether-doctor-media-")),
+      timeoutMs: 50,
+    },
   });
+  assert.equal(report.schemaVersion, 2);
+  assert.equal(report.mode, "fast");
   assert.deepEqual(report.checks.map((check) => check.id), [
     "runtime.node",
     "workspace.directory",
     "workspace.git",
-    "configuration.transport",
-    "authentication",
-    "backend.catalog",
+    "agent.transport",
+    "auth.credential",
+    "agent.catalog",
     "tools.schemas",
     "tools.gates",
     "memory.health",
     "mcp.registry",
     "mcp.broker",
     "persistence.local",
+    "media.history",
+    "opener.local",
+    "github.connection",
+    "custody.receipts",
+    "actions.dispatch",
+    "predator.readiness",
   ]);
-  assert.equal(report.checks.find((check) => check.id === "backend.catalog")?.status, "skip");
-  assert.equal(report.checks.find((check) => check.id === "mcp.broker")?.status, "skip");
+  // The whole point of fast mode: nothing remote was contacted, and the report
+  // says so instead of implying otherwise.
   assert.deepEqual(counters, { backend: 0, broker: 0 });
+  assert.equal(
+    report.checks.find((check) => check.id === "agent.transport")?.reachable.state,
+    "not-checked",
+  );
+  assert.equal(
+    report.checks.find((check) => check.id === "agent.catalog")?.verified.state,
+    "not-checked",
+  );
   assert.equal(JSON.stringify(report).includes(SECRET), false);
   assert.match(
-    report.checks.find((check) => check.id === "memory.health")?.detail ?? "",
+    report.checks.find((check) => check.id === "memory.health")?.configured.evidence ?? "",
     /never auto-injected/,
   );
 });
 
-test("deep doctor performs bounded backend and broker/catalog checks", async () => {
-  const { ctx, roots, store, client, counters } = setup();
-  const report = await diagnosticReport(ctx, true, {
-    memoryRoots: roots,
-    mcpStore: store,
-    mcpClient: client,
-    timeoutMs: 100,
+test("a surface this build does not have reports n/a, not a pass", async () => {
+  const { ctx, roots, store, client } = setup();
+  const report = await diagnosticReport(ctx, {
+    dependencies: { memoryRoots: roots, mcpStore: store, mcpClient: client },
   });
-  assert.equal(report.deep, true);
-  assert.equal(report.checks.find((check) => check.id === "backend.catalog")?.status, "pass");
-  assert.equal(report.checks.find((check) => check.id === "mcp.broker")?.status, "pass");
-  assert.equal(counters.backend, 1);
-  assert.equal(counters.broker, 3);
-  assert.equal(JSON.stringify(report).includes(SECRET), false);
+  for (const id of ["actions.dispatch", "predator.readiness"]) {
+    const check = report.checks.find((entry) => entry.id === id);
+    assert.equal(check?.verified.state, "na", `${id} must not claim a pass`);
+    assert.match(String(check?.verified.evidence), /this build has no/);
+  }
 });
 
-test("deep doctor bounds unavailable API and broker timeouts", async () => {
+test("fast doctor contacts nothing even when --deep is passed", async () => {
+  const { ctx, roots, store, client, counters } = setup();
+  const captured = sink();
+  const code = await cmdDoctor(ctx, ["--deep"], {
+    out: captured.out,
+    dependencies: { memoryRoots: roots, mcpStore: store, mcpClient: client },
+  });
+  assert.equal(code, 0);
+  assert.deepEqual(counters, { backend: 0, broker: 0 }, "--deep stayed read-only");
+  // --deep must keep meaning what it meant, and point at the new mode.
+  assert.match(captured.text(), /--deep is the read-only report \(unchanged\)/);
+  assert.match(captured.text(), /aether doctor --live/);
+});
+
+test("a hanging backend cannot stall the fast report", async () => {
   const { ctx, roots, store } = setup();
   ctx.api = { getJson: async () => new Promise(() => {}) } as unknown as AppContext["api"];
   const hanging = {
@@ -173,15 +209,34 @@ test("deep doctor bounds unavailable API and broker timeouts", async () => {
     listTools: async () => new Promise(() => {}),
   } as unknown as McpClient;
   const started = Date.now();
-  const report = await diagnosticReport(ctx, true, {
-    memoryRoots: roots,
-    mcpStore: store,
-    mcpClient: hanging,
-    timeoutMs: 50,
+  const report = await diagnosticReport(ctx, {
+    dependencies: { memoryRoots: roots, mcpStore: store, mcpClient: hanging, timeoutMs: 50 },
   });
   assert.ok(Date.now() - started < 500);
-  assert.equal(report.checks.find((check) => check.id === "backend.catalog")?.status, "warn");
-  assert.equal(report.checks.find((check) => check.id === "mcp.broker")?.status, "warn");
+  assert.equal(report.mode, "fast");
+});
+
+test("--live renders the live report, never the fast one relabelled", async () => {
+  const { ctx, roots, store, client } = setup();
+  const captured = sink();
+  await cmdDoctor(ctx, ["--live", "--no-ui"], {
+    out: captured.out,
+    dependencies: { memoryRoots: roots, mcpStore: store, mcpClient: client },
+    liveOptions: { timeoutMs: 500, mcpStore: store, mcpClient: client, skipOpenerProbe: true },
+  });
+  const text = captured.text();
+  assert.match(text, /Aether doctor v2 \(live\)/);
+  // The fast-mode footer must not appear on a live run.
+  assert.equal(text.includes("Remote reachability is not checked in fast mode"), false);
+  assert.match(text, /spend\.none/);
+  assert.equal(text.includes(SECRET), false);
+});
+
+test("--live and --fix are refused together rather than half-applied", async () => {
+  const { ctx } = setup();
+  const captured = sink();
+  assert.equal(await cmdDoctor(ctx, ["--live", "--fix"], { out: captured.out }), 2);
+  assert.match(captured.text(), /separate modes/);
 });
 
 test("doctor command supports JSON and rejects unknown arguments", async () => {
@@ -195,11 +250,14 @@ test("doctor command supports JSON and rejects unknown arguments", async () => {
       mcpStore: store,
       mcpClient: client,
       now: "2026-07-10T00:00:00.000Z",
+      outputDir: mkdtempSync(join(tmpdir(), "aether-doctor-json-")),
     },
   });
   assert.equal(code, 0);
   const parsed = JSON.parse(captured.text());
-  assert.equal(parsed.schemaVersion, 1);
+  assert.equal(parsed.schemaVersion, 2);
+  assert.equal(parsed.mode, "fast");
+  assert.equal(parsed.generatedAt, "2026-07-10T00:00:00.000Z");
   assert.equal(captured.text().includes(SECRET), false);
 
   const bad = sink();

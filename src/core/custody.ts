@@ -22,14 +22,20 @@ export interface CustodyRecord {
   [k: string]: unknown;
 }
 
-/** Append one signed custody record (de-duped by order_id against the recent tail). */
-export function appendCustody(custody: Record<string, unknown>): void {
+/**
+ * Append one signed custody record (de-duped by order_id against the recent
+ * tail). `path` is injectable so `doctor --live` can prove this exact code path
+ * against a doctor-owned sandbox instead of writing into the user's real log.
+ */
+export function appendCustody(
+  custody: Record<string, unknown>,
+  path: string = custodyLogPath(),
+): void {
   try {
     const orderId = custody["order_id"];
     if (!orderId) return;
-    const existing = readCustodyLog(MAX);
+    const existing = readCustodyLog(MAX, path);
     if (existing.some((e) => e.order_id === orderId)) return;
-    const path = custodyLogPath();
     mkdirSync(dirname(path), { recursive: true });
     const rec: CustodyRecord = { ...custody, received_at: Date.now() };
     appendFileSync(path, JSON.stringify(rec) + "\n", "utf8");
@@ -39,9 +45,8 @@ export function appendCustody(custody: Record<string, unknown>): void {
 }
 
 /** Read the client-held custody log, newest-first, capped at `limit`. */
-export function readCustodyLog(limit = 200): CustodyRecord[] {
+export function readCustodyLog(limit = 200, path: string = custodyLogPath()): CustodyRecord[] {
   try {
-    const path = custodyLogPath();
     if (!existsSync(path)) return [];
     const lines = readFileSync(path, "utf8").split("\n").filter((l) => l.trim());
     const recs: CustodyRecord[] = [];

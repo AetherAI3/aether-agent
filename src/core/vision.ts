@@ -9,7 +9,21 @@ import type { CatalogItem } from "../types.js";
 import { createWriteStream, mkdirSync, readdirSync, statSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { execSync } from "node:child_process";
+import { openTarget, type OpenOutcome } from "./opener.js";
+import {
+  historyPaths,
+  loadHistory,
+  type HistoryState,
+  type HistoryWarning,
+  type MediaEntry,
+  type MediaEntrySource,
+} from "./media_history.js";
+import {
+  appendEntry,
+  clearHistory,
+  listEntries,
+  resolveRef,
+} from "./media_history_store.js";
 
 // ═════════════════════════════════════════════════════════════════════
 // Types
@@ -65,7 +79,10 @@ export interface GenResult {
 }
 
 export interface OutputEntry {
-  index: number;
+  /** Canonical identity. Never reused, never re-derived. */
+  artifactId: string;
+  /** Human-friendly monotonic alias — what `output open <n>` takes. */
+  sequence: string;
   filename: string;
   filepath: string;
   model: string;
@@ -74,7 +91,26 @@ export interface OutputEntry {
   url: string;
   timestamp: string;
   size_bytes: number;
+  /** "recovered" marks an entry rebuilt from disk, with unknown prompt/model. */
+  source: MediaEntrySource;
 }
+
+export interface RecordedOutput {
+  entry: OutputEntry;
+  /** Set when the generation this appended to had to be recovered. */
+  warning?: HistoryWarning;
+}
+
+export interface OutputListing {
+  entries: OutputEntry[];
+  state: HistoryState;
+  warning?: HistoryWarning;
+}
+
+export type OutputLookup =
+  | { status: "found"; entry: OutputEntry; warning?: HistoryWarning }
+  | { status: "not-found"; warning?: HistoryWarning }
+  | { status: "ambiguous"; candidates: OutputEntry[]; warning?: HistoryWarning };
 
 export interface ChatGenResponse {
   response?: string; text?: string;
@@ -247,55 +283,88 @@ export async function downloadMediaFile(
 // Output manager
 // ═════════════════════════════════════════════════════════════════════
 
-const OUTPUT_LOG = join(OUTPUT_DIR, ".genlog.json");
+// Persistence, identity, recovery and locking all live in media_history*.ts.
+// This section is the presentation adapter the media commands already speak.
 
-function readLog(): OutputEntry[] {
-  if (!existsSync(OUTPUT_LOG)) return [];
-  try { return JSON.parse(readFileSync(OUTPUT_LOG, "utf-8")); } catch { return []; }
+function paths(): ReturnType<typeof historyPaths> {
+  return historyPaths(OUTPUT_DIR);
 }
 
-function saveLog(entries: OutputEntry[]): void {
-  mkdirSync(OUTPUT_DIR, { recursive: true });
-  writeFileSync(OUTPUT_LOG, JSON.stringify(entries, null, 2));
-}
-
-export function recordOutput(result: GenResult): OutputEntry {
-  const entries = readLog();
-  const stat = statSync(result.filepath);
-  const entry: OutputEntry = {
-    index: entries.length + 1,
-    filename: result.filename, filepath: result.filepath,
-    model: result.model, prompt: result.prompt, kind: result.kind,
-    url: result.url, timestamp: result.timestamp, size_bytes: stat.size,
+function toOutputEntry(entry: MediaEntry): OutputEntry {
+  return {
+    artifactId: entry.artifactId,
+    sequence: entry.sequence,
+    filename: entry.displayName,
+    filepath: entry.filePath,
+    model: entry.model,
+    prompt: entry.prompt,
+    kind: entry.kind,
+    url: entry.url,
+    timestamp: entry.createdAt,
+    size_bytes: entry.sizeBytes,
+    source: entry.source,
   };
-  entries.push(entry);
-  if (entries.length > 100) entries.splice(0, entries.length - 100);
-  saveLog(entries);
-  return entry;
 }
 
-export function listOutput(limit = 10): OutputEntry[] {
-  return readLog().slice(-limit).reverse();
+export function recordOutput(result: GenResult): RecordedOutput {
+  // A missing file is not a reason to lose the record — the URL still
+  // resolves the artifact, and 0 bytes reads as "size unknown".
+  let size = 0;
+  try {
+    size = statSync(result.filepath).size;
+  } catch {
+    size = 0;
+  }
+  const appended = appendEntry(paths(), {
+    kind: result.kind,
+    displayName: result.filename,
+    filePath: result.filepath,
+    url: result.url,
+    model: result.model,
+    prompt: result.prompt,
+    sizeBytes: size,
+  }, { now: result.timestamp });
+  const entry = toOutputEntry(appended.entry);
+  return appended.warning ? { entry, warning: appended.warning } : { entry };
 }
 
-export function findOutput(ref: string): OutputEntry | null {
-  const entries = readLog();
-  const n = parseInt(ref, 10);
-  if (!isNaN(n)) return entries.find(e => e.index === n) ?? null;
-  return entries.find(e => e.filename === ref || e.filepath === ref) ?? null;
+export function listOutput(limit = 10): OutputListing {
+  const load = loadHistory(paths());
+  const entries = listEntries(load.doc.entries, limit).map(toOutputEntry);
+  return load.warning
+    ? { entries, state: load.state, warning: load.warning }
+    : { entries, state: load.state };
 }
 
-export function openOutput(entry: OutputEntry): void {
-  const cmd = process.platform === "darwin" ? "open" :
-              process.platform === "win32" ? "start" : "xdg-open";
-  execSync(`${cmd} "${entry.filepath}"`, { stdio: "ignore" });
+export function findOutput(ref: string): OutputLookup {
+  const load = loadHistory(paths());
+  const resolved = resolveRef(load.doc.entries, ref);
+  const warning = load.warning ? { warning: load.warning } : {};
+  if (resolved.status === "found") {
+    return { status: "found", entry: toOutputEntry(resolved.entry), ...warning };
+  }
+  if (resolved.status === "ambiguous") {
+    return { status: "ambiguous", candidates: resolved.candidates.map(toOutputEntry), ...warning };
+  }
+  return { status: "not-found", ...warning };
+}
+
+/**
+ * Hand the artifact to the OS default handler. Prefers the local file and
+ * falls back to the remote URL when the download is gone. Never throws — the
+ * outcome is the return value so callers can report a refusal precisely.
+ */
+export function openOutput(entry: OutputEntry): OpenOutcome {
+  if (entry.filepath) {
+    const local = openTarget(entry.filepath);
+    if (local.status !== "rejected") return local;
+  }
+  if (entry.url) return openTarget(entry.url);
+  return { status: "rejected", detail: "artifact has no local file and no URL" };
 }
 
 export function clearOutput(): number {
-  const entries = readLog();
-  const count = entries.length;
-  saveLog([]);
-  return count;
+  return clearHistory(paths());
 }
 
 // ═════════════════════════════════════════════════════════════════════

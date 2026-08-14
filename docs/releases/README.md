@@ -8,4 +8,5 @@ For the live command reference, see [COMMANDS.md](../COMMANDS.md).
 
 ## Index
 
+- [2026-08-14](2026-08-14.md) — Durable media output history, one safe opener, and `aether doctor` v2 (fast / `--live` / `--fix`).
 - [2026-06-09](2026-06-09.md) — Aether Agent rebrand + slash-command console (PRs #4–#16).
