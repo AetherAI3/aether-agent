@@ -231,6 +231,11 @@ export async function handleSlash(
       await mcpFromRepl(ctx);
       break;
     }
+    case "skills": {
+      const { skillsSlash } = await import("./skills.js");
+      await skillsSlash(ctx, out, arg);
+      break;
+    }
     case "delegate": {
       await delegateSlash(ctx, out, arg);
       break;

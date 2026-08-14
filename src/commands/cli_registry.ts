@@ -16,6 +16,7 @@ export const CLI_COMMANDS: CommandSpec[] = [
   { name: "vault", args: "<command>", summary: "search and manage semantic memory", section: "Knowledge" },
   { name: "workflow", args: "<command>", summary: "create and manage workflows", section: "Knowledge" },
   { name: "memory", args: "[status|inspect|forget|prune]", summary: "inspect and manage scoped memory", section: "Knowledge" },
+  { name: "skills", args: "<subcommand>", summary: "inspect, trust, and manage agent skills", section: "Knowledge" },
   { name: "image", aliases: ["img"], args: "<prompt>", summary: "generate an image", section: "Media" },
   { name: "video", aliases: ["vid"], args: "<prompt>", summary: "generate a video", section: "Media" },
   { name: "output", aliases: ["out"], args: "[open <n>]", summary: "manage generated media", section: "Media" },

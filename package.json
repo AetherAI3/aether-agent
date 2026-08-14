@@ -27,7 +27,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node dist/scripts/copy-skill-assets.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "npm run build && node dist/src/main.js",
     "start": "node dist/src/main.js",

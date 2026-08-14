@@ -77,6 +77,10 @@ async function main(argv: string[]): Promise<number> {
       quiet: { type: "boolean", default: false },
       interactive: { type: "boolean", default: false },
       "no-log": { type: "boolean", default: false },
+      // `aether skills` flags:
+      scope: { type: "string" },
+      all: { type: "boolean", default: false },
+      ci: { type: "boolean", default: false },
       worktree: { type: "boolean", default: false },
       repo: { type: "string" },
       swarm: { type: "string" },
@@ -144,6 +148,14 @@ async function main(argv: string[]): Promise<number> {
       return cmdVault(ctx, rest);
     case "workflow":
       return cmdWorkflow(ctx, rest);
+    case "skills": {
+      const { cmdSkills } = await import("./commands/skills.js");
+      return cmdSkills(ctx, rest, {
+        scope: sf(values["scope"]),
+        all: Boolean(values["all"]),
+        ci: Boolean(values["ci"]),
+      });
+    }
     case "memory": {
       const { cmdMemory } = await import("./commands/memory.js");
       return cmdMemory(ctx, rest, { apply: Boolean(values["apply"]) });

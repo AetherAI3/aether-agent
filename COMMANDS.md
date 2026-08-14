@@ -15,12 +15,12 @@ aether                                  # no args = interactive REPL
 
 <!-- CLI-COMMANDS:START -->
 `help`, `agent`, `chat`, `resume`, `run`, `models`, `agents`, `auth`,
-`github`, `vault`, `workflow`, `memory`, `image`, `video`, `output`, `audit`,
-`receipt`, `doctor`, `mcp`, `config`
+`github`, `vault`, `workflow`, `memory`, `skills`, `image`, `video`, `output`,
+`audit`, `receipt`, `doctor`, `mcp`, `config`
 <!-- CLI-COMMANDS:END -->
 
 <!-- SLASH-COMMANDS:START -->
-`help`, `models`, `model`, `agent`, `agents`, `tier`, `audit`, `effort`, `doctor`, `clear`, `exit`, `mcp`, `autonomous-execution`, `subagent-driven-execution`, `self-review`, `recon`, `plan`, `research`, `review`, `code-review`, `writing-skills`, `writing-plans`, `queue`, `steer`, `btw`, `pin`, `drop`, `snapshot`, `limit`, `audit-receipt`, `rollback`, `logs-view`, `goal`, `goals`, `memory`, `workflow`, `workflow-templates`, `workflow-template`, `vault`, `vault-context`, `vault-search`, `vault-recent`, `vault-project`, `vault-tag`, `vault-tree`, `delegate`, `tree`, `broadcast`, `gather`, `scaffold`, `port`, `test-drive`, `bench`, `purge`, `stage-diff`, `revert`, `photogen`, `frame`, `re-frame`, `videogen`, `sequence`, `animate`, `re-cut`, `output`, `storyboard`, `add`, `hud`
+`help`, `models`, `model`, `agent`, `agents`, `tier`, `audit`, `effort`, `doctor`, `clear`, `exit`, `mcp`, `skills`, `autonomous-execution`, `subagent-driven-execution`, `self-review`, `recon`, `plan`, `research`, `review`, `code-review`, `writing-skills`, `writing-plans`, `queue`, `steer`, `btw`, `pin`, `drop`, `snapshot`, `limit`, `audit-receipt`, `rollback`, `logs-view`, `goal`, `goals`, `memory`, `workflow`, `workflow-templates`, `workflow-template`, `vault`, `vault-context`, `vault-search`, `vault-recent`, `vault-project`, `vault-tag`, `vault-tree`, `delegate`, `tree`, `broadcast`, `gather`, `scaffold`, `port`, `test-drive`, `bench`, `purge`, `stage-diff`, `revert`, `photogen`, `frame`, `re-frame`, `videogen`, `sequence`, `animate`, `re-cut`, `output`, `storyboard`, `add`, `hud`
 <!-- SLASH-COMMANDS:END -->
 
 
@@ -174,6 +174,26 @@ disconnect actions per entry.
 | `aether mcp doctor` | Same report; exits `1` if any check fails (scriptable health gate). |
 | `aether mcp repair` | Back up and reset a corrupted local MCP registry (confirms first). |
 
+### `aether skills <subcommand>` — agent skills
+Discovers built-in, user (`~/.config/aether/skills/user/`), and project
+(`.aether/skills/project/`) skills. Project skills are untrusted until you
+inspect and trust them; trust binds to the exact content digest, so any change
+requires re-trust. The REPL `/skills` command covers the read/toggle subset —
+trust decisions stay in the CLI.
+
+| Subcommand | Does |
+|---|---|
+| `aether skills list` | Index of discovered skills: id, scope, trust, enabled, automatic, token cost. `--json` prints the raw index. |
+| `aether skills show <id>` | Metadata, digest, and declared tool/permission policy (never the body). |
+| `aether skills explain <id>` | `show` plus the files that would load and the effective tool policy. |
+| `aether skills create <name> [--scope project\|user]` | Scaffold a new skill directory (default: project). |
+| `aether skills install <path> [--scope project\|user]` | Validate and copy a local skill directory into the scope root. |
+| `aether skills enable <id>` / `disable <id>` | Toggle a skill locally. |
+| `aether skills trust <id>` | Show digest + requested permissions, then record trust (`--yes` or interactive y/N; fails closed without a TTY). |
+| `aether skills untrust <id>` | Remove the local trust record. |
+| `aether skills lock` | Write `.aether/skills.lock.json` for project skills (safe to commit). |
+| `aether skills check [id\|--all] [--ci]` | Static checks: schema, lock drift, trust, dependency graph, eval fixtures. `--ci` exits `1` on failure; `--json` for structured output. |
+
 ### `aether config [show|get|set]` — local settings
 Local settings, stored at `~/.config/aether/config.json`.
 ```bash
@@ -216,6 +236,7 @@ mirrors the live registry in `src/commands/slash_registry.ts`.
 | `/doctor [deep]` | Run ordered diagnostics; `deep` adds bounded checks. |
 | `/clear` | Clear the screen. |
 | `/mcp [list|doctor|repair]` | Diagnose or confirmation-gated repair for MCP servers. |
+| `/skills [list|show <id>|enable <id>|disable <id>]` | List and manage agent skills. Trust stays in the CLI: `aether skills trust <id>`. |
 | `/exit`, `/quit` | Leave the REPL. |
 
 Typos get a nudge: `/modle` answers `did you mean /model?`. Tab completes any

@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "aether/research-and-implement",
+  "version": "1.0.0",
+  "name": "Research and Implement",
+  "description": "Research an unfamiliar API, library, or protocol on the web, distill the findings into a short plan, then implement the change and verify it with the test runner. Never commits — the operator reviews the final diff.",
+  "entrypoint": "SKILL.md",
+  "triggers": {
+    "commands": ["research-and-implement"],
+    "phrases": [],
+    "automatic": false
+  },
+  "tools": {
+    "allowed": ["read_file", "repo_search", "write_file", "run_tests", "web_search", "web_fetch"],
+    "required": ["read_file", "web_search"],
+    "denied": ["run_shell", "git_commit"]
+  },
+  "permissions": {
+    "requires": ["workspace.read", "workspace.write", "network.general", "shell.test"],
+    "may_request": [],
+    "forbids": ["git.commit", "git.push", "shell.execute"]
+  },
+  "context": {
+    "max_tokens": 2000,
+    "resources": []
+  },
+  "outputs": {
+    "kinds": ["code", "summary"],
+    "verification": ["tests pass", "summary cites the sources used"]
+  },
+  "dependencies": { "skills": [] },
+  "compatibility": { "min_agent_version": "0.1.0", "capability_contract": 1 },
+  "health": { "eval_manifest": null }
+}
