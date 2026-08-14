@@ -123,7 +123,6 @@ export async function cmdDoctor(
     const live = await liveReport(ctx, {
       ...(options.liveOptions ?? {}),
       ...(flags.noUi ? { headless: true } : {}),
-      ...(flags.only.length ? {} : {}),
     });
     const filtered = flags.only.length
       ? { ...live, checks: live.checks.filter((check) => flags.only.includes(check.id)) }
