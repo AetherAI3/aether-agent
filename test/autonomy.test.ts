@@ -24,6 +24,8 @@ test("gateActionFor gates mutating/shell tools and ignores read-only ones", () =
   assert.equal(gateActionFor("read_file"), null);
   assert.equal(gateActionFor("repo_search"), null);
   assert.equal(gateActionFor("run_tests"), "shell");
+  assert.equal(gateActionFor("web_search"), "network");
+  assert.equal(gateActionFor("web_fetch"), "network");
   assert.equal(gateActionFor("unknown_tool"), null);
 });
 
@@ -37,6 +39,11 @@ test("decideGate: ask mode prompts on a TTY, FAILS CLOSED (deny) without one", (
   assert.equal(decideGate("run_shell", "ask", false, { yes: false, isTty: false }), "deny");
   assert.equal(decideGate("run_tests", "ask", false, { yes: false, isTty: false }), "deny");
   assert.equal(decideGate("write_file", "ask", false, { yes: false, isTty: false }), "deny");
+  // Network is an explicit gate category — it must not bypass the gate just
+  // because it mutates nothing locally.
+  assert.equal(decideGate("web_fetch", "ask", false, { yes: false, isTty: true }), "prompt");
+  assert.equal(decideGate("web_fetch", "ask", false, { yes: false, isTty: false }), "deny");
+  assert.equal(decideGate("web_search", "ask", false, { yes: false, isTty: false }), "deny");
 });
 
 test("decideGate: --yes auto-confirms even on a non-TTY", () => {

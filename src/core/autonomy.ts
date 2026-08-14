@@ -10,7 +10,7 @@
 import type { PermissionMode } from "../types.js";
 import { toolDefinition } from "./tool_registry.js";
 
-export type GateAction = "edit" | "shell" | "write";
+export type GateAction = "edit" | "shell" | "write" | "network";
 
 export interface GateDecision {
   allowed: boolean;
@@ -38,11 +38,15 @@ export function evaluate(
  * Map a tool name to the gate action it requires, or null when the tool is
  * read-only and never needs approval. `run_tests` is gated the same as
  * `run_shell` / `git_commit` (sideEffect: "shell") — it is NOT ungated.
+ * Network tools (`web_search` / `web_fetch`) are gated as "network" — an
+ * explicit permission category; they must never bypass the mutation gate
+ * simply because they mutate nothing locally.
  */
 export function gateActionFor(tool: string): GateAction | null {
   const effect = toolDefinition(tool)?.sideEffect;
   if (effect === "write") return "write";
   if (effect === "shell" || effect === "git") return "shell";
+  if (effect === "network") return "network";
   return null;
 }
 

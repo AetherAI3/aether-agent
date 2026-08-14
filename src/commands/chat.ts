@@ -214,7 +214,7 @@ async function runLocalTurn(ctx: AppContext, prompt: string): Promise<void> {
       process.stderr.write(`blocked ${name}: confirmation required; use --yes or permissionMode skip\n`);
       return false;
     }
-    const detail = String(args["path"] ?? args["command"] ?? args["message"] ?? "");
+    const detail = String(args["path"] ?? args["command"] ?? args["message"] ?? args["url"] ?? args["query"] ?? "");
     const shown = detail.length > 120 ? detail.slice(0, 117) + "..." : detail;
     return ctx.confirm(`\nwarning ${name}${shown ? " " + shown : ""} - run it? [y/N] `);
   };

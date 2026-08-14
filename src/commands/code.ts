@@ -232,7 +232,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
       );
       return false;
     }
-    const detail = String(args["command"] ?? args["path"] ?? args["message"] ?? "");
+    const detail = String(args["command"] ?? args["path"] ?? args["message"] ?? args["url"] ?? args["query"] ?? "");
     const shown = detail.length > 200 ? detail.slice(0, 197) + "…" : detail;
     return ctx.confirm(`\n⚠ ${name}${shown ? ` ${shown}` : ""} — run it? [y/N] `);
   };

@@ -194,6 +194,8 @@ export async function diagnosticReport(
           gateActionFor("run_shell") === "shell" &&
           gateActionFor("run_tests") === "shell" &&
           gateActionFor("git_commit") === "shell" &&
+          gateActionFor("web_search") === "network" &&
+          gateActionFor("web_fetch") === "network" &&
           gateActionFor("read_file") === null;
         return {
           status: valid ? "pass" : "fail",
