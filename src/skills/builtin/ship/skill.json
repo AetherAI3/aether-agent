@@ -6,29 +6,64 @@
   "description": "Finalize verified work into a commit: review the pending changes, tidy obvious leftovers, write a precise commit message, and commit. Never pushes — publishing a commit stays a deliberate operator action.",
   "entrypoint": "SKILL.md",
   "triggers": {
-    "commands": ["ship"],
+    "commands": [
+      "ship"
+    ],
     "phrases": [],
     "automatic": false
   },
   "tools": {
-    "allowed": ["read_file", "repo_search", "write_file", "git_commit"],
-    "required": ["git_commit"],
-    "denied": ["run_shell", "web_search", "web_fetch"]
+    "allowed": [
+      "read_file",
+      "repo_search",
+      "write_file",
+      "git_commit"
+    ],
+    "required": [
+      "git_commit"
+    ],
+    "denied": [
+      "run_shell",
+      "web_search",
+      "web_fetch"
+    ]
   },
   "permissions": {
-    "requires": ["workspace.read", "workspace.write", "git.commit"],
-    "may_request": ["git.stage"],
-    "forbids": ["git.push", "shell.execute", "network.general"]
+    "requires": [
+      "workspace.read",
+      "workspace.write",
+      "git.commit"
+    ],
+    "may_request": [
+      "git.stage"
+    ],
+    "forbids": [
+      "git.push",
+      "shell.execute",
+      "network.general"
+    ]
   },
   "context": {
     "max_tokens": 1200,
     "resources": []
   },
   "outputs": {
-    "kinds": ["commit"],
-    "verification": ["commit created", "commit message describes the change accurately"]
+    "kinds": [
+      "commit"
+    ],
+    "verification": [
+      "commit created",
+      "commit message describes the change accurately"
+    ]
   },
-  "dependencies": { "skills": [] },
-  "compatibility": { "min_agent_version": "0.1.0", "capability_contract": 1 },
-  "health": { "eval_manifest": null }
+  "dependencies": {
+    "skills": []
+  },
+  "compatibility": {
+    "min_agent_version": "0.1.0",
+    "capability_contract": 1
+  },
+  "health": {
+    "eval_manifest": "evals/cases.json"
+  }
 }

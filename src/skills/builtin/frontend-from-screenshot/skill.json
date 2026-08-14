@@ -6,29 +6,62 @@
   "description": "Reproduce a provided screenshot or mockup as frontend code in the project's existing stack: match layout, spacing, type scale, and color, reusing the project's components and design tokens. Never commits, never fetches remote assets.",
   "entrypoint": "SKILL.md",
   "triggers": {
-    "commands": ["frontend-from-screenshot"],
+    "commands": [
+      "frontend-from-screenshot"
+    ],
     "phrases": [],
     "automatic": false
   },
   "tools": {
-    "allowed": ["read_file", "repo_search", "write_file"],
-    "required": ["write_file"],
-    "denied": ["run_shell", "run_tests", "git_commit", "web_search", "web_fetch"]
+    "allowed": [
+      "read_file",
+      "repo_search",
+      "write_file"
+    ],
+    "required": [
+      "write_file"
+    ],
+    "denied": [
+      "run_shell",
+      "run_tests",
+      "git_commit",
+      "web_search",
+      "web_fetch"
+    ]
   },
   "permissions": {
-    "requires": ["workspace.read", "workspace.write"],
+    "requires": [
+      "workspace.read",
+      "workspace.write"
+    ],
     "may_request": [],
-    "forbids": ["git.commit", "git.push", "shell.execute", "network.general"]
+    "forbids": [
+      "git.commit",
+      "git.push",
+      "shell.execute",
+      "network.general"
+    ]
   },
   "context": {
     "max_tokens": 1500,
     "resources": []
   },
   "outputs": {
-    "kinds": ["code"],
-    "verification": ["deviations from the reference are listed explicitly"]
+    "kinds": [
+      "code"
+    ],
+    "verification": [
+      "deviations from the reference are listed explicitly"
+    ]
   },
-  "dependencies": { "skills": [] },
-  "compatibility": { "min_agent_version": "0.1.0", "capability_contract": 1 },
-  "health": { "eval_manifest": null }
+  "dependencies": {
+    "skills": []
+  },
+  "compatibility": {
+    "min_agent_version": "0.1.0",
+    "capability_contract": 1
+  },
+  "health": {
+    "eval_manifest": "evals/cases.json"
+  }
 }

@@ -6,29 +6,63 @@
   "description": "Read-only project health survey: build and test configuration, dependency hygiene, repo layout, CI setup, and documentation gaps, reported as prioritized findings with concrete next steps. Never modifies anything.",
   "entrypoint": "SKILL.md",
   "triggers": {
-    "commands": ["doctor-project"],
+    "commands": [
+      "doctor-project"
+    ],
     "phrases": [],
     "automatic": false
   },
   "tools": {
-    "allowed": ["read_file", "repo_search"],
-    "required": ["read_file"],
-    "denied": ["write_file", "run_shell", "run_tests", "git_commit", "web_search", "web_fetch"]
+    "allowed": [
+      "read_file",
+      "repo_search"
+    ],
+    "required": [
+      "read_file"
+    ],
+    "denied": [
+      "write_file",
+      "run_shell",
+      "run_tests",
+      "git_commit",
+      "web_search",
+      "web_fetch"
+    ]
   },
   "permissions": {
-    "requires": ["workspace.read"],
+    "requires": [
+      "workspace.read"
+    ],
     "may_request": [],
-    "forbids": ["workspace.write", "shell.execute", "shell.test", "git.commit", "git.push", "network.general"]
+    "forbids": [
+      "workspace.write",
+      "shell.execute",
+      "shell.test",
+      "git.commit",
+      "git.push",
+      "network.general"
+    ]
   },
   "context": {
     "max_tokens": 1500,
     "resources": []
   },
   "outputs": {
-    "kinds": ["report"],
-    "verification": ["every finding has a concrete next step"]
+    "kinds": [
+      "report"
+    ],
+    "verification": [
+      "every finding has a concrete next step"
+    ]
   },
-  "dependencies": { "skills": [] },
-  "compatibility": { "min_agent_version": "0.1.0", "capability_contract": 1 },
-  "health": { "eval_manifest": null }
+  "dependencies": {
+    "skills": []
+  },
+  "compatibility": {
+    "min_agent_version": "0.1.0",
+    "capability_contract": 1
+  },
+  "health": {
+    "eval_manifest": "evals/cases.json"
+  }
 }

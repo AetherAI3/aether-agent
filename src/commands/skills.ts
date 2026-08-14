@@ -20,6 +20,7 @@ import { dependencyOrder } from "../core/skills/skill_resolver.js";
 import { validateSkillManifest, type SkillManifest, type SkillScope } from "../core/skills/skill_schema.js";
 import { loadSkillSettings, lookupSkillSetting, saveSkillSetting } from "../core/skills/skill_settings.js";
 import { recordTrust, removeTrust } from "../core/skills/skill_trust.js";
+import { runSkillEvals, renderEvalJUnit } from "../core/skills/skill_eval.js";
 import type { SkillDescriptor, SkillIndex } from "../core/skills/skill_types.js";
 import type { ToolName } from "../core/brain_protocol.js";
 
@@ -27,10 +28,14 @@ export interface SkillsCommandOptions {
   out?: Writable;
   /** --scope for create/install (project|user; default project). */
   scope?: string;
-  /** --all for check. */
+  /** --all for check/eval. */
   all?: boolean;
   /** --ci for check: exit 1 on any failure. */
   ci?: boolean;
+  /** --json for eval: structured report on stdout. */
+  json?: boolean;
+  /** --junit <path> for eval: write a JUnit XML report. */
+  junit?: string;
 }
 
 const USAGE =
@@ -43,7 +48,8 @@ const USAGE =
   "  enable <id> | disable <id>             toggle a skill locally\n" +
   "  trust <id> | untrust <id>              record / remove a local trust decision\n" +
   "  lock                                   write .aether/skills.lock.json\n" +
-  "  check [id|--all] [--ci]                static health checks (--json)\n";
+  "  check [id|--all] [--ci]                static health checks (--json)\n" +
+  "  eval [id|--all] [--json] [--junit <path>]  offline eval suites (zero model spend)\n";
 
 export async function cmdSkills(
   ctx: AppContext,
@@ -83,6 +89,8 @@ export async function cmdSkills(
       return runLock(ctx, out);
     case "check":
       return runCheck(ctx, out, options.all ? undefined : target, options.ci === true);
+    case "eval":
+      return runEval(ctx, out, options.all ? undefined : target, options);
     default:
       return usage(out);
   }
@@ -531,6 +539,52 @@ function checkOne(index: SkillIndex, d: SkillDescriptor, drift: LockDrift | null
     findings.push({ subject: d.id, check: "evals", ok: result.ok, detail: result.detail });
   }
   return findings;
+}
+
+/**
+ * `aether skills eval [id|--all]` — run the offline eval layers (schema,
+ * resolution, policy) for skills that declare an eval manifest. Zero model
+ * calls, zero UVT by construction. Exit 1 on any failing case.
+ */
+function runEval(
+  ctx: AppContext,
+  out: Writable,
+  reference: string | undefined,
+  options: SkillsCommandOptions,
+): number {
+  const index = discover(ctx);
+  let targets: SkillDescriptor[];
+  if (reference) {
+    const found = findSkill(index, reference);
+    if (!found.descriptor) {
+      out.write((found.error ?? "skill not found") + "\n");
+      return 1;
+    }
+    targets = [found.descriptor];
+  } else {
+    targets = index.skills.filter((descriptor) => descriptor.manifest.health.evalManifest != null);
+    if (!targets.length) {
+      out.write("no skill declares an eval manifest\n");
+      return 0;
+    }
+  }
+  const reports = targets.map((descriptor) => runSkillEvals(index, descriptor));
+  if (options.junit) {
+    writeFileSync(options.junit, renderEvalJUnit(reports), "utf8");
+  }
+  if (options.json) {
+    out.write(JSON.stringify({ schema_version: 1, reports }, null, 2) + "\n");
+  } else {
+    for (const report of reports) {
+      out.write(report.skillId + "  " + report.pass + " pass · " + report.fail + " fail\n");
+      for (const outcome of report.cases) {
+        if (outcome.status === "fail") out.write("  ✗ " + outcome.caseId + ": " + outcome.detail + "\n");
+      }
+    }
+    const failed = reports.reduce((sum, report) => sum + report.fail, 0);
+    out.write("Summary " + reports.length + " skill" + (reports.length === 1 ? "" : "s") + " · " + failed + " failing case" + (failed === 1 ? "" : "s") + "\n");
+  }
+  return reports.some((report) => report.fail > 0) ? 1 : 0;
 }
 
 function checkEvalManifest(root: string, relativePath: string): { ok: boolean; detail: string } {

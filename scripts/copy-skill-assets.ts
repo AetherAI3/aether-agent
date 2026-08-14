@@ -45,9 +45,11 @@ function main(): void {
       copyFileSync(from, join(destRoot, skillName, asset));
       copied += 1;
     }
-    const referencesDir = join(skillDir, "references");
-    if (existsSync(referencesDir) && statSync(referencesDir).isDirectory()) {
-      copied += copyTree(referencesDir, join(destRoot, skillName, "references"));
+    for (const treeName of ["references", "evals", "templates"]) {
+      const tree = join(skillDir, treeName);
+      if (existsSync(tree) && statSync(tree).isDirectory()) {
+        copied += copyTree(tree, join(destRoot, skillName, treeName));
+      }
     }
   }
   process.stdout.write("copied " + copied + " built-in skill asset" + (copied === 1 ? "" : "s") + " → dist/src/skills/builtin\n");
