@@ -52,15 +52,33 @@ export function applicableSources(
     });
 }
 
-const TEST_COMMAND_PATTERN =
-  /(?:^|[`\s])((?:npm|pnpm|yarn)\s+(?:run\s+)?[\w:.-]*test[\w:.-]*|pytest[\w ./-]*|go\s+test[\w ./-]*|cargo\s+test[\w -]*)/gim;
+const NPM_TEST_PATTERN = /(?:^|[`\s])((?:npm|pnpm|yarn)\s+(?:run\s+)?[\w:.-]*test[\w:.-]*)/gim;
+const RUNNER_PATTERN = /(?:^|[`\s])(pytest|go\s+test|cargo\s+test)/gim;
+/** An argument token worth keeping: a flag, a path, or a scoped target —
+ *  ordinary prose words ("Never", "here") do not qualify, which keeps a
+ *  greedy match from swallowing the rest of a sentence. */
+const ARG_TOKEN = /^(?:-{1,2}[\w=:.\/-]+|[\w-]*[\/.:][\w\/.:=-]*)$/;
 
 /** Extract declared test commands — the highest-signal conflict class. */
 export function extractTestCommands(content: string): string[] {
   const commands = new Set<string>();
-  for (const match of content.matchAll(TEST_COMMAND_PATTERN)) {
+  for (const match of content.matchAll(NPM_TEST_PATTERN)) {
     const command = match[1]?.trim().replace(/[`.,;]+$/, "");
     if (command) commands.add(command);
+  }
+  for (const match of content.matchAll(RUNNER_PATTERN)) {
+    const runner = match[1];
+    if (!runner || match.index == null) continue;
+    const start = match.index + match[0].length;
+    const tail = content.slice(start, start + 200).trimStart();
+    const parts: string[] = [runner.replace(/\s+/g, " ")];
+    for (const token of tail.split(/\s+/)) {
+      const clean = token.replace(/[`.,;]+$/, "");
+      if (!clean || !ARG_TOKEN.test(clean)) break;
+      parts.push(clean);
+      if (clean !== token) break; // sentence punctuation ends the command
+    }
+    commands.add(parts.join(" "));
   }
   return [...commands];
 }
