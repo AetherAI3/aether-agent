@@ -40,6 +40,8 @@ import { createWorktree, mergeHint, type Worktree } from "../core/worktree.js";
 import { parseRepoSpec, ensureLocalClone, prCreateHint, type RepoSpec } from "../core/repo.js";
 import { chooseBackend } from "../core/backend.js";
 import { decideGate } from "../core/autonomy.js";
+import { prepareSkillSession, SkillError, type SkillSession } from "../core/skills/skill_session.js";
+import { defaultPermissionEnvelope, refuseUndeclaredToolCall } from "../core/skills/skill_policy.js";
 
 export { prepareWorkspace } from "./code_support.js";
 
@@ -69,6 +71,11 @@ export interface CodeOpts {
   worktree?: boolean;
   /** Work on a GitHub repo (owner/name): clone via gh/git, then worktree it. */
   repo?: string;
+  /** Explicitly invoke one skill (id, unique short name, or command alias). */
+  skill?: string;
+  /** Deliberately run without skills/instructions (also unlocks the legacy
+   *  server fallback when skill context would otherwise refuse it). */
+  noSkills?: boolean;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -176,7 +183,35 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   }
   const brainKind: "local" | "cloud" = goLocal ? "local" : "cloud";
 
-  const brain: Brain = goLocal ? new LocalBrain() : new CloudBrain(ctx.api);
+  // Skills & instructions for this run. Refusals (untrusted project skill,
+  // ambiguous name, budget) abort with the stable code + one next action —
+  // never a silent skill-free downgrade.
+  let session: SkillSession;
+  try {
+    session = prepareSkillSession({
+      projectRoot: cwd,
+      prompt: task,
+      ...(opts.skill ? { explicitSkill: opts.skill } : {}),
+      ...(opts.noSkills ? { noSkills: true } : {}),
+    });
+  } catch (err) {
+    if (err instanceof SkillError) {
+      process.stderr.write(`✗ ${err.refusal.code}: ${err.refusal.detail}\n`);
+      return 1;
+    }
+    throw err;
+  }
+  for (const line of session.headerLines) process.stderr.write(line + "\n");
+
+  const brain: Brain = goLocal
+    ? new LocalBrain()
+    : new CloudBrain(ctx.api, {
+        ...(session.packet ? { skillContext: session.packet as unknown as Record<string, unknown> } : {}),
+        ...(session.instructionPacket
+          ? { instructionContext: session.instructionPacket as unknown as Record<string, unknown> }
+          : {}),
+        ...(opts.noSkills ? { allowLegacyWithoutSkills: true } : {}),
+      });
   const exec = new ToolExecutor(cwd, opts.testCmd);
   // Scope the session manifest to the ORIGINAL launch directory (ctx.flags.cwd),
   // not the possibly-substituted `cwd` (an auto-created worktree, or a manually
@@ -220,6 +255,14 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   // non-TTY (CI/pipe) an un-pre-approved call FAILS CLOSED rather than running
   // unattended. `--yes` or `permissionMode: skip` opt out.
   const gate: ToolGate = async ({ name, args }) => {
+    // Skill policy first (declared tools ∩ operator envelope) — a refusal here
+    // is structural, not a prompt: the brain asked for something no active
+    // skill declared, so no amount of user confirmation makes it declared.
+    const refusal = refuseUndeclaredToolCall(name, session.policies, defaultPermissionEnvelope());
+    if (refusal) {
+      process.stderr.write(`✗ ${refusal.code}: ${refusal.detail}\n`);
+      return false;
+    }
     const outcome = decideGate(name, ctx.cfg.permissionMode, ctx.cfg.autoApply, {
       yes: ctx.flags.yes,
       isTty: Boolean(process.stdin.isTTY),

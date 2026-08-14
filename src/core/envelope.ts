@@ -65,6 +65,11 @@ export interface DevSessionWireRequest {
   max_uvt?: number;
   repo?: Record<string, unknown>;
   protocol_version: number;
+  /** Additive Skills & Health context (contract v1). Absent = legacy request,
+   *  byte-identical to pre-skills clients — old servers never see the keys. */
+  capability_contract_version?: number;
+  skill_context?: Record<string, unknown>;
+  instruction_context?: Record<string, unknown>;
 }
 
 export interface BuildDevSessionArgs {
@@ -75,6 +80,11 @@ export interface BuildDevSessionArgs {
   maxUvt?: number;
   repo?: Record<string, unknown>;
   protocolVersion: number;
+  /** Typed skill context packet (context_packet.ts) serialized for the wire. */
+  skillContext?: Record<string, unknown>;
+  /** Typed instruction context packet (instruction_resolver.ts). */
+  instructionContext?: Record<string, unknown>;
+  capabilityContractVersion?: number;
 }
 
 export function buildDevSessionRequest(args: BuildDevSessionArgs): DevSessionWireRequest {
@@ -88,6 +98,11 @@ export function buildDevSessionRequest(args: BuildDevSessionArgs): DevSessionWir
   };
   if (args.maxUvt && args.maxUvt > 0) req.max_uvt = args.maxUvt;
   if (args.repo) req.repo = args.repo;
+  if (args.skillContext || args.instructionContext) {
+    req.capability_contract_version = args.capabilityContractVersion ?? 1;
+    if (args.skillContext) req.skill_context = args.skillContext;
+    if (args.instructionContext) req.instruction_context = args.instructionContext;
+  }
   return req;
 }
 

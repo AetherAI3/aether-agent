@@ -17,6 +17,29 @@ import type { LoadedSkill, SkillPolicy } from "./skill_types.js";
 export type PermissionEnvelope = ReadonlySet<PermissionName>;
 
 /**
+ * The default operator envelope: everything an interactive session can grant
+ * through the ask/auto/skip gate. Excludes the permissions no skill may
+ * declare and no ordinary session holds (workspace.outside, secrets.read,
+ * billing.spend) — those need explicit advanced authority outside this path.
+ */
+export function defaultPermissionEnvelope(): PermissionEnvelope {
+  return new Set<PermissionName>([
+    "workspace.read",
+    "workspace.write",
+    "shell.test",
+    "shell.execute",
+    "git.read",
+    "git.stage",
+    "git.commit",
+    "git.push",
+    "network.github.read",
+    "network.general",
+    "network.loopback",
+    "artifact.publish",
+  ]);
+}
+
+/**
  * The skill's own narrowing of the tool surface. Operator-envelope checks
  * happen per call in refuseUndeclaredToolCall — this stays envelope-free so a
  * cached policy can never go stale against a mode change mid-session.

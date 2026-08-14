@@ -50,6 +50,17 @@ interface DevSessionCreated {
   tools?: string[];
 }
 
+/** Skills & Health context riding on dev-session create (contract v1). */
+export interface DevSessionContext {
+  /** Serialized SkillContextPacket (context_packet.ts). */
+  skillContext?: Record<string, unknown>;
+  /** Serialized InstructionContextPacket (instruction_resolver.ts). */
+  instructionContext?: Record<string, unknown>;
+  /** Operator explicitly agreed to run WITHOUT skills on a legacy server
+   *  (after being shown what would be omitted). Default false: fail honest. */
+  allowLegacyWithoutSkills?: boolean;
+}
+
 export class CloudBrain implements Brain {
   private aborted = false;
   private net: AbortController | null = null;
@@ -58,7 +69,10 @@ export class CloudBrain implements Brain {
   /** Serializes upstream result POSTs so they arrive in execution order. */
   private upstream: Promise<void> = Promise.resolve();
 
-  constructor(private readonly api: ApiClient) {}
+  constructor(
+    private readonly api: ApiClient,
+    private readonly devContext: DevSessionContext = {},
+  ) {}
 
   run(task: TaskCommand): AsyncIterable<BrainEvent> {
     const queue = new EventQueue();
@@ -69,6 +83,7 @@ export class CloudBrain implements Brain {
   private async pump(task: TaskCommand, queue: EventQueue): Promise<void> {
     try {
       let created: DevSessionCreated | null = null;
+      const hasSkillContext = Boolean(this.devContext.skillContext || this.devContext.instructionContext);
       try {
         created = await this.api.postJson<DevSessionCreated>(
           DEV_SESSIONS_PATH,
@@ -78,10 +93,24 @@ export class CloudBrain implements Brain {
             effort: task.effort,
             capabilities: TOOLS,
             protocolVersion: DEV_PROTOCOL_VERSION,
+            ...(this.devContext.skillContext ? { skillContext: this.devContext.skillContext } : {}),
+            ...(this.devContext.instructionContext ? { instructionContext: this.devContext.instructionContext } : {}),
           }),
         );
       } catch (err) {
         if (isLegacyServer(err)) {
+          // NEVER silently run as though the server honored skill context.
+          // A legacy server cannot consume it; refuse unless the operator
+          // deliberately opted into a skill-free run.
+          if (hasSkillContext && !this.devContext.allowLegacyWithoutSkills) {
+            queue.push({
+              type: "error",
+              msg:
+                "skill.server_unsupported: hosted server does not support Agent Skills — " +
+                "run locally, or re-run with --no-skills to proceed without skill context",
+            });
+            return;
+          }
           await this.legacyPump(task, queue);
           return;
         }
@@ -294,6 +323,24 @@ function mapDevFrame(f: StreamFrame): BrainEvent | null {
       return { type: "monologue", text: f.text, depth: 1 };
     case "delta":
       return { type: "monologue", text: f.text, depth: 0 };
+    case "skill_context_ack":
+      return {
+        type: "status",
+        phase: f.accepted
+          ? `skills accepted (${f.count ?? 0} skill${(f.count ?? 0) === 1 ? "" : "s"})`
+          : `skills rejected: ${f.reason ?? "unspecified"}`,
+        poolUsed: 0,
+        poolCap: 0,
+      };
+    case "instruction_context_ack":
+      return {
+        type: "status",
+        phase: f.accepted
+          ? `instructions accepted (${f.count ?? 0} source${(f.count ?? 0) === 1 ? "" : "s"})`
+          : `instructions rejected: ${f.reason ?? "unspecified"}`,
+        poolUsed: 0,
+        poolCap: 0,
+      };
     case "error":
       return { type: "error", msg: f.msg };
     case "done":

@@ -31,6 +31,12 @@ export type StreamFrameBody =
   | { type: "session"; sessionId: string; protocolVersion: number; model?: string; tools?: string[] }
   | { type: "tool_call"; toolCallId: string; name: string; args: Record<string, unknown>; risk?: string }
   | { type: "tool_result_ack"; toolCallId: string }
+  // Skills & Health context acknowledgements (metadata only — counts/bytes,
+  // never instruction content). Sent once after the `session` frame when the
+  // create request carried skill/instruction context and the server accepted,
+  // clipped, or rejected it.
+  | { type: "skill_context_ack"; accepted: boolean; count?: number; bytes?: number; reason?: string }
+  | { type: "instruction_context_ack"; accepted: boolean; count?: number; bytes?: number; reason?: string }
   // The server-signed chain-of-custody for this turn (commitment + attestation).
   // The server signs but never stores it — the client decides whether to persist
   // (the CLI logs it locally; a web client may show-then-discard).
@@ -150,6 +156,15 @@ function normalizeFrameBody(obj: Record<string, unknown>): StreamFrameBody | nul
       return {
         type: "tool_result_ack",
         toolCallId: String(obj["tool_call_id"] ?? obj["toolCallId"] ?? ""),
+      };
+    case "skill_context_ack":
+    case "instruction_context_ack":
+      return {
+        type,
+        accepted: obj["accepted"] !== false,
+        count: numOrUndef(obj["count"]),
+        bytes: numOrUndef(obj["bytes"]),
+        reason: strOrUndef(obj["reason"]),
       };
     case "custody":
       return {
