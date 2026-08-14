@@ -604,6 +604,9 @@ export async function openerProbe(options: LiveOptions = {}): Promise<HealthChec
     });
   } finally {
     try {
+      // close() alone only stops accepting NEW connections — a browser holding
+      // the page open on keep-alive would keep the handle (and the CLI) alive.
+      server?.closeAllConnections();
       server?.close();
     } catch {
       // The socket is released when the process exits regardless.
