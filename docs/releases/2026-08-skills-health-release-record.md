@@ -19,7 +19,7 @@ No secrets, customer content, or internal topology belong in this file.
 
 - AETHER-CLOUD baseline at kickoff: `4e6b9e2b150de0dadf3b213fbd988987cd48a8b5`
 - aether-agent baseline at kickoff: `b98ef26d16daf61a32a6c0ca437172d794b2efe1`
-- PR A (cloud foundation, dark): AetherAI3/AETHER-CLOUD#1065 — merged SHA: TBD
+- PR A (cloud foundation, dark): AetherAI3/AETHER-CLOUD#1065 — merged SHA: `97eacd3e9aca4df226cae638f8f8868b8219fe88` (2026-08-15, deployed dark; required checks python/site/web green + desktop; site rerun after a runner font-fetch flake)
 - PR B (agent release): TBD
 - PR C (activation): TBD
 - Capability contract canonical sha256: `8da094234a370a28dfd6206f039425f086307aa9ca0a67bc004d3d453716ac04`

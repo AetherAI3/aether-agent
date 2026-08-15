@@ -1,6 +1,6 @@
 // GENERATED — do not edit by hand.
 // Source: AetherAI3/AETHER-CLOUD contracts/agent-capabilities.v1.json
-// Source commit: 10cf6a9ea0b7ce162a384f01b449007c3ff8934d
+// Source commit: 97eacd3e9aca4df226cae638f8f8868b8219fe88
 // Contract version: 1
 // Canonical sha256: 8da094234a370a28dfd6206f039425f086307aa9ca0a67bc004d3d453716ac04
 // Regenerate: node scratchpad gen_fallback.mjs (see docs/releases/skills-health notes)
@@ -234,6 +234,6 @@ export const AGENT_CAPABILITIES_DIGEST = "8da094234a370a28dfd6206f039425f086307a
 
 export const AGENT_CAPABILITIES_SOURCE = {
   repository: "AetherAI3/AETHER-CLOUD",
-  commit: "10cf6a9ea0b7ce162a384f01b449007c3ff8934d",
+  commit: "97eacd3e9aca4df226cae638f8f8868b8219fe88",
   contractVersion: 1,
 } as const;
