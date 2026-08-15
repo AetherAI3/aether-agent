@@ -74,7 +74,7 @@ Six frontier models, every one with a million-token window. In the GPT-5.6 famil
 |---|---|
 | **Free** | Claude Haiku 4.5 · DeepSeek V4 Flash · one image model as a teaser |
 | **Solo** | + Claude Sonnet 5 · GPT-5.4 mini · the **Neo 5.1T** orchestrator · the full image fleet |
-| **Pro / Team** | + Claude Opus 4.8 · GPT-5.5 · DeepSeek V4 Pro · Kimi K2.6 · Gemma 4 31B · the six frontier models above · video & 3D generation · the **Kronus v2.4** and **Aether-Vision** orchestrators |
+| **Pro / Team** | + the six frontier models above — **Claude Opus 5 · GPT-5.6 Sol / Terra / Luna · Kimi K3 · Gemini 3.6 Flash** — plus the previous generation, still fully selectable (Claude Opus 4.8 · GPT-5.5 · DeepSeek V4 Pro · Kimi K2.6 · Gemma 4 31B) · video & 3D generation · the **Kronus v2.4** and **Aether-Vision** orchestrators |
 
 Media is 15 image models (Nano Banana Pro & 2, FLUX.2 Klein / Pro / Flex / Max, Recraft V3 & V4, Seedream 4.5, Riverflow V2, GPT-5 Image), 16 video models (Seedance 2.0 & 1.5 Pro, Veo 3.1 / Fast / Lite, Kling 3.0 Standard & Pro, Kling Video O1, Sora 2 Pro, Wan 2.6 & 2.7, Hailuo 2.3, HunyuanVideo 1.5, Grok Imagine), and Hunyuan3D 2.1 for text-to-3D — all drivable from the prompt line with `/photogen`, `/videogen` and `/storyboard`.
 
