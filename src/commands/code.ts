@@ -42,6 +42,7 @@ import { chooseBackend } from "../core/backend.js";
 import { decideGate } from "../core/autonomy.js";
 import { prepareSkillSession, SkillError, type SkillSession } from "../core/skills/skill_session.js";
 import { defaultPermissionEnvelope, refuseUndeclaredToolCall } from "../core/skills/skill_policy.js";
+import { recordWhy } from "../core/why_log.js";
 
 export { prepareWorkspace } from "./code_support.js";
 
@@ -196,6 +197,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     });
   } catch (err) {
     if (err instanceof SkillError) {
+      recordWhy("skill-refusal", err.refusal.code + ": " + err.refusal.detail);
       process.stderr.write(`✗ ${err.refusal.code}: ${err.refusal.detail}\n`);
       return 1;
     }
@@ -260,6 +262,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     // skill declared, so no amount of user confirmation makes it declared.
     const refusal = refuseUndeclaredToolCall(name, session.policies, defaultPermissionEnvelope());
     if (refusal) {
+      recordWhy("permission-denial", refusal.code + ": " + refusal.detail);
       process.stderr.write(`✗ ${refusal.code}: ${refusal.detail}\n`);
       return false;
     }

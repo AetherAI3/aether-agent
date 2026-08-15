@@ -54,6 +54,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "exit", aliases: ["quit"], summary: "leave the REPL", section: "Session" },
   { name: "mcp", args: "[list|doctor|repair]", summary: "manage and diagnose MCP servers", section: "Session" },
   { name: "skills", args: "[list|show <id>|enable <id>|disable <id>]", summary: "list and manage agent skills", section: "Session" },
+  { name: "why", summary: "explain the latest skill selection, refusal, or conflict", section: "Session" },
 
   // ── Agent Modes (prompt rewrites) ──
   { name: "autonomous-execution", args: "<task>", summary: "execute without asking", section: "Agent Modes" },

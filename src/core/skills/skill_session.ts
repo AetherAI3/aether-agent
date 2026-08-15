@@ -12,6 +12,7 @@ import { SKILL_BOUNDS } from "./skill_bounds.js";
 import { resolveInstructionGraph, buildInstructionContextPacket, type InstructionContextPacket } from "../instructions/instruction_resolver.js";
 import type { InstructionGraph } from "../instructions/instruction_types.js";
 import type { LoadedSkill, SkillPolicy } from "./skill_types.js";
+import { recordWhy } from "../why_log.js";
 
 export interface SkillSessionOptions {
   projectRoot: string;
@@ -67,6 +68,7 @@ export function prepareSkillSession(options: SkillSessionOptions): SkillSession 
     for (const descriptor of resolved.loadOrder) {
       loaded.push(loadSkillBody(descriptor, "explicit"));
     }
+    recordWhy("skill-selection", resolved.candidate.descriptor.id + "@" + resolved.candidate.descriptor.version + " — " + resolved.candidate.reason);
   }
   // Automatic candidates fill remaining slots; a skill already loaded
   // explicitly is not loaded twice.
@@ -76,6 +78,7 @@ export function prepareSkillSession(options: SkillSessionOptions): SkillSession 
     if (loaded.length >= SKILL_BOUNDS.maxSkillsPerTurn) break;
     loaded.push(loadSkillBody(match.candidate.descriptor, "automatic"));
     loadedIds.add(match.candidate.descriptor.id);
+    recordWhy("skill-selection", match.candidate.descriptor.id + " (automatic) — " + match.candidate.reason + " · confidence " + match.candidate.confidence.toFixed(2));
   }
 
   const packet = loaded.length ? buildSkillContextPacket(loaded) : null;
@@ -104,6 +107,7 @@ function headerFor(loaded: readonly LoadedSkill[], graph: InstructionGraph): str
   }
   for (const conflict of graph.conflicts) {
     lines.push("Conflict " + conflict.topic + " — effective: " + conflict.effective + " (" + conflict.reason + ")");
+    recordWhy("instruction-conflict", conflict.topic + ": effective '" + conflict.effective + "' — " + conflict.reason);
   }
   return lines;
 }

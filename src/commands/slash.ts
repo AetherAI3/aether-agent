@@ -236,6 +236,11 @@ export async function handleSlash(
       await skillsSlash(ctx, out, arg);
       break;
     }
+    case "why": {
+      const { renderWhy } = await import("../core/why_log.js");
+      out.write(renderWhy());
+      break;
+    }
     case "delegate": {
       await delegateSlash(ctx, out, arg);
       break;

@@ -88,6 +88,10 @@ async function main(argv: string[]): Promise<number> {
       scope: { type: "string" },
       all: { type: "boolean", default: false },
       ci: { type: "boolean", default: false },
+      // `aether agent` skill flags + `aether capabilities`:
+      skill: { type: "string" },
+      "no-skills": { type: "boolean", default: false },
+      available: { type: "boolean", default: false },
       worktree: { type: "boolean", default: false },
       repo: { type: "string" },
       swarm: { type: "string" },
@@ -161,7 +165,13 @@ async function main(argv: string[]): Promise<number> {
         scope: sf(values["scope"]),
         all: Boolean(values["all"]),
         ci: Boolean(values["ci"]),
+        json: Boolean(values["json"]),
+        ...(sf(values["junit"]) != null ? { junit: sf(values["junit"])! } : {}),
       });
+    }
+    case "capabilities": {
+      const { cmdCapabilities } = await import("./commands/capabilities.js");
+      return cmdCapabilities(ctx, rest, { available: Boolean(values["available"]) });
     }
     case "memory": {
       const { cmdMemory } = await import("./commands/memory.js");
@@ -237,6 +247,8 @@ async function main(argv: string[]): Promise<number> {
         repo: sf(values["repo"]),
         swarm: Number(sf(values["swarm"]) ?? "1") || 1,
         resume: sf(values["resume"]),
+        skill: sf(values["skill"]),
+        noSkills: Boolean(values["no-skills"]),
       });
     }
     case "resume": {
