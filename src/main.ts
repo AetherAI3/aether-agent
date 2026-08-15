@@ -67,6 +67,13 @@ async function main(argv: string[]): Promise<number> {
       yes: { type: "boolean", short: "y", default: false },
       apply: { type: "boolean", default: false },
       deep: { type: "boolean", default: false },
+      // `aether doctor` flags:
+      network: { type: "boolean", default: false },
+      failed: { type: "boolean", default: false },
+      fix: { type: "boolean", default: false },
+      schema: { type: "string" },
+      category: { type: "string" },
+      junit: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
       version: { type: "boolean", short: "v", default: false },
       // `aether agent` flags:
@@ -179,7 +186,20 @@ async function main(argv: string[]): Promise<number> {
     }
     case "doctor": {
       const { cmdDoctor } = await import("./commands/doctor.js");
-      return cmdDoctor(ctx, rest, { deep: Boolean(values["deep"]) });
+      return cmdDoctor(ctx, rest, {
+        deep: Boolean(values["deep"]),
+        network: Boolean(values["network"]),
+        failed: Boolean(values["failed"]),
+        fix: Boolean(values["fix"]),
+        yes: Boolean(values["yes"]),
+        ...(sf(values["schema"]) != null ? { schema: sf(values["schema"])! } : {}),
+        ...(sf(values["category"]) != null ? { category: sf(values["category"])! } : {}),
+        ...(sf(values["junit"]) != null ? { junit: sf(values["junit"])! } : {}),
+      });
+    }
+    case "support-bundle": {
+      const { cmdSupportBundle } = await import("./commands/support_bundle.js");
+      return cmdSupportBundle(ctx, rest);
     }
     case "mcp": {
       const { cmdMcp } = await import("./commands/mcp.js");

@@ -15,21 +15,13 @@ import type { BrainEvent } from "./brain_protocol.js";
 import type { ToolResult } from "./tool_executor.js";
 import { registerRestore } from "../ui/restore.js";
 import { normalizeWorkspace } from "./workspace_scope.js";
+import { redactInline, SENSITIVE_KEY } from "./redaction.js";
 
 export function logsRoot(): string {
   return process.env["AETHER_LOG_DIR"] ?? join(homedir(), ".aether-agent", "logs");
 }
 
 
-
-const SENSITIVE_KEY = /token|secret|password|authorization|api[_-]?key|private[_-]?key|credential|pat/i;
-
-function redactInline(value: string): string {
-  return value
-    .replace(/(bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1[REDACTED]")
-    .replace(/((?:token|secret|password|api[_-]?key|authorization)\s*[:=]\s*)[^\s,;]+/gi, "$1[REDACTED]")
-    .slice(0, 512);
-}
 
 function loggedArgs(args: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(args).map(([key, value]) => {

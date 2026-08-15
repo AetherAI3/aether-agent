@@ -124,6 +124,8 @@ test("default doctor is fast/local, ordered, fail-soft, and content-redacted", a
     mcpClient: client,
     timeoutMs: 50,
   });
+  // v2 added backend.capabilities plus the skills/instructions categories;
+  // the original 12 keep their exact ids and relative order.
   assert.deepEqual(report.checks.map((check) => check.id), [
     "runtime.node",
     "workspace.directory",
@@ -131,12 +133,19 @@ test("default doctor is fast/local, ordered, fail-soft, and content-redacted", a
     "configuration.transport",
     "authentication",
     "backend.catalog",
+    "backend.capabilities",
     "tools.schemas",
     "tools.gates",
     "memory.health",
     "mcp.registry",
     "mcp.broker",
     "persistence.local",
+    "skills.index",
+    "skills.lock",
+    "skills.trust",
+    "skills.evals",
+    "instructions.graph",
+    "instructions.conflicts",
   ]);
   assert.equal(report.checks.find((check) => check.id === "backend.catalog")?.status, "skip");
   assert.equal(report.checks.find((check) => check.id === "mcp.broker")?.status, "skip");

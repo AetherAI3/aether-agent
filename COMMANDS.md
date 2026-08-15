@@ -16,7 +16,7 @@ aether                                  # no args = interactive REPL
 <!-- CLI-COMMANDS:START -->
 `help`, `agent`, `chat`, `resume`, `run`, `models`, `agents`, `auth`,
 `github`, `vault`, `workflow`, `memory`, `skills`, `image`, `video`, `output`,
-`audit`, `receipt`, `doctor`, `mcp`, `config`
+`audit`, `receipt`, `doctor`, `support-bundle`, `mcp`, `config`
 <!-- CLI-COMMANDS:END -->
 
 <!-- SLASH-COMMANDS:START -->
@@ -150,16 +150,47 @@ Exports the cryptographic proof package for one audit entry. Find ids with
 aether receipt chat_8f3a...
 ```
 
-### `aether doctor [--deep]` — runtime diagnostics
-Runs an ordered set of structured checks — auth, network reachability,
-config integrity, MCP registry health, and more — and prints a pass/fail
-summary. `--deep` adds slower, bounded checks on top of the fast baseline.
-Exits `1` if any check fails, so it's safe to gate scripts on.
+### `aether doctor [--network] [--fix]` — runtime diagnostics
+Runs an ordered set of structured checks — auth, config integrity, MCP
+registry health, skill index/lock/trust, instruction conflicts, and more —
+grouped by category with a pass/fail summary. The fast default makes no
+network calls and no mutations; `--network` (alias `--deep`) adds slower,
+bounded backend probes plus a capability-manifest fetch. Exits `1` if any
+check fails, so it's safe to gate scripts on.
+
+Flags: `--category a,b` runs only those categories; `--failed` shows only
+warn/fail checks (the summary still reflects the full run); `--junit <path>`
+writes a JUnit XML report for CI. `--json` emits the stable v1 report shape
+by default — pass `--schema v2` for the richer v2 schema (severity,
+configured/reachable/verified state, repair ids).
+
+`--fix` prints a dry-run repair plan (rebuild corrupt skill stores, create a
+missing config dir, remove stale temp files); `--fix --yes` applies it with
+backup-first transactions and appends metadata-only receipts to
+`repair-receipts.jsonl` in the config directory.
 
 ```bash
 aether doctor
-aether doctor --deep
-aether doctor --json
+aether doctor --network
+aether doctor --json                 # v1 shape
+aether doctor --json --schema v2     # v2 shape
+aether doctor --category skills,mcp --failed
+aether doctor --junit doctor.xml
+aether doctor --fix --yes
+```
+
+### `aether support-bundle` — redacted diagnostic archive
+Packages a metadata-only diagnostic bundle as a single uncompressed `.tar`
+in the current directory: fast doctor report, runtime/config summaries,
+skill and instruction inventories (digests and counts, never content), and
+the last 200 redacted session event lines, plus a hash manifest. The bundle
+is reopened, secret-scanned, and hash-verified before it is finalized — on
+any failure nothing is left behind and the command exits `1`. Tokens, env
+values, file contents, and private absolute paths are never included.
+
+```bash
+aether support-bundle
+aether support-bundle --json
 ```
 
 ### `aether mcp [list|doctor|repair]` — manage and diagnose MCP servers

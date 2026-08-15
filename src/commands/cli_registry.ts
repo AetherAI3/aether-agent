@@ -22,7 +22,8 @@ export const CLI_COMMANDS: CommandSpec[] = [
   { name: "output", aliases: ["out"], args: "[open <n>]", summary: "manage generated media", section: "Media" },
   { name: "audit", args: "[limit]", summary: "show chain-of-custody events", section: "System" },
   { name: "receipt", args: "<order-id>", summary: "export an audit proof package", section: "System" },
-  { name: "doctor", args: "[--deep]", summary: "run structured runtime diagnostics", section: "System" },
+  { name: "doctor", args: "[--network] [--fix]", summary: "run structured runtime diagnostics", section: "System" },
+  { name: "support-bundle", summary: "export a redacted diagnostic support bundle", section: "System" },
   { name: "mcp", args: "[list|doctor|repair]", summary: "manage and diagnose MCP servers", section: "System" },
   { name: "config", args: "[show|get|set]", summary: "inspect or change configuration", section: "System" },
 ];
