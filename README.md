@@ -8,7 +8,8 @@ Your tests decide when it's done.**
 [![CI](https://github.com/AetherAI3/aether-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AetherAI3/aether-agent/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-Apache--2.0-06b6d4)](LICENSE) [![Node](https://img.shields.io/badge/node-%E2%89%A524-14b8a6)](https://nodejs.org) [![TypeScript](https://img.shields.io/badge/TypeScript-7-3178c6)](https://www.typescriptlang.org/) [![Release notes](https://img.shields.io/badge/release-notes-7c3aed)](RELEASE_NOTES.md)
 
 ```bash
-npm i -g aether-agents --ignore-scripts    # Node ≥ 24 · no account needed to start
+npm i -g aether-agents --ignore-scripts    # Node ≥ 24 · zero runtime dependencies
+aether auth login                          # …or skip it and run on your own Ollama
 aether agent "make the failing tests pass"
 ```
 
