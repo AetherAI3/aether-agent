@@ -17,6 +17,10 @@ export interface SessionManifest {
   ended?: string | null;
   finalStatus?: string;
   cwd?: string;
+  /** Failing tests the run left behind, when it left any. */
+  remaining?: number;
+  /** The command this session's verify gate ran, when one was named. */
+  testCmd?: string;
 }
 
 export interface LoadedSession {

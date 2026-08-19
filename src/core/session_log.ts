@@ -22,7 +22,13 @@ export function logsRoot(): string {
 
 
 
-const SENSITIVE_KEY = /token|secret|password|authorization|api[_-]?key|private[_-]?key|credential|pat/i;
+// "pat" is anchored to a whole word/segment on purpose. Bare /pat/ also matches
+// PATH, path, patch, and pattern — so every `write_file {path}` in every session
+// log was stored as "[REDACTED]", which is not redaction, it is data loss: the
+// record could no longer say which files a run changed. Credential-shaped keys
+// (pat, gh_pat, pat-token) still match.
+const SENSITIVE_KEY =
+  /token|secret|password|authorization|api[_-]?key|private[_-]?key|credential|(?:^|[_-])pat(?:$|[_-])/i;
 
 function redactInline(value: string): string {
   return value
@@ -101,6 +107,9 @@ export interface SessionMeta {
   poolGb: number;
   brain: "local" | "cloud";
   cwd: string;
+  /** The command the verify gate runs for this session. Recorded so a handoff
+   *  can tell the next machine how this work is checked. */
+  testCmd?: string;
 }
 
 export class SessionLog {
@@ -222,6 +231,7 @@ export class SessionLog {
           poolGb: this.meta.poolGb,
           brain: this.meta.brain,
           cwd: normalizeWorkspace(this.meta.cwd),
+          ...(this.meta.testCmd ? { testCmd: redactInline(this.meta.testCmd) } : {}),
           started: this.started,
           ended: end?.ended ?? null,
           finalStatus: end?.finalStatus ?? "running",

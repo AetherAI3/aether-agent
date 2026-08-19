@@ -105,9 +105,12 @@ test("operator-facing API defaults match the production transport path", () => {
 });
 
 test("production verifier installs and launches the exact packed CLI", { timeout: 60_000 }, () => {
-  const result = verifyProduction(process.cwd(), "v0.1.0");
+  // Read the expected release from package.json rather than pinning a literal:
+  // a version bump is a release step, not a reason for this gate to go red.
+  const expected = (JSON.parse(readFileSync("package.json", "utf8")) as { version: string }).version;
+  const result = verifyProduction(process.cwd(), `v${expected}`);
   assert.equal(result.package, "aether-agents");
-  assert.equal(result.version, "0.1.0");
+  assert.equal(result.version, expected);
   assert.equal(result.workflows, 3);
   assert.ok(result.packedFiles > 0);
   assert.ok(result.packedBytes > 0);
