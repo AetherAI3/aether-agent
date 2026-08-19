@@ -19,7 +19,7 @@ function initRepo(): string {
   return dir;
 }
 
-test("git_commit passes a message with shell metacharacters through unexecuted", (t) => {
+test("git_commit passes a message with shell metacharacters through unexecuted", async (t) => {
   if (!canSpawnGit) { t.skip("sandbox blocks child process spawning"); return; }
   const dir = initRepo();
   try {
@@ -34,7 +34,7 @@ test("git_commit passes a message with shell metacharacters through unexecuted",
   }
 });
 
-test("git_commit with nothing staged reports it without a fabricated failure", (t) => {
+test("git_commit with nothing staged reports it without a fabricated failure", async (t) => {
   if (!canSpawnGit) { t.skip("sandbox blocks child process spawning"); return; }
   const dir = initRepo();
   try {
@@ -47,7 +47,7 @@ test("git_commit with nothing staged reports it without a fabricated failure", (
   }
 });
 
-test("run_tests with no explicit command and no configured testCmd does not default to pytest", () => {
+test("run_tests with no explicit command and no configured testCmd does not default to pytest", async () => {
   // Regression for cac0399: an unset test_cmd must mean "unverifiable", never a
   // silent fallback to a real test runner. brain_protocol.ts's wire-encoding
   // default was fixed there; this covers the sibling default in ToolExecutor
@@ -55,7 +55,7 @@ test("run_tests with no explicit command and no configured testCmd does not defa
   const dir = mkdtempSync(join(tmpdir(), "aether-runtests-"));
   try {
     const exec = new ToolExecutor(dir); // no testCmd passed — must NOT become "pytest -q"
-    const r = exec.execute("run_tests", {});
+    const r = await exec.executeAsync("run_tests", {});
     assert.doesNotMatch(r.output, /pytest/i, "must never silently run pytest when no test_cmd is configured");
     assert.notEqual(r.exitCode, 0, "an unverifiable run_tests call must not report success");
   } finally {
@@ -63,11 +63,11 @@ test("run_tests with no explicit command and no configured testCmd does not defa
   }
 });
 
-test("run_tests still honors an explicit command even with no configured testCmd", (t) => {
+test("run_tests still honors an explicit command even with no configured testCmd", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "aether-runtests-explicit-"));
   try {
     const exec = new ToolExecutor(dir);
-    const r = exec.execute("run_tests", { command: process.platform === "win32" ? "exit 0" : "true" });
+    const r = await exec.executeAsync("run_tests", { command: process.platform === "win32" ? "exit 0" : "true" });
     if (/spawn error EPERM/.test(r.output)) { t.skip("sandbox blocks child process spawning"); return; }
     assert.equal(r.exitCode, 0);
   } finally {
@@ -75,11 +75,11 @@ test("run_tests still honors an explicit command even with no configured testCmd
   }
 });
 
-test("run_tests honors a configured testCmd when the call omits an explicit command", (t) => {
+test("run_tests honors a configured testCmd when the call omits an explicit command", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "aether-runtests-cfg-"));
   try {
     const exec = new ToolExecutor(dir, process.platform === "win32" ? "exit 0" : "true");
-    const r = exec.execute("run_tests", {});
+    const r = await exec.executeAsync("run_tests", {});
     if (/spawn error EPERM/.test(r.output)) { t.skip("sandbox blocks child process spawning"); return; }
     assert.equal(r.exitCode, 0);
   } finally {
@@ -87,7 +87,7 @@ test("run_tests honors a configured testCmd when the call omits an explicit comm
   }
 });
 
-test("git_commit surfaces a real failure instead of reporting the old HEAD as success", (t) => {
+test("git_commit surfaces a real failure instead of reporting the old HEAD as success", async (t) => {
   if (!canSpawnGit) { t.skip("sandbox blocks child process spawning"); return; }
   const dir = initRepo();
   try {

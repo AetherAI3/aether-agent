@@ -12,7 +12,7 @@ function fakeExec(result: ToolResult) {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   return {
     calls,
-    execute(name: string, args: Record<string, unknown>): ToolResult {
+    async executeAsync(name: string, args: Record<string, unknown>): Promise<ToolResult> {
       calls.push({ name, args });
       return result;
     },
@@ -22,7 +22,7 @@ function fakeExec(result: ToolResult) {
 const RED = (n: number): ToolResult => ({ output: `[exit 1]\n=== ${n} failed in 3.2s ===`, exitCode: 1 });
 const GREEN: ToolResult = { output: "[exit 0]\n=== 24 passed in 3.2s ===", exitCode: 0 };
 
-test("parseFailCount matches the brain regex (\\d+\\s+failed)", () => {
+test("parseFailCount matches the brain regex (\\d+\\s+failed)", async () => {
   assert.equal(parseFailCount("[exit 1]\n=== 24 failed, 0 passed ==="), 24);
   assert.equal(parseFailCount("[exit 1]\n24  failed"), 24); // two spaces — the single-space regex missed this
   assert.equal(parseFailCount("[exit 0]\n=== 12 passed ==="), null);
@@ -30,58 +30,58 @@ test("parseFailCount matches the brain regex (\\d+\\s+failed)", () => {
 });
 
 // ── THE regression: the brain lies, the host catches it ─────────────────────
-test("brain done.ok=true while host tests are RED → never ok", () => {
+test("brain done.ok=true while host tests are RED → never ok", async () => {
   const exec = fakeExec(RED(1));
-  const out = finalVerify(exec, "pytest -q", { ok: true, remaining: 0, reason: "" });
+  const out = await finalVerify(exec, "pytest -q", { ok: true, remaining: 0, reason: "" });
   assert.notEqual(out.status, "ok"); // the old bug returned "ok" here
   assert.equal(out.status, "incomplete");
   assert.equal(out.remaining, 1);
   assert.equal(out.exitCode, 1);
 });
 
-test("24-bug corpus: brain self-reports ok but 24 still failing → incomplete, remaining 24", () => {
+test("24-bug corpus: brain self-reports ok but 24 still failing → incomplete, remaining 24", async () => {
   const exec = fakeExec(RED(24));
-  const out = finalVerify(exec, "pytest -q", { ok: true, remaining: 0, reason: "" });
+  const out = await finalVerify(exec, "pytest -q", { ok: true, remaining: 0, reason: "" });
   assert.equal(out.status, "incomplete");
   assert.equal(out.remaining, 24);
 });
 
-test("host GREEN → ok even if the brain gave up (host is authoritative)", () => {
+test("host GREEN → ok even if the brain gave up (host is authoritative)", async () => {
   const exec = fakeExec(GREEN);
-  const out = finalVerify(exec, "pytest -q", { ok: false, remaining: 24, reason: "stalled" });
+  const out = await finalVerify(exec, "pytest -q", { ok: false, remaining: 24, reason: "stalled" });
   assert.equal(out.status, "ok");
   assert.equal(out.remaining, 0);
   assert.equal(out.exitCode, 0);
 });
 
-test("no test command → unverified, never ok (no ground truth to assert)", () => {
+test("no test command → unverified, never ok (no ground truth to assert)", async () => {
   const exec = fakeExec(GREEN);
-  const out = finalVerify(exec, undefined, { ok: true, remaining: 0, reason: "" });
+  const out = await finalVerify(exec, undefined, { ok: true, remaining: 0, reason: "" });
   assert.equal(out.status, "unverified");
   assert.equal(exec.calls.length, 0); // must NOT run anything when there is no gate
 });
 
-test("breaker reason is surfaced through a RED host (stalled/max-turns, not flat incomplete)", () => {
-  const stalled = finalVerify(fakeExec(RED(5)), "pytest -q", { ok: false, remaining: 5, reason: "stalled" });
+test("breaker reason is surfaced through a RED host (stalled/max-turns, not flat incomplete)", async () => {
+  const stalled = await await finalVerify(fakeExec(RED(5)), "pytest -q", { ok: false, remaining: 5, reason: "stalled" });
   assert.equal(stalled.status, "stalled");
-  const maxTurns = finalVerify(fakeExec(RED(2)), "pytest -q", { ok: false, remaining: 2, reason: "max-turns" });
+  const maxTurns = await await finalVerify(fakeExec(RED(2)), "pytest -q", { ok: false, remaining: 2, reason: "max-turns" });
   assert.equal(maxTurns.status, "max-turns");
 });
 
-test("RED with unparseable output falls back to the brain's remaining, not a -1 sentinel", () => {
+test("RED with unparseable output falls back to the brain's remaining, not a -1 sentinel", async () => {
   const exec = fakeExec({ output: "[exit 1]\nsegfault, no summary line", exitCode: 1 });
-  const out = finalVerify(exec, "pytest -q", { ok: false, remaining: 7, reason: "" });
+  const out = await finalVerify(exec, "pytest -q", { ok: false, remaining: 7, reason: "" });
   assert.equal(out.status, "incomplete");
   assert.equal(out.remaining, 7);
 });
 
-test("null done (brain never reported) + RED → incomplete with the parsed count", () => {
-  const out = finalVerify(fakeExec(RED(3)), "pytest -q", null);
+test("null done (brain never reported) + RED → incomplete with the parsed count", async () => {
+  const out = await await finalVerify(fakeExec(RED(3)), "pytest -q", null);
   assert.equal(out.status, "incomplete");
   assert.equal(out.remaining, 3);
 });
 
-test("the gate runs the host's own test command via run_tests", () => {
+test("the gate runs the host's own test command via run_tests", async () => {
   const exec = fakeExec(GREEN);
   finalVerify(exec, "pytest -q tests/unit", { ok: true, remaining: 0, reason: "" });
   assert.equal(exec.calls.length, 1);
@@ -94,32 +94,32 @@ test("the gate runs the host's own test command via run_tests", () => {
 // is overruled — that is a genuine success). An `error` event means the brain
 // CRASHED mid-run; a coincidentally-green tree must NOT be reported as a clean
 // success. (Regression guard: the gate used to mask this and exit 0.)
-test("brain ERROR + host GREEN → error, never ok (a crashed run is not a success)", () => {
+test("brain ERROR + host GREEN → error, never ok (a crashed run is not a success)", async () => {
   const exec = fakeExec(GREEN);
-  const out = finalVerify(exec, "pytest -q", { ok: false, remaining: 0, reason: "" }, true);
+  const out = await finalVerify(exec, "pytest -q", { ok: false, remaining: 0, reason: "" }, true);
   assert.equal(out.status, "error");
   assert.notEqual(out.exitCode, 0);
 });
 
-test("brain ERROR + no test command → error (not unverified)", () => {
-  const out = finalVerify(fakeExec(GREEN), undefined, null, true);
+test("brain ERROR + no test command → error (not unverified)", async () => {
+  const out = await await finalVerify(fakeExec(GREEN), undefined, null, true);
   assert.equal(out.status, "error");
 });
 
-test("brain ERROR + host RED → error, with the parsed failing count", () => {
-  const out = finalVerify(fakeExec(RED(4)), "pytest -q", null, true);
+test("brain ERROR + host RED → error, with the parsed failing count", async () => {
+  const out = await await finalVerify(fakeExec(RED(4)), "pytest -q", null, true);
   assert.equal(out.status, "error");
   assert.equal(out.remaining, 4);
 });
 
-test("brain DONE self-reporting failure on a green tree stays ok (errored defaults false)", () => {
+test("brain DONE self-reporting failure on a green tree stays ok (errored defaults false)", async () => {
   // The intentional 'host is authoritative' rule — a COMPLETED brain, not a crash.
-  const out = finalVerify(fakeExec(GREEN), "pytest -q", { ok: false, remaining: 9, reason: "stalled" });
+  const out = await await finalVerify(fakeExec(GREEN), "pytest -q", { ok: false, remaining: 9, reason: "stalled" });
   assert.equal(out.status, "ok");
 });
 
 // Type-level: BrainDone is the subset of the done event the gate consumes.
-test("BrainDone shape is { ok, remaining, reason }", () => {
+test("BrainDone shape is { ok, remaining, reason }", async () => {
   const d: BrainDone = { ok: false, remaining: 1, reason: "stalled" };
   assert.equal(d.reason, "stalled");
 });
