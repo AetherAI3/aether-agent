@@ -13,6 +13,7 @@ import {
   sourceAppliesTo,
 } from "../src/core/instructions/instruction_resolver.js";
 import { SKILL_BOUNDS } from "../src/core/skills/skill_bounds.js";
+import type { InstructionSource } from "../src/core/instructions/instruction_types.js";
 
 function withEnv<T>(key: string, value: string, fn: () => T): T {
   const prior = process.env[key];
@@ -189,4 +190,48 @@ test("detectConflicts keeps highest-precedence command as effective", () => {
     assert.equal(conflicts.length, 1);
     assert.equal(conflicts[0]?.effective, "npm test");
   });
+});
+
+// Regression: CodeQL js/incomplete-sanitization on globToRegExp's escape.
+// The escape must treat every regex metacharacter in a glob as a literal, so a
+// glob can never widen its own match set. Dropping the escape (or its global
+// flag, once a token is longer than one character) makes these assertions fail.
+test("glob metacharacters are escaped, never interpreted as regex", () => {
+  const ruleWith = (globs: readonly string[]): InstructionSource => ({
+    kind: "cursor-rule",
+    path: "/p/.cursor/rules/x.mdc",
+    displayPath: ".cursor/rules/x.mdc",
+    scopeDir: "",
+    globs,
+    sha256: "0".repeat(64),
+    sizeBytes: 0,
+    content: "",
+    parseStatus: "ok",
+    warnings: [],
+  });
+
+  // A dot is a literal dot, not "any character".
+  const dot = ruleWith(["a.ts"]);
+  assert.equal(sourceAppliesTo(dot, "a.ts"), true);
+  assert.equal(sourceAppliesTo(dot, "axts"), false, "unescaped . would match axts");
+
+  // Anchors, groups, alternation and quantifiers are literals too.
+  for (const [glob, literal, decoy] of [
+    ["a+.ts", "a+.ts", "aa.ts"],
+    ["a(b).ts", "a(b).ts", "ab.ts"],
+    ["a|b.ts", "a|b.ts", "a.ts"],
+    ["a{2}.ts", "a{2}.ts", "aa.ts"],
+    ["a[b].ts", "a[b].ts", "ab.ts"],
+    ["a$b.ts", "a$b.ts", "ab.ts"],
+    ["a^b.ts", "a^b.ts", "ab.ts"],
+  ] as const) {
+    const rule = ruleWith([glob]);
+    assert.equal(sourceAppliesTo(rule, literal), true, `${glob} should match itself`);
+    assert.equal(sourceAppliesTo(rule, decoy), false, `${glob} must not match ${decoy}`);
+  }
+
+  // The supported wildcards still work — escaping must not disarm them.
+  const star = ruleWith(["src/**/*.ts"]);
+  assert.equal(sourceAppliesTo(star, "src/core/x.ts"), true);
+  assert.equal(sourceAppliesTo(star, "docs/x.md"), false);
 });

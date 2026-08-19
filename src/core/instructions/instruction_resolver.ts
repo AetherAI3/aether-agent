@@ -15,7 +15,10 @@ function globToRegExp(glob: string): RegExp {
     } else if (char === "?") {
       pattern += "[^/]";
     } else if (char != null) {
-      pattern += char.replace(/[.+^${}()|[\]\\]/, "\\$&");
+      // The global flag is not load-bearing today — `char` is a single code unit,
+      // so there is never a second occurrence to miss — but the escape must not
+      // silently depend on that invariant if this ever takes a longer token.
+      pattern += char.replace(/[.+^${}()|[\]\\]/g, "\\$&");
     }
   }
   return new RegExp("^" + pattern + "$");
