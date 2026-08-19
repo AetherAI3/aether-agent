@@ -1,0 +1,19 @@
+[
+  {
+    "id": "allows-research-and-edit",
+    "input": "research the best approach and implement it",
+    "expected": {
+      "allowed_tools": ["read_file", "repo_search", "write_file", "run_tests", "web_search", "web_fetch"],
+      "required_output_kind": "code",
+      "max_uvt": 0
+    }
+  },
+  {
+    "id": "denies-shell-and-commit",
+    "input": "research and implement",
+    "expected": {
+      "forbidden_tools": ["run_shell", "git_commit"],
+      "max_uvt": 0
+    }
+  }
+]

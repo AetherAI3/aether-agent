@@ -1,6 +1,6 @@
 {
   "name": "aether-agents",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Open-source terminal coding agent — runs on hosted frontier models (Claude, GPT, DeepSeek, Kimi, Gemma) or fully offline via Ollama. Edits your code, runs your tests, and verifies the result.",
   "type": "module",
   "bin": {
@@ -27,7 +27,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node dist/scripts/copy-skill-assets.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "npm run build && node dist/src/main.js",
     "start": "node dist/src/main.js",
@@ -35,7 +35,8 @@
     "smoke": "npm run build && node -e \"import('./dist/src/core/smoke.js').then(m=>m.smokeMain()).then(c=>process.exit(c)).catch(e=>{console.error(e);process.exit(1)})\"",
     "verify:production": "npm run build && node dist/scripts/verify-production.js",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "demo:handoff": "npm run build && node dist/scripts/handoff-demo.js"
   },
   "keywords": [
     "aether",
@@ -62,14 +63,13 @@
   "homepage": "https://aethersystems.net",
   "repository": {
     "type": "git",
-    "url": "https://github.com/DBarr3/aether-agent"
+    "url": "https://github.com/AetherAI3/aether-agent"
   },
   "bugs": {
-    "url": "https://github.com/DBarr3/aether-agent/issues"
+    "url": "https://github.com/AetherAI3/aether-agent/issues"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^7.0.2"
   }
 }
-
