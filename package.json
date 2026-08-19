@@ -35,7 +35,8 @@
     "smoke": "npm run build && node -e \"import('./dist/src/core/smoke.js').then(m=>m.smokeMain()).then(c=>process.exit(c)).catch(e=>{console.error(e);process.exit(1)})\"",
     "verify:production": "npm run build && node dist/scripts/verify-production.js",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "demo:handoff": "npm run build && node dist/scripts/handoff-demo.js"
   },
   "keywords": [
     "aether",
@@ -72,4 +73,3 @@
     "typescript": "^7.0.2"
   }
 }
-

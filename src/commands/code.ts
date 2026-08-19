@@ -12,6 +12,7 @@ import type { Brain, TaskCommand } from "../core/brain.js";
 import type { BrainEvent } from "../core/brain_protocol.js";
 import type { ToolResult } from "../core/tool_executor.js";
 import { LocalBrain } from "../core/brain_local.js";
+import { OllamaBrain } from "../core/brain_ollama.js";
 import { CloudBrain } from "../core/brain_cloud.js";
 import { ToolExecutor } from "../core/tool_executor.js";
 import { stdioPrompt } from "../ui/interact.js";
@@ -35,10 +36,11 @@ import {
   writeDiffLines,
 } from "./code_support.js";
 import { loadSession, replayLines } from "../core/session_resume.js";
+import { continuationTask, isHandoffPath, resolveHandoff, type Handoff } from "../core/handoff.js";
 import { resumeHint } from "./resume.js";
 import { createWorktree, mergeHint, type Worktree } from "../core/worktree.js";
 import { parseRepoSpec, ensureLocalClone, prCreateHint, type RepoSpec } from "../core/repo.js";
-import { chooseBackend } from "../core/backend.js";
+import { chooseBackend, chooseLocalBrain } from "../core/backend.js";
 import { decideGate } from "../core/autonomy.js";
 
 export { prepareWorkspace } from "./code_support.js";
@@ -63,7 +65,9 @@ export interface CodeOpts {
   noLog?: boolean;
   /** Number of swarm workers (gated — see the swarm guard below). */
   swarm?: number;
-  /** Resume a prior local session id: replay its transcript before this run. */
+  /** Continue a prior session: a local session id, or the path to a handoff
+   *  file exported from another machine. The prior context is summarized into
+   *  the brief the brain reads (core/handoff.ts), not just replayed on screen. */
   resume?: string;
   /** Isolate the run in a fresh git worktree on an auto-named branch. */
   worktree?: boolean;
@@ -88,11 +92,19 @@ export function applyEventToStatus(
   }
 }
 
-/** Replay a prior local session's transcript into the active surface. Fail-soft:
- * a missing/unreadable session prints a note and does not abort the new run. */
-function replaySession(id: string, cwd: string, emit: (line: string) => void): void {
+/** Show the human what is being continued. A local session id replays its full
+ * transcript; a handoff FILE has no transcript to replay (that is the point —
+ * it is a summary that survived the trip), so its highlights stand in.
+ * Fail-soft: an unreadable session prints a note and never aborts the new run. */
+function replaySession(ref: string, cwd: string, handoff: Handoff | null, emit: (line: string) => void): void {
+  if (isHandoffPath(ref)) {
+    if (!handoff) return;
+    emit(`⇄ continuing ${handoff.sessionId} (${handoff.finalStatus}) from ${ref}`);
+    for (const line of handoff.highlights) emit("  " + line);
+    return;
+  }
   try {
-    const prior = loadSession(id, logsRoot(), cwd);
+    const prior = loadSession(ref, logsRoot(), cwd);
     for (const line of replayLines(prior.events)) emit(line);
   } catch (err) {
     process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
@@ -100,10 +112,24 @@ function replaySession(id: string, cwd: string, emit: (line: string) => void): v
 }
 
 export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Promise<number> {
-  if (!task.trim()) {
+  // --resume carries the prior session's context forward, so it is also a task
+  // of its own: with no new instruction the run continues the ORIGINAL task.
+  let handoff: Handoff | null = null;
+  if (opts.resume) {
+    try {
+      handoff = resolveHandoff(opts.resume, ctx.flags.cwd);
+    } catch (err) {
+      process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+      return 1;
+    }
+  }
+  if (!task.trim() && !handoff) {
     process.stderr.write('✗ nothing to do — try: aether agent "fix the failing tests"\n');
     return 1;
   }
+  // What the run is CALLED (worktree branch, session manifest, summary) stays
+  // the human-sized instruction; the brief below is what the brain reads.
+  const label = task.trim() || handoff!.task;
   // Swarm is GATED on purpose: never swarm an unproven loop — N agents multiply
   // the #1 failure (tool-call emission fraying). It is also LOCAL-ONLY (the cloud
   // path has its own orchestration). Stays gated until the single-agent loop is
@@ -152,7 +178,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
       }
     }
     try {
-      worktree = createWorktree(repoRoot, task);
+      worktree = createWorktree(repoRoot, label);
       process.stderr.write(`⌥ worktree ${worktree.branch}\n  ${worktree.dir}\n`);
     } catch (err) {
       process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
@@ -160,7 +186,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     }
     cwd = worktree.dir;
   } else {
-    const ws = await prepareWorkspace(ctx, task, io, defaultRunner());
+    const ws = await prepareWorkspace(ctx, label, io, defaultRunner());
     if (!ws.proceed) return 0;
     cwd = ws.cwd;
   }
@@ -176,7 +202,17 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   }
   const brainKind: "local" | "cloud" = goLocal ? "local" : "cloud";
 
-  const brain: Brain = goLocal ? new LocalBrain() : new CloudBrain(ctx.api);
+  // The offline path drives the SAME Ollama brain the REPL's `--local` turns
+  // already use (commands/chat.ts runLocalTurn) — pure TypeScript, shipped in
+  // the npm package, no extra runtime. The headless Python brain is a separate
+  // install, so it is opt-in through AETHER_LOCAL_BRAIN=python; before this the
+  // one-shot form spawned it unconditionally and a plain npm install could only
+  // ever answer `spawn python ENOENT`.
+  const brain: Brain = goLocal
+    ? chooseLocalBrain(process.env["AETHER_LOCAL_BRAIN"]) === "python"
+      ? new LocalBrain()
+      : new OllamaBrain()
+    : new CloudBrain(ctx.api);
   const exec = new ToolExecutor(cwd, opts.testCmd);
   // Scope the session manifest to the ORIGINAL launch directory (ctx.flags.cwd),
   // not the possibly-substituted `cwd` (an auto-created worktree, or a manually
@@ -186,7 +222,14 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   const log = opts.noLog
     ? null
     : new SessionLog(
-        { task, model: ctx.flags.model ?? "", poolGb, brain: brainKind, cwd: ctx.flags.cwd },
+        {
+          task: label,
+          model: ctx.flags.model ?? "",
+          poolGb,
+          brain: brainKind,
+          cwd: ctx.flags.cwd,
+          ...(opts.testCmd ? { testCmd: opts.testCmd } : {}),
+        },
         nowIso(),
       );
 
@@ -201,7 +244,10 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
 
   const taskCmd: TaskCommand = {
     type: "task",
-    text: task,
+    // On a resume the brain reads the prior session's continuation brief FIRST,
+    // then the new instruction — that, and not the on-screen replay, is what
+    // lets a different model (or a different machine) pick the thread up.
+    text: handoff ? continuationTask(handoff, task) : task,
     cwd,
     poolGb,
     // --effort wins; otherwise the /effort dial saved in the Aether config
@@ -275,7 +321,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   if (animated) {
     const sr = new StatusRenderer({ mode: brainKind === "local" ? "local" : "api" });
     sr.start();
-    if (opts.resume) replaySession(opts.resume, ctx.flags.cwd, (line) => sr.log(line));
+    if (opts.resume) replaySession(opts.resume, ctx.flags.cwd, handoff, (line) => sr.log(line));
     const anim = new AnimationController({
       onFrame: (_stage, art) => sr.setAnim(art),
       onProgress: (used, c) => sr.setProgress(used, c),
@@ -332,7 +378,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     };
   } else {
     const renderer = new HostRenderer({ poolGb, quiet: opts.quiet, json: ctx.flags.json });
-    if (opts.resume) replaySession(opts.resume, ctx.flags.cwd, (line) => process.stdout.write(line + "\n"));
+    if (opts.resume) replaySession(opts.resume, ctx.flags.cwd, handoff, (line) => process.stdout.write(line + "\n"));
     onEvent = async (ev: BrainEvent): Promise<void> => {
       applyToLedger(ledger, ev);
       trackWrites(ev);

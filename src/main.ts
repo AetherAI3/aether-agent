@@ -81,6 +81,7 @@ async function main(argv: string[]): Promise<number> {
       repo: { type: "string" },
       swarm: { type: "string" },
       resume: { type: "string" },
+      out: { type: "string" },
     },
   });
 
@@ -209,7 +210,7 @@ async function main(argv: string[]): Promise<number> {
     }
     case "resume": {
       const { cmdResume } = await import("./commands/resume.js");
-      return cmdResume(ctx, rest[0] ?? "");
+      return cmdResume(ctx, rest.join(" "), sf(values["out"]));
     }
     case "chat":
       return cmdChat(ctx, rest.join(" "));
