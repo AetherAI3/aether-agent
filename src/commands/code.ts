@@ -430,7 +430,12 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   // The host re-runs the test command ITSELF and derives finalStatus from the real
   // exit code (verify_gate.ts). The brain's `done` is advisory — it only enriches a
   // red result with its breaker reason and can never upgrade a red run to "ok".
-  const { status: finalStatus, remaining, exitCode: verifyExit } = finalVerify(exec, opts.testCmd, lastDone, sawError);
+  const { status: finalStatus, remaining, exitCode: verifyExit } = await finalVerify(
+    exec,
+    opts.testCmd,
+    lastDone,
+    sawError,
+  );
   log?.close(finalStatus, nowIso(), remaining);
   // The verdict line — printed even with --no-log (which used to end with
   // NOTHING); suppressed under --json (frames already carry the data). Surfaces

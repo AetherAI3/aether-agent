@@ -21,7 +21,11 @@ export interface BrainDone {
 
 /** What the host runs to establish ground truth — a ToolExecutor, or a fake in tests. */
 export interface VerifyRunner {
-  execute(name: string, args: Record<string, unknown>): ToolResult;
+  // executeAsync, not execute: the shell-backed tools became asynchronous so a
+  // timeout or Ctrl+C can reap the whole process tree. Naming the async method
+  // here is deliberate — a fake that still implements the sync one will fail to
+  // compile rather than quietly diverge from what production calls.
+  executeAsync(name: string, args: Record<string, unknown>): Promise<ToolResult>;
 }
 
 export interface VerifyOutcome {
@@ -57,18 +61,18 @@ export function parseFailCount(output: string): number | null {
  * distinct from `done.ok=false`: a completed-but-failing brain is overruled by a
  * green host, but a CRASHED brain is not — its run never reached a clean end.
  */
-export function finalVerify(
+export async function finalVerify(
   exec: VerifyRunner,
   testCmd: string | undefined,
   done: BrainDone | null,
   errored = false,
-): VerifyOutcome {
+): Promise<VerifyOutcome> {
   if (!testCmd) {
     return errored
       ? { status: "error", remaining: done?.remaining ?? 0, exitCode: 1 }
       : { status: "unverified", remaining: done?.remaining ?? 0, exitCode: -1 };
   }
-  const verify = exec.execute("run_tests", { command: testCmd });
+  const verify = await exec.executeAsync("run_tests", { command: testCmd });
   const remaining = parseFailCount(verify.output) ?? done?.remaining ?? 0;
   // A crashed brain is never "ok", even on a green tree; we still run the gate so
   // the failing count (if any) is logged.

@@ -6,7 +6,7 @@
 // brain's grounding gate (tests_pass / parse_fail_count) reads the same shape
 // regardless of which side originally ran it.
 
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { closeSync, constants as fsConstants, existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import type { ToolName } from "./brain_protocol.js";
@@ -25,6 +25,12 @@ const DEFAULT_TEST_CMD = "";
 const SNAPSHOT_MAX_BYTES = 1024 * 1024;
 const SEARCH_MAX_HITS = 40;
 const SEARCH_SKIP_DIRS = new Set([".git", "node_modules", "dist"]);
+
+/** Per-call execution controls for the shell-backed tools. */
+export interface RunOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
 
 export interface ToolResult {
   output: string;
@@ -81,18 +87,124 @@ export class ToolExecutor {
     return abs;
   }
 
-  /** Run a shell command in the workspace; capture combined output, capped. */
-  private run(command: string, timeoutMs = 900_000): ToolResult {
-    const shell =
-      process.platform === "win32" ? (process.env["ComSpec"] ?? "C:\\Windows\\System32\\cmd.exe") : true;
-    const r = spawnSync(command, {
-      shell,
-      cwd: this.root,
-      encoding: "utf8",
-      timeout: timeoutMs,
-      maxBuffer: 64 * 1024 * 1024,
+  /**
+   * Run a shell command in the workspace; capture combined output, capped.
+   *
+   * Asynchronous and tree-aware. The previous implementation used spawnSync
+   * with a timeout, which has two defects the caller cannot see:
+   *
+   *  - a timeout signals the DIRECT child only, which is the shell. Whatever
+   *    the user actually started (npm test, pytest, a compiler) is orphaned and
+   *    keeps running, holding ports, files and CPU, while the call returns
+   *    looking like a clean timeout.
+   *  - the whole event loop is blocked for the duration, freezing heartbeats,
+   *    the renderer and any AbortController. That is why Ctrl+C could not
+   *    interrupt a long test run.
+   *
+   * Cancellation and timeout resolve distinctly (130 vs 124): one is the
+   * operator, one is the clock, and the caller needs to tell them apart.
+   */
+  private run(command: string, options: RunOptions = {}): Promise<ToolResult> {
+    const timeoutMs = options.timeoutMs ?? 900_000;
+    const signal = options.signal;
+    const onWindows = process.platform === "win32";
+    const shell = onWindows ? (process.env["ComSpec"] ?? "C:\\Windows\\System32\\cmd.exe") : "/bin/sh";
+
+    return new Promise<ToolResult>((resolve) => {
+      if (signal?.aborted) {
+        resolve({ output: "[aborted before start]", exitCode: 130 });
+        return;
+      }
+
+      const child = spawn(command, {
+        shell,
+        cwd: this.root,
+        // POSIX: a new process group, so one kill reaches every descendant.
+        // Windows has no equivalent here; taskkill /T walks the tree instead,
+        // so detaching there buys nothing and complicates exit reporting.
+        detached: !onWindows,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+      let out = "";
+      let bytes = 0;
+      const CAP = 64 * 1024 * 1024;
+      const absorb = (chunk: Buffer): void => {
+        bytes += chunk.length;
+        // Keep draining past the cap so the pipe never blocks the child, but
+        // stop retaining; capHeadTail trims the ends at the boundary anyway.
+        if (bytes <= CAP) out += chunk.toString("utf8");
+      };
+      child.stdout?.on("data", absorb);
+      child.stderr?.on("data", absorb);
+
+      let settled = false;
+      let verdict: "timeout" | "aborted" | null = null;
+
+      const killTree = (): void => {
+        const pid = child.pid;
+        if (pid === undefined) return;
+        if (onWindows) {
+          // /T the tree, /F because a hung runner will not exit politely.
+          spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { encoding: "utf8" });
+          return;
+        }
+        try {
+          process.kill(-pid, "SIGTERM");
+        } catch {
+          /* group already gone */
+        }
+        // Escalate: a runner that traps SIGTERM must not outlive the timeout.
+        setTimeout(() => {
+          try {
+            process.kill(-pid, "SIGKILL");
+          } catch {
+            /* already reaped */
+          }
+        }, 2000).unref();
+      };
+
+      const timer = setTimeout(() => {
+        verdict = "timeout";
+        killTree();
+      }, timeoutMs);
+      timer.unref();
+
+      const onAbort = (): void => {
+        verdict = "aborted";
+        killTree();
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+
+      const finish = (result: ToolResult): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        resolve(result);
+      };
+
+      child.on("error", (err: NodeJS.ErrnoException) => {
+        const code = err.code === "ENOENT" ? 127 : 1;
+        finish({ output: `[spawn error ${err.code ?? "UNKNOWN"}: ${err.message}]`, exitCode: code });
+      });
+
+      // 'close' rather than 'exit': it fires once the pipes are drained, so a
+      // test summary arriving with the exit is not lost.
+      child.on("close", (code, sig) => {
+        const body = capHeadTail(out, MAX_OUTPUT);
+        if (verdict === "timeout") {
+          finish({ output: `[timeout after ${Math.round(timeoutMs / 1000)}s]\n${body}`, exitCode: 124 });
+          return;
+        }
+        if (verdict === "aborted") {
+          finish({ output: `[aborted]\n${body}`, exitCode: 130 });
+          return;
+        }
+        const exit = code ?? (sig ? 1 : 1);
+        finish({ output: `[exit ${exit}]\n${body}`, exitCode: exit });
+      });
     });
-    return toResult(r, timeoutMs);
   }
 
   /**
@@ -114,16 +226,10 @@ export class ToolExecutor {
         case "write_file":
           return this.writeFile(String(args["path"] ?? ""), String(args["content"] ?? ""));
         case "run_shell":
-          return this.run(String(args["command"] ?? ""));
-        case "run_tests": {
-          const cmd = String(args["command"] ?? "") || this.testCmd;
-          // No explicit command and no configured testCmd: CONTRACTS.md invariant 5
-          // — "" means "no ground truth to assert". Report it plainly instead of
-          // spawning an empty/undefined command (which reads as a confusing shell
-          // or ENOENT error) or silently substituting an unrelated test runner.
-          if (!cmd) return { output: "[no test_cmd configured — unverifiable]", exitCode: 1 };
-          return this.run(cmd);
-        }
+        case "run_tests":
+          // Shell-backed tools became async so a timeout or Ctrl+C can reap the
+          // whole process tree. Routed through executeAsync like the web tools.
+          return { output: `[tool ${name} is async — call executeAsync]`, exitCode: 1 };
         case "repo_search":
           return this.repoSearch(String(args["query"] ?? ""));
         case "git_commit":
@@ -147,7 +253,7 @@ export class ToolExecutor {
    * Web tools never throw — they return a bracketed string, exit 0 (advisory
    * output the brain reads as ordinary tool output).
    */
-  async executeAsync(name: string, rawArgs: unknown): Promise<ToolResult> {
+  async executeAsync(name: string, rawArgs: unknown, options: RunOptions = {}): Promise<ToolResult> {
     const validation = validateToolCall(name, rawArgs);
     if (!validation.ok) {
       return { output: `[tool ${name} rejected: ${validation.error}]`, exitCode: 1 };
@@ -160,6 +266,18 @@ export class ToolExecutor {
         Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 5,
       );
       return { output: capHeadTail(text, MAX_OUTPUT), exitCode: 0 };
+    }
+    if (name === "run_shell") {
+      return this.run(String(args["command"] ?? ""), options);
+    }
+    if (name === "run_tests") {
+      const cmd = String(args["command"] ?? "") || this.testCmd;
+      // No explicit command and no configured testCmd: CONTRACTS.md invariant 5
+      // — "" means "no ground truth to assert". Report it plainly instead of
+      // spawning an empty/undefined command (which reads as a confusing shell
+      // or ENOENT error) or silently substituting an unrelated test runner.
+      if (!cmd) return { output: "[no test_cmd configured — unverifiable]", exitCode: 1 };
+      return this.run(cmd, options);
     }
     if (name === "web_fetch") {
       const text = await webFetch(String(args["url"] ?? ""), MAX_OUTPUT);
@@ -253,21 +371,6 @@ export class ToolExecutor {
   }
 }
 
-/** Shared spawnSync -> ToolResult mapping for run() (shell):
- * timeout/ENOENT/exit-code handling. */
-function toResult(r: SpawnSyncReturns<string>, timeoutMs: number): ToolResult {
-  if (r.error) {
-    const err = r.error as NodeJS.ErrnoException;
-    if (err.code === "ETIMEDOUT") {
-      return { output: `[timeout after ${Math.round(timeoutMs / 1000)}s]`, exitCode: 124 };
-    }
-    const code = err.code === "ENOENT" ? 127 : 1;
-    return { output: `[spawn error ${err.code ?? "UNKNOWN"}: ${err.message}]`, exitCode: code };
-  }
-  const code = r.status ?? 1;
-  const body = capHeadTail((r.stdout ?? "") + (r.stderr ?? ""), MAX_OUTPUT);
-  return { output: `[exit ${code}]\n${body}`, exitCode: code };
-}
 
 /** Cap text to `max` chars keeping BOTH ends. Test runners print detail first and
  * the summary (`N failed`, final assertion) LAST — a head-only slice loses the

@@ -374,12 +374,12 @@ test("path-guard rejects traversal, absolute, and symlink escapes", () => {
 });
 
 // --- probe 3: shell hardening (non-zero exit + stderr reach the brain) ------
-test("run_shell surfaces a non-zero exit code and captures stderr", (t) => {
+test("run_shell surfaces a non-zero exit code and captures stderr", async (t) => {
   // `node -e` (not a platform-specific shell one-liner) so this passes
   // identically on Windows and POSIX without a win32/posix branch, and runs
   // in an isolated tmpdir so it can't leave stray output under process.cwd().
   const ex = new ToolExecutor(mkdtempSync(join(tmpdir(), "aether-sh-")));
-  const r = ex.execute("run_shell", {
+  const r = await ex.executeAsync("run_shell", {
     command: `node -e "process.stderr.write('boom'); process.exit(3)"`,
   });
   if (/spawn error EPERM/.test(r.output)) {
