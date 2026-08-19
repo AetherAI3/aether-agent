@@ -4,7 +4,7 @@
 
 **A coding agent for your terminal — runs on hosted frontier models or fully offline on your own machine.**
 
-[![CI](https://github.com/DBarr3/aether-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/DBarr3/aether-agent/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-Apache--2.0-06b6d4)](LICENSE) [![Node](https://img.shields.io/badge/node-%E2%89%A524-14b8a6)](https://nodejs.org) [![TypeScript](https://img.shields.io/badge/TypeScript-7-3178c6)](https://www.typescriptlang.org/) [![Release notes](https://img.shields.io/badge/release-notes-7c3aed)](RELEASE_NOTES.md)
+[![CI](https://github.com/AetherAI3/aether-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AetherAI3/aether-agent/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-Apache--2.0-06b6d4)](LICENSE) [![Node](https://img.shields.io/badge/node-%E2%89%A524-14b8a6)](https://nodejs.org) [![TypeScript](https://img.shields.io/badge/TypeScript-7-3178c6)](https://www.typescriptlang.org/) [![Release notes](https://img.shields.io/badge/release-notes-7c3aed)](RELEASE_NOTES.md)
 
 **Aether Agent is in beta.** Updates are shipping quickly.
 ```bash
@@ -39,7 +39,7 @@ ollama pull qwen2.5-coder:7b   # 03 — or go offline: no account, no network
 aether agent --local           #      …same terminal, nothing leaves the machine
 ```
 
-`aether agent` opens the REPL — chat with the model, slash-commands at hand, the agent edits files and runs your tests **in the same session**. Both brains run through the same host loop, render, tools, and commands — switching just swaps the transport. On the hosted path your code stays local and only the prompt + context you send leaves; on `--local`, nothing leaves at all. The local brain runs on **[Unlimited Context](https://github.com/DBarr3/Unlimited-Context-LLM)** — Aether's open-source (Apache-2.0) memory engine that gives any Ollama model a billion-token working memory.
+`aether agent` opens the REPL — chat with the model, slash-commands at hand, the agent edits files and runs your tests **in the same session**. Both brains run through the same host loop, render, tools, and commands — switching just swaps the transport. On the hosted path your code stays local and only the prompt + context you send leaves; on `--local`, nothing leaves at all. The local brain runs on **[Unlimited Context](https://github.com/AetherAI3/Unlimited-Context-LLM)** — Aether's open-source (Apache-2.0) memory engine that gives any Ollama model a billion-token working memory.
 
 > Prefer the installer UI? Download [`install.sh`](install.sh) or [`install.ps1`](install.ps1), inspect it, then run it locally. Set `AETHER_VERSION=0.1.0` (shell) or `-Version 0.1.0` (PowerShell) to pin an exact release. The canonical npm command above verifies registry integrity and disables lifecycle scripts; there are no native or runtime dependencies and no daemon.
 
@@ -80,7 +80,7 @@ Media is 15 image models (Nano Banana Pro & 2, FLUX.2 Klein / Pro / Flex / Max, 
 
 On `--local`, none of the above applies: you run any Ollama model you have pulled, with no account, no fleet, and no metering.
 
-Usage is metered in **UVT** — one universal credit, one balance, shared across this agent, the [AetherCloud desktop](https://github.com/DBarr3/aethercloud), and [Aether AI on the web](https://app.aethersystems.net/chat). Free tier to try (no card), subscription for premium models, UVT top-ups for pay-as-you-go. **Current tiers and prices: [aethersystems.net](https://aethersystems.net/)**
+Usage is metered in **UVT** — one universal credit, one balance, shared across this agent, the [AetherCloud desktop](https://github.com/AetherAI3/aethercloud), and [Aether AI on the web](https://app.aethersystems.net/chat). Free tier to try (no card), subscription for premium models, UVT top-ups for pay-as-you-go. **Current tiers and prices: [aethersystems.net](https://aethersystems.net/)**
 
 ## Commands
 
@@ -129,7 +129,7 @@ npm run smoke
 npm pack --dry-run
 ```
 
-The verified TypeScript 7 release baseline is tagged [`v0.1.0`](https://github.com/DBarr3/aether-agent/tree/v0.1.0). Migration details and measurements are in the [TypeScript 7 upgrade design](docs/specs/2026-07-20-typescript-7-terminal-upgrade-design.md).
+The verified TypeScript 7 release baseline is tagged [`v0.1.0`](https://github.com/AetherAI3/aether-agent/tree/v0.1.0). Migration details and measurements are in the [TypeScript 7 upgrade design](docs/specs/2026-07-20-typescript-7-terminal-upgrade-design.md).
 
 ## Security
 
@@ -149,7 +149,7 @@ Aether Agent is the **terminal** surface of Aether. Every surface below shares o
 | **Aether AI on the web** | [app.aethersystems.net/chat](https://app.aethersystems.net/chat) | The Workbench — chat, agents you can launch, a work tray for everything they produce, image & video generation, your vault. |
 | **Aether Code** | [app.aethersystems.net/code](https://app.aethersystems.net/code) | The browser IDE — the agent console docked beside your files, worktree teams and per-session transcripts, Nano compile & IR export. |
 | **Aether Design** | [app.aethersystems.net/design](https://app.aethersystems.net/design) | Design Studio — canvas, creator and presets, with the agent editing the design directly. |
-| **AetherCloud desktop** | [github.com/DBarr3/aethercloud](https://github.com/DBarr3/aethercloud) | The agentic desktop app — projects, workflows, the memory Vault, and local Actions runs that can open a pull request. |
+| **AetherCloud desktop** | [github.com/AetherAI3/aethercloud](https://github.com/AetherAI3/aethercloud) | The agentic desktop app — projects, workflows, the memory Vault, and local Actions runs that can open a pull request. |
 | **Aether Terminal** | [aethersystems.net/terminal](https://aethersystems.net/terminal) | What this CLI looks like, before you install anything. |
 
 Get the desktop at **[aethersystems.net](https://aethersystems.net/)** — installs in about a minute, no card needed. Platform-wide patch notes live at **[app.aethersystems.net/release-notes](https://app.aethersystems.net/release-notes)**; terminal-specific ones are in [RELEASE_NOTES.md](RELEASE_NOTES.md).
