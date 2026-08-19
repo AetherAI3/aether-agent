@@ -6,7 +6,7 @@ to read end to end in an afternoon.
 ## Setup
 
 ```bash
-git clone https://github.com/DBarr3/aether-agent
+git clone https://github.com/AetherAI3/aether-agent
 cd aether-agent
 npm install
 npm run build
@@ -58,7 +58,7 @@ Most features touch a `core/` module + a `commands/` file.
 
 ## Reporting bugs / ideas
 
-Open an [issue](https://github.com/DBarr3/aether-agent/issues). For security
+Open an [issue](https://github.com/AetherAI3/aether-agent/issues). For security
 reports, **do not** open a public issue — see [`SECURITY.md`](SECURITY.md).
 
 By contributing you agree your contributions are licensed under Apache-2.0.

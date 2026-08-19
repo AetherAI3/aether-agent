@@ -13,7 +13,7 @@ branch (`fix/terminal-auth-401-ux`) and the TS7 upgrade branch
 
 ## Loops to run (in order)
 
-Source: [`DBarr3/agentic-loops`](https://github.com/DBarr3/agentic-loops/tree/main/skills)
+Source: [`AetherAI3/agentic-loops`](https://github.com/AetherAI3/agentic-loops/tree/master/skills)
 
 1. **LOOP-07-infra-devops.md** — infra/devops hardening pass (deploy config,
    CI, env handling, observability).
