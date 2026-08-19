@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { defaultRunner, type Runner } from "./worktree.js";
 
 export interface RepoSpec {
   owner: string;
@@ -60,6 +61,8 @@ export function cloneArgs(spec: RepoSpec, dir: string, useGh: boolean): { cmd: s
 }
 
 export interface RepoCheckout {
+  /** How current the mirror is. Never assumed — always measured or reported unknown. */
+  freshness: MirrorFreshness;
   /** Local git dir for the repo (the mirror). */
   dir: string;
   /** True when this call performed the clone (vs reusing an existing mirror). */
@@ -71,9 +74,15 @@ export interface RepoCheckout {
  * its dir. Reuses an existing mirror. Throws with an actionable message on a
  * clone failure (private repo + no auth is the common case).
  */
-export function ensureLocalClone(spec: RepoSpec): RepoCheckout {
+export function ensureLocalClone(spec: RepoSpec, run: Runner = defaultRunner()): RepoCheckout {
   const dir = localMirrorDir(spec);
-  if (existsSync(join(dir, ".git"))) return { dir, cloned: false };
+  // A mirror that already exists is validated and fetched before anything
+  // branches off it. Reusing it on the strength of its path alone is how a
+  // task silently starts from a days-old tip.
+  if (existsSync(join(dir, ".git"))) {
+    const { freshness } = refreshMirror(spec, dir, run, { exists: true });
+    return { dir, cloned: false, freshness };
+  }
   const useGh = ghAvailable();
   const { cmd, args } = cloneArgs(spec, dir, useGh);
   const r = spawnSync(cmd, args, { encoding: "utf8" });
@@ -84,7 +93,110 @@ export function ensureLocalClone(spec: RepoSpec): RepoCheckout {
       : "gh CLI not found — install it or set up git credentials for github.com";
     throw new Error(`could not clone ${spec.full}: ${why}\n  ${hint}`);
   }
-  return { dir, cloned: true };
+  // A clone just came from the remote, so its tip is the remote tip by
+  // construction. Read it back rather than asserting it.
+  const tip = run("git", ["-C", dir, "rev-parse", "HEAD"]);
+  return {
+    dir,
+    cloned: true,
+    freshness: {
+      state: "fresh",
+      remoteTip: tip.status === 0 ? tip.stdout.trim() || null : null,
+      checkedAt: new Date().toISOString(),
+    },
+  };
+}
+
+
+/** How current a local mirror is, relative to its GitHub remote. */
+export type MirrorFreshnessState = "fresh" | "stale" | "unknown";
+
+export interface MirrorFreshness {
+  state: MirrorFreshnessState;
+  /** Commit the remote default branch resolved to, when the fetch succeeded. */
+  remoteTip: string | null;
+  checkedAt: string;
+  /** Why the state is not "fresh". Present whenever it is not. */
+  reason?: string;
+}
+
+export interface MirrorResult {
+  dir: string;
+  freshness: MirrorFreshness;
+}
+
+/**
+ * Validate and refresh an existing mirror before anything branches off it.
+ *
+ * Three properties this function exists to guarantee:
+ *
+ *  1. The directory really is the repo that was asked for. The mirror path is
+ *     derived from the slug alone, so any directory sitting at that path would
+ *     otherwise be accepted as "octocat/hello-world" on the strength of its name.
+ *  2. The mirror is fetched, so a task worktree does not branch off a tip that
+ *     was current days ago.
+ *  3. When step 2 cannot happen — offline, auth expired, remote gone — the
+ *     result says so. It never degrades to "fresh" as a convenience.
+ *
+ * Read-only with respect to the user's working tree: it fetches into the object
+ * store and reads refs. It never checks out, resets, merges, pulls or cleans.
+ *
+ * Auth is the user's own git/gh configuration, inherited from the environment.
+ * No Aether credential is passed, and none is available to this function.
+ */
+export function refreshMirror(
+  spec: RepoSpec,
+  dir: string,
+  run: Runner,
+  options: { exists: boolean; now?: string },
+): MirrorResult {
+  const checkedAt = options.now ?? new Date().toISOString();
+  if (!options.exists) {
+    return { dir, freshness: { state: "unknown", remoteTip: null, checkedAt, reason: "no local mirror yet" } };
+  }
+
+  const remote = run("git", ["-C", dir, "remote", "get-url", "origin"]);
+  if (remote.status !== 0) {
+    return {
+      dir,
+      freshness: {
+        state: "unknown",
+        remoteTip: null,
+        checkedAt,
+        reason: remote.stderr.trim() || "could not read the mirror's origin remote",
+      },
+    };
+  }
+  // parseRepoSpec already normalizes https/ssh/.git/trailing-slash forms, so
+  // comparing through it avoids a second, subtly different URL parser.
+  let actual: string;
+  try {
+    actual = parseRepoSpec(remote.stdout.trim()).full;
+  } catch {
+    throw new Error(
+      `local mirror at ${dir} does not point at ${spec.full} — its origin is "${remote.stdout.trim()}"`,
+    );
+  }
+  if (actual !== spec.full) {
+    throw new Error(`local mirror at ${dir} does not point at ${spec.full} — its origin is ${actual}`);
+  }
+
+  const fetched = run("git", ["-C", dir, "fetch", "--prune", "origin"]);
+  if (fetched.status !== 0) {
+    return {
+      dir,
+      freshness: {
+        state: "unknown",
+        remoteTip: null,
+        checkedAt,
+        reason: (fetched.stderr || fetched.stdout).trim() || "git fetch failed",
+      },
+    };
+  }
+
+  const tip = run("git", ["-C", dir, "rev-parse", "FETCH_HEAD"]);
+  const remoteTip = tip.status === 0 ? tip.stdout.trim() || null : null;
+  return { dir, freshness: { state: "fresh", remoteTip, checkedAt } };
 }
 
 /** One-line "open a PR" footer for a finished repo run. Pure. */

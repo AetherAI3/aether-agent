@@ -155,10 +155,27 @@ test("fast doctor is local, ordered, fail-soft, and content-redacted", async () 
     "custody.receipts",
     "actions.dispatch",
     "predator.readiness",
+
+    "skills.index",
+
+    "skills.lock",
+
+    "skills.trust",
+
+    "skills.evals",
+
+    "instructions.graph",
+
+    "instructions.conflicts",
   ]);
   // The whole point of fast mode: nothing remote was contacted, and the report
   // says so instead of implying otherwise.
   assert.deepEqual(counters, { backend: 0, broker: 0 });
+  // Skill and instruction checks are filesystem-only: they must declare
+  // reachable as n/a rather than borrowing a pass they never earned.
+  for (const id of ["skills.index", "instructions.graph"]) {
+    assert.equal(report.checks.find((check) => check.id === id)?.reachable.state, "na", id);
+  }
   assert.equal(
     report.checks.find((check) => check.id === "agent.transport")?.reachable.state,
     "not-checked",
@@ -212,8 +229,33 @@ test("a hanging backend cannot stall the fast report", async () => {
   const report = await diagnosticReport(ctx, {
     dependencies: { memoryRoots: roots, mcpStore: store, mcpClient: hanging, timeoutMs: 50 },
   });
-  assert.ok(Date.now() - started < 500);
+
+  // What must hold is that the report CAME BACK and told the truth about the
+  // probes it could not complete. The previous assertion was a 500ms wall-clock
+  // budget, which measured the machine rather than the behaviour: a loaded CI
+  // runner blows it even when the 50ms timeout fired exactly as designed
+  // (observed on windows-latest at 689ms, and locally at 1818ms under full-suite
+  // load while passing in isolation at 82ms).
   assert.equal(report.mode, "fast");
+
+  // A probe fed by one of the hanging clients must never come back claiming it
+  // verified anything. Named explicitly rather than filtered on an axis: local
+  // checks like workspace.git legitimately verify here, because nothing about
+  // them touches the backend that is hanging.
+  const BACKEND_FED = ["agent.transport", "auth.credential", "agent.catalog", "mcp.broker"];
+  const probed = report.checks.filter((check) => BACKEND_FED.includes(check.id));
+  assert.equal(probed.length, BACKEND_FED.length, "every backend-fed check should be present in the report");
+  for (const check of probed) {
+    assert.notEqual(check.verified.state, "yes", `${check.id} cannot be verified against a hanging backend`);
+  }
+
+  // Still bound the wall clock, but as a hang detector rather than a stopwatch.
+  // The failure this guards against is an unbounded await, which never returns
+  // at all; any finite margin distinguishes that from a slow runner.
+  assert.ok(
+    Date.now() - started < 30_000,
+    "the fast report must be bounded by its own timeout, not by the backend",
+  );
 });
 
 test("--live renders the live report, never the fast one relabelled", async () => {
