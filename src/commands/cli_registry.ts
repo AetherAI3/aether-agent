@@ -5,7 +5,7 @@ export const CLI_COMMANDS: CommandSpec[] = [
   { name: "help", args: "[command]", summary: "show grouped help or command detail", section: "Start" },
   { name: "agent", aliases: ["code"], args: "[task]", summary: "run the coding agent or open its REPL", section: "Start" },
   { name: "chat", args: "[prompt]", summary: "start chat or send one prompt", section: "Start" },
-  { name: "resume", args: "[session-id]", summary: "resume a scoped local session", section: "Start" },
+  { name: "resume", args: "[session-id|export [id] --out <file>]", summary: "replay a local session, or export it as a portable handoff", section: "Start" },
   { name: "run", args: "<neo|kronus> <task>", summary: "stream an orchestrator run", section: "Start" },
   { name: "models", args: "[use <id>]", summary: "list models or set the default", section: "Start" },
   { name: "agents", summary: "list available orchestrators", section: "Start" },
