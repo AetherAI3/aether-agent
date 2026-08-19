@@ -20,7 +20,22 @@ import {
 } from "./brain_protocol.js";
 import type { ToolResult } from "./tool_executor.js";
 
+/**
+ * How the brain subprocess is started. Injected so the local path is testable
+ * without a Python installation: LocalBrain speaks a line protocol over stdio,
+ * and a fake that speaks the same protocol is indistinguishable from the real
+ * child. Without this seam nothing could drive LocalBrain at all, which is why
+ * the local-vs-Ollama parity canary could not be written.
+ */
+export type BrainSpawner = (
+  command: string,
+  args: readonly string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv },
+) => ChildProcessWithoutNullStreams;
+
 export interface LocalBrainOptions {
+  /** Override how the child is started. Defaults to node's spawn. */
+  spawn?: BrainSpawner;
   /** Python interpreter (default: $AETHER_PYTHON or "python"). */
   python?: string;
   /** Module to run as the brain (default: aether_agent.headless). */
@@ -44,13 +59,16 @@ export class LocalBrain implements Brain {
     // fall back to "python", or spawn() throws "argument 'file' cannot be empty".
     const python = this.opts.python || process.env["AETHER_PYTHON"] || "python";
     const mod = this.opts.module ?? "aether_agent.headless";
-    const child = spawn(python, ["-m", mod], {
+    const start: BrainSpawner =
+      this.opts.spawn ??
+      ((command, args, options) =>
+        spawn(command, [...args], { ...options, stdio: ["pipe", "pipe", "pipe"] }) as ChildProcessWithoutNullStreams);
+    const child = start(python, ["-m", mod], {
       cwd: task.cwd,
       // PYTHONUTF8 belt-and-suspenders alongside the ASCII-escaped wire: the
       // child's stdio never falls back to cp1252 on Windows.
       env: { ...process.env, PYTHONUTF8: "1", ...(this.opts.env ?? {}) },
-      stdio: ["pipe", "pipe", "pipe"],
-    }) as ChildProcessWithoutNullStreams;
+    });
     this.child = child;
 
     // A dead child's stdin raises EPIPE asynchronously; without a listener
