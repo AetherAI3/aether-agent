@@ -78,7 +78,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "limit", args: "<uvt>", summary: "cap UVT spend for this session", section: "Context & Limits" },
   { name: "token-budget", args: "<uvt>", summary: "alias for /limit", section: "Context & Limits", hidden: true },
   { name: "audit-receipt", args: "[n]", summary: "verified log of tool calls + UVT", section: "Context & Limits" },
-  { name: "rollback", args: "[n]", summary: "revert last n filesystem changes", section: "Context & Limits" },
+  { name: "rollback", summary: "discard uncommitted changes to tracked files", section: "Context & Limits" },
   { name: "logs-view", aliases: ["logs"], summary: "interactive session log browser", section: "Context & Limits" },
 
   // ── Goals & Workflows ──
@@ -111,7 +111,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "bench", args: "<target>", summary: "profile & optimize code", section: "UVT Tools" },
   { name: "purge", summary: "flush transient context & temp files", section: "UVT Tools" },
   { name: "stage-diff", summary: "unified diff + commit message", section: "UVT Tools" },
-  { name: "revert", args: "<file|step>", summary: "surgical rollback", section: "UVT Tools" },
+  { name: "revert", args: "<file>", summary: "discard uncommitted changes to one file", section: "UVT Tools" },
 
   // ── Media ──
   { name: "photogen", args: "<prompt> [--model --aspect]", summary: "generate images", section: "Media" },

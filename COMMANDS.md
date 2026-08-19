@@ -339,7 +339,7 @@ Each starts an agent loop in the REPL.
 | `/snapshot list` | List saved snapshots. |
 | `/limit <uvt>` | Cap UVT spend for the session (`/limit off` to remove). |
 | `/audit-receipt [n]` | Verified log of tool calls + UVT (local custody + server). |
-| `/rollback [n]` | Revert the last n uncommitted filesystem changes (git-backed). |
+| `/rollback` | Discard uncommitted changes to tracked files (git-backed). Restores from the index, so files with staged changes come back to their staged state, not to the last commit. Untracked files are never touched. |
 | `/logs-view`, `/logs` | Interactive session log browser. |
 
 ### Goals & workflows
