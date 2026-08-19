@@ -31,6 +31,8 @@ import { loadHistory, appendHistory, historyPath, historyEnabled } from "../core
 import { VERSION } from "../version.js";
 import { chooseBackend, type BackendPath } from "../core/backend.js";
 import { OllamaBrain } from "../core/brain_ollama.js";
+import type { Brain } from "../core/brain.js";
+import type { ToolResult } from "../core/tool_executor.js";
 import { ToolExecutor } from "../core/tool_executor.js";
 import { HostRenderer } from "../ui/host_render.js";
 import type { TaskCommand } from "../core/brain.js";
@@ -109,7 +111,9 @@ export async function runTurn(
     // Aether meters nothing on a local brain, so the session is unmetered
     // rather than "zero spend so far".
     getRegistry().markLocalUnmetered();
-    await runLocalTurn(ctx, prompt);
+    // The signal used to be dropped here, so the REPL Ctrl+C controller could
+    // not reach a local turn at all: the abort fired and nothing observed it.
+    await runLocalTurn(ctx, prompt, signal);
     return;
   }
   await runCloudTurn(ctx, prompt, signal, onFrame, onPulsePaint);
@@ -223,10 +227,20 @@ async function runCloudTurn(
  * each tool_call (one path-guarded ToolExecutor) and replies, the HostRenderer
  * draws every event. Identical UX to cloud, just an offline brain.
  */
-async function runLocalTurn(ctx: AppContext, prompt: string): Promise<void> {
+export interface LocalTurnDeps {
+  brain?: Brain;
+  exec?: { executeAsync(name: string, args: Record<string, unknown>): Promise<ToolResult> };
+}
+
+export async function runLocalTurn(
+  ctx: AppContext,
+  prompt: string,
+  signal?: AbortSignal,
+  deps: LocalTurnDeps = {},
+): Promise<void> {
   const cwd = ctx.flags.cwd;
-  const brain = new OllamaBrain(ctx.flags.model ? { model: ctx.flags.model } : {});
-  const exec = new ToolExecutor(cwd);
+  const brain = deps.brain ?? new OllamaBrain(ctx.flags.model ? { model: ctx.flags.model } : {});
+  const exec = deps.exec ?? new ToolExecutor(cwd);
   const renderer = new HostRenderer({ poolGb: 5, json: ctx.flags.json });
   const approveTool = async (name: string, args: Record<string, unknown>): Promise<boolean> => {
     const outcome = decideGate(name, ctx.cfg.permissionMode, ctx.cfg.autoApply, {
@@ -250,8 +264,15 @@ async function runLocalTurn(ctx: AppContext, prompt: string): Promise<void> {
     ...(ctx.flags.model ? { model: ctx.flags.model } : {}),
   };
   let sawError: string | null = null;
+  // close() is what unblocks a loop parked on a tool result, so an abort that
+  // arrives mid-turn is observed rather than waiting out the whole turn.
+  // Registered before the loop starts so an already-aborted signal still fires.
+  const onAbort = (): void => brain.close();
+  if (signal?.aborted) brain.close();
+  signal?.addEventListener("abort", onAbort, { once: true });
   try {
     for await (const ev of brain.run(task)) {
+      if (signal?.aborted) break;
       renderer.event(ev);
       if (ev.type === "error") sawError = ev.msg;
       if (ev.type === "done" && !ev.ok) sawError = ev.result || ev.reason || "turn did not complete";
@@ -265,8 +286,11 @@ async function runLocalTurn(ctx: AppContext, prompt: string): Promise<void> {
       }
     }
   } finally {
+    signal?.removeEventListener("abort", onAbort);
     brain.close();
   }
+  // An aborted turn is not a failed one — the user asked for it to stop.
+  if (signal?.aborted) return;
   // Mirror runCloudTurn/CONTRACTS.md invariant 5: a streamed error event is a
   // failed turn, not a silently-successful one — the renderer already painted
   // it, so callers (cmdChat/run.ts) special-case ChatTurnError to avoid a
