@@ -8,7 +8,7 @@
 
 set -eu
 
-# Pin a specific release with AETHER_VERSION=0.1.0. The default follows npm's
+# Pin a specific release with AETHER_VERSION=0.2.0. The default follows npm's
 # latest dist-tag, while the quoted package spec prevents shell interpretation.
 AETHER_VERSION="${AETHER_VERSION:-latest}"
 case "$AETHER_VERSION" in
