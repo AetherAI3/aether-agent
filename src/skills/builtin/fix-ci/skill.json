@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "id": "aether/fix-ci",
+  "version": "1.0.0",
+  "name": "Fix CI",
+  "description": "Diagnose a failing CI run or test suite: reproduce with the test runner, localize the failure to exact code, and propose the minimal fix. Runs tests but never edits files, never commits, never uses the network.",
+  "entrypoint": "SKILL.md",
+  "triggers": {
+    "commands": [
+      "fix-ci"
+    ],
+    "phrases": [
+      "fix the ci",
+      "ci is failing",
+      "make the tests pass"
+    ],
+    "automatic": true
+  },
+  "tools": {
+    "allowed": [
+      "read_file",
+      "repo_search",
+      "run_tests"
+    ],
+    "required": [
+      "run_tests"
+    ],
+    "denied": [
+      "write_file",
+      "run_shell",
+      "git_commit",
+      "web_search",
+      "web_fetch"
+    ]
+  },
+  "permissions": {
+    "requires": [
+      "workspace.read",
+      "shell.test"
+    ],
+    "may_request": [],
+    "forbids": [
+      "workspace.write",
+      "shell.execute",
+      "git.commit",
+      "git.push",
+      "network.general"
+    ]
+  },
+  "context": {
+    "max_tokens": 1500,
+    "resources": []
+  },
+  "outputs": {
+    "kinds": [
+      "diagnosis"
+    ],
+    "verification": [
+      "failing test named exactly",
+      "proposed fix cites file and line"
+    ]
+  },
+  "dependencies": {
+    "skills": []
+  },
+  "compatibility": {
+    "min_agent_version": "0.1.0",
+    "capability_contract": 1
+  },
+  "health": {
+    "eval_manifest": "evals/cases.json"
+  }
+}

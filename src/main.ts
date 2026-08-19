@@ -67,6 +67,12 @@ async function main(argv: string[]): Promise<number> {
       yes: { type: "boolean", short: "y", default: false },
       apply: { type: "boolean", default: false },
       deep: { type: "boolean", default: false },
+      // `aether skills` / `aether capabilities` flags:
+      scope: { type: "string" },
+      all: { type: "boolean", default: false },
+      ci: { type: "boolean", default: false },
+      available: { type: "boolean", default: false },
+      junit: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
       version: { type: "boolean", short: "v", default: false },
       // `aether agent` flags:
@@ -145,6 +151,20 @@ async function main(argv: string[]): Promise<number> {
       return cmdVault(ctx, rest);
     case "workflow":
       return cmdWorkflow(ctx, rest);
+    case "skills": {
+      const { cmdSkills } = await import("./commands/skills.js");
+      return cmdSkills(ctx, rest, {
+        scope: sf(values["scope"]),
+        all: Boolean(values["all"]),
+        ci: Boolean(values["ci"]),
+        json: Boolean(values["json"]),
+        ...(sf(values["junit"]) != null ? { junit: sf(values["junit"])! } : {}),
+      });
+    }
+    case "capabilities": {
+      const { cmdCapabilities } = await import("./commands/capabilities.js");
+      return cmdCapabilities(ctx, rest, { available: Boolean(values["available"]) });
+    }
     case "memory": {
       const { cmdMemory } = await import("./commands/memory.js");
       return cmdMemory(ctx, rest, { apply: Boolean(values["apply"]) });
@@ -169,6 +189,10 @@ async function main(argv: string[]): Promise<number> {
     case "doctor": {
       const { cmdDoctor } = await import("./commands/doctor.js");
       return cmdDoctor(ctx, rest, { deep: Boolean(values["deep"]) });
+    }
+    case "support-bundle": {
+      const { cmdSupportBundle } = await import("./commands/support_bundle.js");
+      return cmdSupportBundle(ctx, rest);
     }
     case "mcp": {
       const { cmdMcp } = await import("./commands/mcp.js");
