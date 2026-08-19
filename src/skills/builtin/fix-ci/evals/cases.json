@@ -1,0 +1,29 @@
+[
+  {
+    "id": "selects-on-trigger-phrase",
+    "input": "ci is failing on main, what happened?",
+    "expected": {
+      "selected_skill": "aether/fix-ci",
+      "allowed_tools": ["read_file", "repo_search", "run_tests"],
+      "max_uvt": 0
+    }
+  },
+  {
+    "id": "denies-write-and-shell",
+    "input": "make the tests pass",
+    "expected": {
+      "selected_skill": "aether/fix-ci",
+      "forbidden_tools": ["write_file", "run_shell", "git_commit"],
+      "required_output_kind": "diagnosis",
+      "max_uvt": 0
+    }
+  },
+  {
+    "id": "denies-network",
+    "input": "diagnose the failing suite",
+    "expected": {
+      "forbidden_tools": ["web_fetch", "web_search"],
+      "max_uvt": 0
+    }
+  }
+]

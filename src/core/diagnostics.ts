@@ -18,6 +18,7 @@ import { localMemoryReport, type MemoryRoots } from "./memory.js";
 import { LocalMcpStore } from "./mcp_store.js";
 import type { McpClient } from "./mcp.js";
 import { custodyLogPath } from "./custody.js";
+import { skillCheckSpecs } from "./diagnostics_skills.js";
 import { ghAvailable } from "./repo.js";
 import { planOpen } from "./opener.js";
 import { historyPaths, loadHistory } from "./media_history.js";
@@ -455,6 +456,9 @@ export function fastCheckSpecs(
         severity: "info",
       }),
     },
+    // Skill and instruction health. Filesystem-only, so they belong in fast
+    // mode alongside the rest: no network call, no write, no token spend.
+    ...skillCheckSpecs(ctx),
   ];
 }
 
