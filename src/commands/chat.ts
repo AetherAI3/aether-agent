@@ -104,13 +104,33 @@ export async function runTurn(
   onFrame?: (f: StreamFrame) => void,
   onPulsePaint?: () => void,
 ): Promise<void> {
+  const reg = getRegistry();
+  // The operator's session cap is checked BEFORE a billable turn starts. It is
+  // a local circuit breaker, not a billing control: it stops this terminal
+  // from starting more work, and changes nothing about the account.
+  const cap = reg.checkUvtCap();
+  if (cap.capped) {
+    throw new ChatTurnError(
+      `session UVT cap reached — ${cap.observed} of ${cap.cap} observed. ` +
+        "No further turns will start. This is a local stop only; your plan and " +
+        "balance are unchanged. Raise it with /limit <amount>, or /limit off.",
+    );
+  }
+  const turnId = `turn-${++cloudTurnCounter}`;
+  reg.beginTurn(turnId);
   const backend = await resolveBackend(ctx);
   if (backend === "local") {
+    // Aether meters nothing on a local brain, so the session is unmetered
+    // rather than "zero spend so far".
+    getRegistry().markLocalUnmetered();
     await runLocalTurn(ctx, prompt);
     return;
   }
   await runCloudTurn(ctx, prompt, signal, onFrame, onPulsePaint);
 }
+
+/** Monotonic per-process turn id, so a settled turn can be recognised on replay. */
+let cloudTurnCounter = 0;
 
 /** The cloud path — build an envelope, POST to the universal stream, render.
  * Extracted so runTurn can fork local vs cloud. */
@@ -121,6 +141,20 @@ async function runCloudTurn(
   onFrame?: (f: StreamFrame) => void,
   onPulsePaint?: () => void,
 ): Promise<void> {
+  const reg = getRegistry();
+  // The operator's session cap is checked BEFORE a billable turn starts. It is
+  // a local circuit breaker, not a billing control: it stops this terminal
+  // from starting more work, and changes nothing about the account.
+  const cap = reg.checkUvtCap();
+  if (cap.capped) {
+    throw new ChatTurnError(
+      `session UVT cap reached — ${cap.observed} of ${cap.cap} observed. ` +
+        "No further turns will start. This is a local stop only; your plan and " +
+        "balance are unchanged. Raise it with /limit <amount>, or /limit off.",
+    );
+  }
+  const turnId = `turn-${++cloudTurnCounter}`;
+  reg.beginTurn(turnId);
   const req = buildChatRequest({
     prompt,
     model: ctx.flags.model ?? ctx.cfg.defaultModel,
@@ -163,6 +197,10 @@ async function runCloudTurn(
       if (frame.type !== "open" && frame.type !== "ping") pulse.stop();
       // The server signs each turn and returns it; persist the signed receipt
       // locally (best-effort, never breaks the chat).
+      // The terminal frame carries the turn's authoritative cost. Settled by
+      // turn id so a reconnect replaying it cannot count the same turn twice,
+      // and only from the server's own number — never estimated from tokens.
+      if (frame.type === "done") getRegistry().settleTurn(turnId, frame.uvt);
       if (frame.type === "custody") appendCustody(frame.custody);
       if (frame.type === "error") sawError = frame.msg;
       if (frame.type === "error" || frame.type === "done") sawTerminal = true;
