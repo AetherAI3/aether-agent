@@ -170,14 +170,28 @@ export async function limitSlash(ctx: AppContext, out: Writable, arg: string): P
 
   if (!arg.trim()) {
     const current = registry.uvtCap;
-    const spent = registry.uvtSpent;
+    const status = registry.usageStatus();
+    const observed = registry.uvtObserved;
+    // "spent: 0" used to print whether the session had cost nothing or whether
+    // no usage frame had ever arrived. Those are different answers, and only
+    // one of them is a measurement.
+    const spentLabel =
+      status === "local-unmetered"
+        ? "LOCAL — not metered by Aether"
+        : observed == null
+          ? "unknown — the server has reported no usage yet"
+          : String(observed);
     if (current == null) {
-      out.write("UVT cap: none (uncapped)\n");
+      out.write(`UVT cap: none (uncapped)   observed: ${spentLabel}\n`);
+    } else if (observed == null || status !== "observed") {
+      out.write(`UVT cap: ${theme.bold(String(current))}   observed: ${spentLabel}\n`);
+      out.write(theme.dim("  the cap cannot trip until the server reports usage.\n"));
     } else {
-      const remaining = Math.max(0, current - spent);
-      const pct = current > 0 ? Math.round((spent / current) * 100) : 0;
-      const bar = renderUvtBar(pct, 20);
-      out.write(`UVT cap: ${theme.bold(String(current))}   spent: ${spent}   remaining: ${remaining}  ${bar}\n`);
+      const remaining = Math.max(0, current - observed);
+      const pct = current > 0 ? Math.round((observed / current) * 100) : 0;
+      out.write(
+        `UVT cap: ${theme.bold(String(current))}   observed: ${observed}   remaining: ${remaining}  ${renderUvtBar(pct, 20)}\n`,
+      );
     }
     out.write(theme.dim("  /limit <amount>    set cap (e.g., /limit 50000)\n"));
     out.write(theme.dim("  /limit off         remove cap\n"));
@@ -197,7 +211,17 @@ export async function limitSlash(ctx: AppContext, out: Writable, arg: string): P
   }
 
   registry.setUvtCap(Math.floor(n));
-  out.write(`${theme.cyan("⚡ UVT cap set")}  ${theme.bold(String(Math.floor(n)))}  — agent will pause and ask permission if ceiling hit\n`);
+  // The old wording promised the agent would "pause and ask permission".
+  // Nothing enforced the cap at all, so that was never true. State what now
+  // actually happens, and be explicit that this is not a billing control.
+  out.write(`${theme.cyan("⚡ UVT cap set")}  ${theme.bold(String(Math.floor(n)))}\n`);
+  out.write(
+    theme.dim(
+      "  no further turn will START once the server-reported spend reaches it.\n" +
+        "  a turn already in flight may still complete and be billed.\n" +
+        "  this is a local stop only — your plan and balance are unchanged.\n",
+    ),
+  );
   syncAfter(ctx);
 }
 

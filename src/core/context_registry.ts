@@ -59,7 +59,32 @@ export class ContextRegistry {
   pins: PinnedEntry[] = [];
   drops: string[] = [];
   uvtCap: number | null = null;
-  uvtSpent = 0;
+
+  /**
+   * Session UVT actually reported by the server. null means NO authoritative
+   * frame has been seen — which is not the same as zero, and must never be
+   * rendered as it. Only the server knows what a turn cost; nothing here
+   * estimates it from token counts.
+   */
+  uvtObserved: number | null = null;
+
+  /** Turn ids already settled, so a replayed terminal frame cannot double-count. */
+  private readonly settledTurns = new Set<string>();
+
+  /** True once this session is known to run on a local, un-metered brain. */
+  private localUnmetered = false;
+
+  /**
+   * Back-compat accessor for the HUD, which needs a number. It reports 0 when
+   * usage is UNKNOWN, so anything that must tell those apart has to read
+   * uvtObserved instead.
+   */
+  get uvtSpent(): number {
+    return this.uvtObserved ?? 0;
+  }
+  set uvtSpent(value: number) {
+    this.uvtObserved = value;
+  }
   planPath: string | null = null;
   sessionLabel = "untitled";
 
@@ -97,6 +122,33 @@ export class ContextRegistry {
     this.uvtCap = amount;
   }
 
+  /** Mark a turn as in flight. Idempotent. */
+  beginTurn(turnId: string): void {
+    this.settledTurns.delete(turnId);
+  }
+
+  /**
+   * Record a turn's authoritative cost, once. The terminal frame carries the
+   * turn total, and a reconnect can replay it, so settling is keyed by turn id
+   * rather than accumulated blindly.
+   */
+  settleTurn(turnId: string, uvt: number): void {
+    if (this.settledTurns.has(turnId)) return;
+    if (!Number.isFinite(uvt) || uvt < 0) return;
+    this.settledTurns.add(turnId);
+    this.uvtObserved = (this.uvtObserved ?? 0) + uvt;
+  }
+
+  /** This session runs on a local brain, so Aether meters nothing. */
+  markLocalUnmetered(): void {
+    this.localUnmetered = true;
+  }
+
+  usageStatus(): "unknown" | "observed" | "local-unmetered" {
+    if (this.localUnmetered) return "local-unmetered";
+    return this.uvtObserved == null ? "unknown" : "observed";
+  }
+
   /** Track a temporary file so /purge can clean it up. */
   tempFiles: string[] = [];
 
@@ -113,7 +165,8 @@ export class ContextRegistry {
     this.pins = [];
     this.drops = [];
     this.uvtCap = null;
-    this.uvtSpent = 0;
+    this.uvtObserved = null;
+    this.settledTurns.clear();
 
     let removedFiles = 0;
     for (const f of this.tempFiles) {
@@ -124,11 +177,40 @@ export class ContextRegistry {
     return { clearedPins, removedFiles };
   }
 
-  /** Check if UVT cap is exceeded. Returns remaining or -1 if exceeded. */
-  checkUvtCap(): { capped: boolean; remaining: number; cap: number | null } {
-    if (this.uvtCap == null) return { capped: false, remaining: Infinity, cap: null };
-    const remaining = this.uvtCap - this.uvtSpent;
-    return { capped: remaining <= 0, remaining: Math.max(0, remaining), cap: this.uvtCap };
+  /**
+   * Is the operator's session cap reached?
+   *
+   * This is a local circuit breaker, not a billing ledger. The server remains
+   * the billing authority; tripping this stops the terminal from starting
+   * another billable turn, and changes nothing about the account.
+   *
+   * Two states deliberately do NOT trip it: an unmetered local session (there
+   * is no Aether spend to cap) and a session where no authoritative usage has
+   * been seen (there is no evidence the cap was reached, and guessing would
+   * either block work that cost nothing or wave through work that cost a lot).
+   */
+  checkUvtCap(): {
+    capped: boolean;
+    /** null when there is no measured spend to subtract — NOT the full cap. */
+    remaining: number | null;
+    cap: number | null;
+    observed: number | null;
+    status: "unknown" | "observed" | "local-unmetered";
+  } {
+    const status = this.usageStatus();
+    const observed = this.uvtObserved;
+    // Unknown spend yields a null headroom, never the whole cap. Reporting the
+    // full cap as remaining is the same false zero in a different costume: it
+    // tells the user they have their entire budget left when the truth is that
+    // nobody has measured any of it.
+    if (status !== "observed" || observed == null) {
+      return { capped: false, remaining: null, cap: this.uvtCap, observed, status };
+    }
+    if (this.uvtCap == null) {
+      return { capped: false, remaining: null, cap: null, observed, status };
+    }
+    const remaining = this.uvtCap - observed;
+    return { capped: remaining <= 0, remaining: Math.max(0, remaining), cap: this.uvtCap, observed, status };
   }
 
   // ── HUD methods ──
