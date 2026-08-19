@@ -104,20 +104,6 @@ export async function runTurn(
   onFrame?: (f: StreamFrame) => void,
   onPulsePaint?: () => void,
 ): Promise<void> {
-  const reg = getRegistry();
-  // The operator's session cap is checked BEFORE a billable turn starts. It is
-  // a local circuit breaker, not a billing control: it stops this terminal
-  // from starting more work, and changes nothing about the account.
-  const cap = reg.checkUvtCap();
-  if (cap.capped) {
-    throw new ChatTurnError(
-      `session UVT cap reached — ${cap.observed} of ${cap.cap} observed. ` +
-        "No further turns will start. This is a local stop only; your plan and " +
-        "balance are unchanged. Raise it with /limit <amount>, or /limit off.",
-    );
-  }
-  const turnId = `turn-${++cloudTurnCounter}`;
-  reg.beginTurn(turnId);
   const backend = await resolveBackend(ctx);
   if (backend === "local") {
     // Aether meters nothing on a local brain, so the session is unmetered
