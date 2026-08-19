@@ -143,9 +143,22 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
         repoSpec = parseRepoSpec(opts.repo);
         const co = ensureLocalClone(repoSpec);
         repoRoot = co.dir;
-        process.stderr.write(
-          `⎇ repo ${repoSpec.full} ${co.cloned ? "(cloned)" : "(reusing local clone)"}\n  ${co.dir}\n`,
-        );
+        // Say what actually happened to the mirror. "reusing local clone" was
+        // equally true of a mirror last fetched a week ago, which is exactly the
+        // case a user needs told rather than hidden behind a reassuring word.
+        const tip = co.freshness.remoteTip ? ` @ ${co.freshness.remoteTip.slice(0, 7)}` : "";
+        const how = co.cloned
+          ? "(cloned)"
+          : co.freshness.state === "fresh"
+            ? "(fetched)"
+            : `(NOT REFRESHED — ${co.freshness.reason ?? "reason unknown"})`;
+        process.stderr.write(`⎇ repo ${repoSpec.full} ${how}${tip}\n  ${co.dir}\n`);
+        if (co.freshness.state !== "fresh") {
+          process.stderr.write(
+            "  ! this worktree will branch off whatever the mirror already had;\n" +
+              "    its base is not known to match the remote.\n",
+          );
+        }
       } catch (err) {
         process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
         return 1;
