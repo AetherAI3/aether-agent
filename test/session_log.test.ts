@@ -85,3 +85,30 @@ test("SessionLog redacts credentials and omits prompt, command, and memory conte
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("SessionLog keeps file paths readable — 'pat' must not swallow 'path'", () => {
+  // Bare /pat/ matched path/PATH/patch/pattern, so every edited file in the
+  // record read "[REDACTED]" and a session log could no longer say what a run
+  // changed. Credential-shaped keys must still be redacted.
+  const root = mkdtempSync(join(tmpdir(), "aether-log-path-"));
+  try {
+    const log = new SessionLog(
+      { task: "t", model: "test", poolGb: 1, brain: "local", cwd: root },
+      TS,
+      root,
+    );
+    log.event({ type: "tool_call", id: "c1", name: "write_file", args: {
+      path: "src/parse.ts",
+      pattern: "^export",
+      pat: "ghp_super_secret_value",
+      gh_pat: "ghp_other_secret_value",
+    } }, TS);
+    log.close("ok", TS);
+    const raw = readFileSync(join(log.dir, "events.jsonl"), "utf8");
+    assert.match(raw, /src\/parse\.ts/);
+    assert.match(raw, /\^export/);
+    assert.doesNotMatch(raw, /ghp_super_secret_value|ghp_other_secret_value/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
