@@ -9,7 +9,7 @@ operations and incident response.
 
 | Stage | Asset | Trust boundary | State owned here |
 |---|---|---|---|
-| Source | `DBarr3/aether-agent` on GitHub | Maintainer and pull-request controls | Git history, workflow definitions, release tags |
+| Source | `AetherAI3/aether-agent` on GitHub | Maintainer and pull-request controls | Git history, workflow definitions, release tags |
 | Verification | GitHub-hosted Linux and Windows runners | Ephemeral CI identities with explicit permissions | Test logs, CodeQL results, 90-day SBOM artifacts |
 | Release | Protected `npm-production` GitHub environment | Required reviewer plus release-scoped npm credential | Attested npm tarball, CycloneDX SBOM, provenance |
 | Distribution | npm package `aether-agents` | Public npm registry | Immutable published versions and dist-tags |

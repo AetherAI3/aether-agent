@@ -15,8 +15,9 @@ aether                                  # no args = interactive REPL
 
 <!-- CLI-COMMANDS:START -->
 `help`, `agent`, `chat`, `resume`, `run`, `models`, `agents`, `auth`,
-`github`, `vault`, `workflow`, `memory`, `image`, `video`, `output`, `audit`,
-`receipt`, `doctor`, `mcp`, `config`
+`github`, `vault`, `workflow`, `memory`, `skills`, `capabilities`, `image`,
+`video`, `output`, `audit`, `receipt`, `doctor`, `support-bundle`, `mcp`,
+`config`
 <!-- CLI-COMMANDS:END -->
 
 <!-- SLASH-COMMANDS:START -->
@@ -65,14 +66,15 @@ suggests `aether auth` and exits `2` instead of spending a turn on "auht".
 
 ### `aether code "<task>"` — autonomous coding agent
 One host loop drives a pluggable brain: cloud (UVT-metered) by default,
-`--local` for the Python/Ollama brain. The host renders every event, executes
+`--local` for the built-in Ollama brain. The host renders every event, executes
 every tool call locally, and verifies the result itself — the final status is
 derived from your test command's exit code, never the brain's self-report.
 Every run ends with a verdict line: `✓ ok · 4 files changed · tests green · 3m12s`.
 
 | Flag | Meaning |
 |---|---|
-| `--local` | Use the local brain (Python/Ollama) instead of the cloud. |
+| `--local` | Use the built-in offline Ollama brain instead of the cloud. |
+| `--resume <id\|file>` | Continue a prior session id, or a handoff file from another machine. |
 | `--pool <gb>` | Context pool size in GB (status-bar reach = pool × 233M tokens). |
 | `--effort <t>` | Effort tier: `LOW` \| `MED` \| `HIGH` \| `MAX` \| `ULTRA` \| `CODEPRO` (overrides the saved `/effort` dial). |
 | `--test-cmd <c>` | Command the verification gate runs (unverified without it). |
@@ -90,16 +92,35 @@ aether run kronus "audit this service for race conditions and fix them"
 ```
 > Orchestrators are gated to paid tiers. Neo is available on Solo+; Kronus on Pro+.
 
-### `aether resume [id]` — replay a session
+### `aether resume [id | export [id]]` — replay or carry a session
 Replays a prior local coding session's transcript from `~/.aether-agent/logs/`.
-With no id, resumes the most recent session.
+With no id, uses the most recent session in this workspace.
 ```bash
-aether resume                 # the latest session
-aether resume <session-id>    # a specific session
-aether agent --resume <id> "<task>"   # resume, then continue working
+aether resume                          # replay the latest session
+aether resume <session-id>             # replay a specific one
+aether resume export                   # write ./aether-handoff.json
+aether resume export <id> --out h.json # …from a specific session, to a path
 ```
+`export` writes a **handoff**: one portable JSON file carrying the task, the
+model that ran it, the verify gate's verdict, the failing-test count, the files
+the run changed, the verification command, and the repository identity (origin
+remote, branch, HEAD). It carries no file contents, no shell commands, and no
+absolute paths, so it can be copied to another checkout, machine, or OS.
+
+Continue from either form:
+```bash
+aether agent --resume <session-id> "<what to do next>"   # same machine
+aether agent --resume ./handoff.json                     # anywhere else
+aether agent --resume ./handoff.json --model <other>     # …on another model
+```
+With no new task, the run continues the **original** task. Either way the prior
+context is summarized into a continuation brief that the brain reads before its
+instruction — you never re-paste the conversation. See
+[`docs/demo/handoff.md`](docs/demo/handoff.md) for a runnable end-to-end proof.
+
 > Local-first: sessions are read from disk, so resume works offline. When you stop
 > a coding run with Ctrl-C, the exact `aether agent --resume <id>` command is printed.
+> A session id is workspace-scoped; a handoff file deliberately is not.
 
 ### `aether models [use <id>]` — list / pick a model
 - `aether models` — list every model **and** orchestrator visible to your tier.
@@ -200,6 +221,47 @@ aether doctor --json               # schema-versioned report for automation
 
 `--deep` still means the read-only report it always meant; it now points at
 `--live` for the end-to-end proof.
+
+### `aether skills <subcommand>` — inspect, trust, and manage agent skills
+
+Skills are packaged instructions the agent can load. Built-in skills ship with
+the package; user skills live under your config directory; project skills live
+in the repository you are working in.
+
+```bash
+aether skills list                 # every discovered skill, with scope and trust
+aether skills show <id>            # one skill: manifest, declared tools, digest
+aether skills check [--all]        # validate manifests and report index errors
+aether skills trust <id>           # approve a project skill at its current digest
+aether skills lock                 # pin discovered project skills to a lockfile
+```
+
+**Project skills are untrusted until you approve them.** Trust is bound to the
+skill's content digest, so editing a trusted skill revokes that trust until you
+approve the new digest. A skill declaration narrows what the agent may do — it
+never grants a tool the host would otherwise refuse.
+
+### `aether capabilities [--available]` — what this build can actually do
+
+Prints the capability contract: tools, their side-effect class, and the
+permission each requires. `--available` additionally reports what is usable in
+your current session rather than what exists in principle.
+
+The command prefers the server manifest and falls back to a packaged snapshot
+when the server cannot be reached. It says which one it used, and why, rather
+than presenting stale data as live.
+
+### `aether support-bundle` — a redacted diagnostic archive
+
+Writes a `.tar` of metadata-only diagnostics for troubleshooting: a fast doctor
+report, runtime facts, sanitized config, and skill and instruction inventories.
+
+It carries counts, ids and digests — never prompts, file contents, tokens,
+environment values or raw command text. Every entry is scanned before the
+archive is finalized; if a secret is detected the bundle is refused rather than
+written, and an interrupted run leaves no partial file behind.
+
+Like `aether doctor`, it makes no network call and spends nothing.
 
 ### `aether mcp [list|doctor|repair]` — manage and diagnose MCP servers
 With no subcommand (in a TTY), opens the same interactive MCP manager as the
@@ -381,6 +443,10 @@ Requires an active orchestrator — switch with `/agent neo` or `/agent kronus` 
 | `AETHER_LOGIN_URL` | `https://aethersystems.net/platform` | Page `aether auth login` opens. |
 | `AETHER_TOKEN` | *(unset)* | Inject a session token (CI / headless / embedding). |
 | `AETHER_CONFIG_DIR` | `~/.config/aether` | Config + token + REPL-history directory. |
+| `AETHER_LOG_DIR` | `~/.aether-agent/logs` | Where session logs (and therefore `aether resume`) live. |
+| `AETHER_BACKEND` | `auto` | `local` \| `cloud` \| `auto` — overrides the config `backend`. |
+| `AETHER_LOCAL_BRAIN` | *(unset)* | `python` runs the separately-installed Unlimited-Context brain instead of the built-in Ollama one. |
+| `OLLAMA_HOST` | `http://localhost:11434` | Where the offline brain looks for Ollama. |
 | `AETHER_STREAM_TIMEOUT_MS` | `120000` | Stream open/idle timeout (ms). `0` disables it. |
 | `AETHER_NO_ANIM` | *(unset)* | `1` disables all animated status lines and the thinking pulse. |
 | `NO_COLOR` | *(unset)* | Any value disables ANSI colors (https://no-color.org). |
