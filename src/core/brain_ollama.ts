@@ -181,7 +181,10 @@ export class OllamaBrain implements Brain {
         type: "done",
         ok,
         result: result || (ok ? "done" : "stopped"),
-        remaining: ok ? 0 : 1,
+        // The brain does not count failing tests — the host's verify gate does,
+        // from a real test run. Reporting a placeholder 1 here made an
+        // unreachable-Ollama run print "1 test failing" when no test had run.
+        remaining: 0,
         reason,
       });
       this.queue.end();
