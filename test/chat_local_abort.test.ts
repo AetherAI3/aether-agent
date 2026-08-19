@@ -1,0 +1,98 @@
+// The REPL builds an AbortController per turn and aborts it on Ctrl+C, but
+// runTurn dropped the signal on the local branch — it was accepted as a
+// parameter and simply not passed on. Ctrl+C therefore did nothing to a local
+// turn: the abort fired and nothing was listening.
+//
+// These drive runLocalTurn with an injected brain, so no Ollama server, no
+// child process and no real tool execution is involved.
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { runLocalTurn } from "../src/commands/chat.js";
+import type { AppContext } from "../src/core/context.js";
+import type { Brain, TaskCommand } from "../src/core/brain.js";
+import type { BrainEvent } from "../src/core/brain_protocol.js";
+import type { ToolResult } from "../src/core/tool_executor.js";
+
+/**
+ * A brain that emits one tool_call and then parks forever, exactly like the
+ * real one waiting on sendToolResult. close() is the only thing that frees it,
+ * so a turn that ignores the abort signal never returns.
+ */
+class ParkingBrain implements Brain {
+  closed = false;
+  private release: (() => void) | null = null;
+
+  run(_task: TaskCommand): AsyncIterable<BrainEvent> {
+    const self = this;
+    return (async function* (): AsyncGenerator<BrainEvent> {
+      yield { type: "tool_call", id: "call-1", name: "read_file", args: { path: "a.ts" } };
+      await new Promise<void>((resolve) => {
+        if (self.closed) resolve();
+        else self.release = resolve;
+      });
+      yield { type: "done", ok: true, result: "done", remaining: 0, reason: "" };
+    })();
+  }
+
+  sendToolResult(_id: string, _result: ToolResult): void {}
+  control(): void {}
+  close(): void {
+    this.closed = true;
+    this.release?.();
+    this.release = null;
+  }
+}
+
+function ctx(): AppContext {
+  return {
+    cfg: { permissionMode: "skip", autoApply: true },
+    flags: { cwd: process.cwd(), yes: true, json: true },
+    confirm: async () => true,
+  } as unknown as AppContext;
+}
+
+const noExec = {
+  executeAsync: async (): Promise<ToolResult> => ({ output: "ok", exitCode: 0 }),
+};
+
+test("aborting a local turn closes the brain instead of waiting the turn out", async () => {
+  const brain = new ParkingBrain();
+  const controller = new AbortController();
+  const turn = runLocalTurn(ctx(), "do a thing", controller.signal, { brain, exec: noExec });
+
+  // Let the turn reach the parked tool call, then Ctrl+C.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  controller.abort();
+
+  // Without the signal wired through, this never settles.
+  await turn;
+  assert.equal(brain.closed, true, "abort must reach the brain");
+});
+
+test("a signal already aborted stops the turn rather than starting it", async () => {
+  const brain = new ParkingBrain();
+  const controller = new AbortController();
+  controller.abort();
+  await runLocalTurn(ctx(), "do a thing", controller.signal, { brain, exec: noExec });
+  assert.equal(brain.closed, true);
+});
+
+test("an aborted local turn is not reported as a failed turn", async () => {
+  // A user-requested stop is not an error, and must not surface as one.
+  const brain = new ParkingBrain();
+  const controller = new AbortController();
+  const turn = runLocalTurn(ctx(), "do a thing", controller.signal, { brain, exec: noExec });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  controller.abort();
+  await assert.doesNotReject(() => turn);
+});
+
+test("without a signal a local turn still completes normally", async () => {
+  const brain = new ParkingBrain();
+  const turn = runLocalTurn(ctx(), "do a thing", undefined, { brain, exec: noExec });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  brain.close(); // stand in for the real brain finishing its wait
+  await turn;
+  assert.equal(brain.closed, true);
+});
