@@ -2,16 +2,18 @@
 
 # Aether Agent
 
-**A coding agent for your terminal — runs on hosted frontier models or fully offline on your own machine.**
+**Start a task on one model. Finish it on another, on another machine.
+Your tests decide when it's done.**
 
 [![CI](https://github.com/AetherAI3/aether-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AetherAI3/aether-agent/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-Apache--2.0-06b6d4)](LICENSE) [![Node](https://img.shields.io/badge/node-%E2%89%A524-14b8a6)](https://nodejs.org) [![TypeScript](https://img.shields.io/badge/TypeScript-7-3178c6)](https://www.typescriptlang.org/) [![Release notes](https://img.shields.io/badge/release-notes-7c3aed)](RELEASE_NOTES.md)
 
-**Aether Agent is in beta.** Updates are shipping quickly.
 ```bash
-npm i -g aether-agents --ignore-scripts     # or run once: npx --ignore-scripts aether-agents
+npm i -g aether-agents --ignore-scripts    # Node ≥ 24 · zero runtime dependencies
+aether auth login                          # …or skip it and run on your own Ollama
+aether agent "make the failing tests pass"
 ```
 
-[Install](#install-in-three-moves) · [Models & pricing](#models--pricing) · [Commands](#commands) · [Security](#security) · [Platform](#part-of-the-aether-platform) · [Release notes](RELEASE_NOTES.md)
+[Carry the work](#carry-the-work-across-models-and-machines) · [Install](#install-in-three-moves) · [Models & pricing](#models--pricing) · [Commands](#commands) · [Security](#security) · [Platform](#part-of-the-aether-platform) · [Release notes](RELEASE_NOTES.md)
 
 <a href="https://app.aethersystems.net/">
 <img width="760" alt="Aether Agent — terminal coding session" src="https://github.com/user-attachments/assets/f7a71cbb-6be2-41ea-b2a4-35c7c0d889d6" />
@@ -19,7 +21,50 @@ npm i -g aether-agents --ignore-scripts     # or run once: npx --ignore-scripts 
 
 </div>
 
-It scans, plans, edits, and runs your tests — in your repo, on your terms. Verification is ground truth: the agent re-runs your test command and reads the exit code itself, so "done" is never the model's word. And with **QOPC memory** it learns from what you accept, revise, or discard — measurably better the more you use it, no config, no fine-tuning.
+Aether Agent scans, plans, edits, and runs your tests — in your repo, on your terms.
+Two things make it different from the rest of the terminal-agent shelf:
+
+- **Verification is ground truth.** The agent re-runs *your* test command at the end
+  and reads the exit code itself. A model that says "done" over a red tree gets
+  marked `incomplete`, and the process exits non-zero. "Done" is never the model's word.
+- **The work outlives the session.** Every run leaves a local record. `aether resume
+  export` turns that record into a single portable file — copy it to another checkout,
+  another machine, another OS, and `aether agent --resume <file>` picks the thread up
+  on whatever model you want, with no chat history to re-paste.
+
+**Aether Agent is in beta.** Updates are shipping quickly.
+
+## Carry the work across models and machines
+
+```bash
+# machine A — start it on a hosted frontier model
+aether agent --model opus5 "make the slugify tests pass"
+aether resume export --out handoff.json        # ⇄ one file: task, verdict, files, repo
+
+# machine B (or the same one, offline) — continue on a different brain
+aether agent --local --model qwen2.5-coder:7b --resume handoff.json
+```
+
+The handoff is a summary, not a transcript: the task, which model ran it, the verify
+gate's verdict, how many tests were still failing, the files that changed, and the
+repository it belongs to. Nothing is keyed to an absolute path, so the receiving
+checkout does not have to live where the work started — and no file contents, shell
+commands, or credential-shaped values ride along. The next model reads it as a brief
+and continues; you never re-paste the conversation.
+
+Run the whole thing yourself, end to end, in about five seconds:
+
+```bash
+npm run demo:handoff       # two sessions, two models, two checkouts, one verify gate
+```
+
+The demo builds a throwaway git repo with a real failing test, runs the real CLI on
+model A, exports the handoff, **deletes machine A's checkout and logs**, and finishes
+the job in a second checkout on model B. By default the model is a scripted local stub
+so the run is deterministic and needs no download or account; `AETHER_DEMO_REAL=1`
+runs the identical script against real Ollama models. Either way the last word belongs
+to `node --test`, run independently of the agent. See
+[`docs/demo/handoff.md`](docs/demo/handoff.md).
 
 ## Install in three moves
 
@@ -39,9 +84,12 @@ ollama pull qwen2.5-coder:7b   # 03 — or go offline: no account, no network
 aether agent --local           #      …same terminal, nothing leaves the machine
 ```
 
-`aether agent` opens the REPL — chat with the model, slash-commands at hand, the agent edits files and runs your tests **in the same session**. Both brains run through the same host loop, render, tools, and commands — switching just swaps the transport. On the hosted path your code stays local and only the prompt + context you send leaves; on `--local`, nothing leaves at all. The local brain runs on **[Unlimited Context](https://github.com/AetherAI3/Unlimited-Context-LLM)** — Aether's open-source (Apache-2.0) memory engine that gives any Ollama model a billion-token working memory.
 
-> Prefer the installer UI? Download [`install.sh`](install.sh) or [`install.ps1`](install.ps1), inspect it, then run it locally. Set `AETHER_VERSION=0.1.0` (shell) or `-Version 0.1.0` (PowerShell) to pin an exact release. The canonical npm command above verifies registry integrity and disables lifecycle scripts; there are no native or runtime dependencies and no daemon.
+`aether agent` opens the REPL — chat with the model, slash-commands at hand, the agent edits files and runs your tests **in the same session**. Both brains run through the same host loop, render, tools, and commands — switching just swaps the transport. On the hosted path your code stays local and only the prompt + context you send leaves; on `--local`, nothing leaves at all. The offline brain is built into the package: it talks straight to Ollama over its OpenAI-compatible endpoint, with the same eight tools and the same permission gate, so `--local` needs nothing beyond Node and `ollama serve`.
+
+> Running the separate Python brain instead — Aether's open-source (Apache-2.0) **[Unlimited Context](https://github.com/AetherAI3/Unlimited-Context-LLM)** engine, which gives an Ollama model a billion-token working memory — is opt-in with `AETHER_LOCAL_BRAIN=python` once you have installed it. It is not bundled with the npm package.
+
+> Prefer the installer UI? Download [`install.sh`](install.sh) or [`install.ps1`](install.ps1), inspect it, then run it locally. Set `AETHER_VERSION=0.2.0` (shell) or `-Version 0.2.0` (PowerShell) to pin an exact release. The canonical npm command above verifies registry integrity and disables lifecycle scripts; there are no native or runtime dependencies and no daemon.
 
 ## Models & pricing
 
@@ -98,7 +146,9 @@ Inside the REPL, `/` commands control the whole session — type `/help` to see 
 aether agent                      # the main thing — open the REPL and chat
 aether agent --local              # same REPL on a local Ollama brain (offline)
 aether models                     # list models + orchestrators
-aether resume                     # replay / continue the last session
+aether resume                     # replay the last session in this workspace
+aether resume export              # write a portable handoff for another machine
+aether agent --resume <id|file>   # continue it — on any model, with the context
 ```
 
 Flags you can set when launching the REPL (or pass with an inline task `aether agent "<task>"` for one-shot autonomous mode):
@@ -108,7 +158,8 @@ Flags you can set when launching the REPL (or pass with an inline task `aether a
 | `--local` | Local Ollama brain instead of the hosted API. |
 | `--model <id>` | Force a model by key (`--model opus5`, `--model gpt56_terra`, or an Ollama tag with `--local`). |
 | `--effort <tier>` | Budget ceiling: `LOW` · `MED` · `MAX` · `ULTRA` · `CODEPRO`. |
-| `--test-cmd <cmd>` | Command the verification gate runs (default `pytest -q`). |
+| `--test-cmd <cmd>` | Command the verification gate runs. With none, a run ends `unverified` — never `ok`. |
+| `--resume <id\|file>` | Continue a prior session, or a handoff file from another machine. |
 | `--worktree` | Fresh git worktree on an auto-named branch (isolated). |
 | `--repo <owner/name>` | Clone a GitHub repo via your own `gh`/`git` auth, work it in a worktree. |
 | `-y`, `--yes` | Auto-confirm prompts (non-interactive). |
