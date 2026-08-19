@@ -155,10 +155,27 @@ test("fast doctor is local, ordered, fail-soft, and content-redacted", async () 
     "custody.receipts",
     "actions.dispatch",
     "predator.readiness",
+
+    "skills.index",
+
+    "skills.lock",
+
+    "skills.trust",
+
+    "skills.evals",
+
+    "instructions.graph",
+
+    "instructions.conflicts",
   ]);
   // The whole point of fast mode: nothing remote was contacted, and the report
   // says so instead of implying otherwise.
   assert.deepEqual(counters, { backend: 0, broker: 0 });
+  // Skill and instruction checks are filesystem-only: they must declare
+  // reachable as n/a rather than borrowing a pass they never earned.
+  for (const id of ["skills.index", "instructions.graph"]) {
+    assert.equal(report.checks.find((check) => check.id === id)?.reachable.state, "na", id);
+  }
   assert.equal(
     report.checks.find((check) => check.id === "agent.transport")?.reachable.state,
     "not-checked",
