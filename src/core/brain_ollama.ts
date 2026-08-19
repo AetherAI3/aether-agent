@@ -15,7 +15,8 @@
 import type { Brain, TaskCommand } from "./brain.js";
 import { EventQueue } from "./brain.js";
 import type { BrainEvent } from "./brain_protocol.js";
-import { TOOLS } from "./brain_protocol.js";
+import { TOOL_DEFINITIONS } from "./tool_registry.js";
+import { TOOLS, type ToolName } from "./brain_protocol.js";
 import type { ToolResult } from "./tool_executor.js";
 import {
   ollamaChat,
@@ -47,7 +48,7 @@ const DEFAULT_MAX_TURNS = 24;
 // The 8 canonical tools, advertised to the model as OpenAI function schemas. The
 // ONE implementation lives host-side in tool_executor.ts; this only describes
 // them so the model can request them. Names are pinned by TOOLS (protocol v3).
-const TOOL_SCHEMAS: readonly ToolSchema[] = buildToolSchemas();
+const TOOL_SCHEMAS: readonly ToolSchema[] = ollamaToolSchemas();
 
 const SYSTEM_PERSONA =
   "You are Aether Code, an autonomous coding agent running locally. You work in " +
@@ -60,9 +61,11 @@ export class OllamaBrain implements Brain {
   private readonly queue = new EventQueue();
   private readonly opts: OllamaBrainOptions;
   private readonly chat: OllamaChatFn;
-  // Pending tool result: the loop awaits this promise after emitting a
-  // tool_call; sendToolResult resolves it (mirrors LocalBrain's stdin reply).
-  private pending: ((r: ToolResult) => void) | null = null;
+  // Outstanding tool calls, keyed by the id the loop emitted. Keyed rather than
+  // anonymous: a single resolver accepted any result for whatever call happened
+  // to be waiting, so a duplicate vanished silently and a result carrying the
+  // wrong id was indistinguishable from the right one.
+  private readonly pending = new Map<string, (r: ToolResult) => void>();
   private aborted = false;
 
   constructor(opts: OllamaBrainOptions = {}) {
@@ -77,34 +80,53 @@ export class OllamaBrain implements Brain {
     return this.queue.drain();
   }
 
-  sendToolResult(_id: string, result: ToolResult): void {
-    if (this.pending) {
-      const resolve = this.pending;
-      this.pending = null;
-      resolve(result);
+  sendToolResult(id: string, result: ToolResult): void {
+    const resolve = this.pending.get(id);
+    if (!resolve) {
+      // Unknown id, or a second result for a call already settled. Either way
+      // the host and the brain disagree about what is in flight; say so rather
+      // than letting the loop advance on a result it never asked for.
+      this.queue.push({ type: "error", msg: `tool result for unknown or already-settled call ${id}` });
+      return;
     }
+    this.pending.delete(id);
+    resolve(result);
   }
 
-  control(_action: "pause" | "resume" | "steer", _note?: string): void {
-    // Steering is not yet wired for the local-Ollama brain (single-pass loop).
-    // The seam exists so the host can call it uniformly; it is a safe no-op.
+  control(action: "pause" | "resume" | "steer", note?: string): void {
+    // This brain runs a single-pass loop with no interruption point, so it
+    // cannot honour pause, resume or steer. Silently returning made the host
+    // believe the instruction landed; a dropped steer then reads as the model
+    // ignoring the user. Report it instead of accepting it.
+    this.queue.push({
+      type: "monologue",
+      text:
+        `[${action} is not supported by the local Ollama brain — the instruction was not applied` +
+        (note ? `: "${note}"` : "") +
+        "]",
+      depth: 0,
+    });
   }
 
   close(): void {
     this.aborted = true;
-    // Unblock a loop parked on a tool result so it can observe the abort.
-    if (this.pending) {
-      const resolve = this.pending;
-      this.pending = null;
+    // Unblock every loop parked on a tool result so it can observe the abort.
+    // Drained as a set so no waiter can be stranded by an early return.
+    for (const [id, resolve] of this.pending) {
+      this.pending.delete(id);
       resolve({ output: "[aborted]", exitCode: 130 });
     }
     this.queue.end();
   }
 
-  /** Await the host's reply to the tool_call we just emitted. */
-  private waitForTool(): Promise<ToolResult> {
+  /**
+   * Register a waiter for a tool call BEFORE the event is emitted. Registering
+   * afterwards only worked because the consumer resumes on a microtask; a host
+   * that replied synchronously would have found no waiter and been rejected.
+   */
+  private waitForTool(id: string): Promise<ToolResult> {
     return new Promise<ToolResult>((resolve) => {
-      this.pending = resolve;
+      this.pending.set(id, resolve);
     });
   }
 
@@ -158,8 +180,9 @@ export class OllamaBrain implements Brain {
         for (const call of calls) {
           if (this.aborted) break;
           const args = parseArgs(call.function.arguments);
+          const waiting = this.waitForTool(call.id);
           this.queue.push({ type: "tool_call", id: call.id, name: call.function.name, args });
-          const toolResult = await this.waitForTool();
+          const toolResult = await waiting;
           messages.push({
             role: "tool",
             tool_call_id: call.id,
@@ -181,7 +204,10 @@ export class OllamaBrain implements Brain {
         type: "done",
         ok,
         result: result || (ok ? "done" : "stopped"),
-        remaining: ok ? 0 : 1,
+        // The brain does not count failing tests — the host's verify gate does,
+        // from a real test run. Reporting a placeholder 1 here made an
+        // unreachable-Ollama run print "1 test failing" when no test had run.
+        remaining: 0,
         reason,
       });
       this.queue.end();
@@ -220,24 +246,56 @@ function parseArgs(raw: string): Record<string, unknown> {
   }
 }
 
-/** Minimal OpenAI function schema per canonical tool (parameters left open). */
-function buildToolSchemas(): readonly ToolSchema[] {
-  const descriptions: Record<string, string> = {
-    read_file: "Read a workspace file. args: {path}",
-    write_file: "Write/overwrite a workspace file. args: {path, content}",
-    run_shell: "Run a shell command in the workspace. args: {command}",
-    run_tests: "Run the project's test command. args: {command?}",
-    repo_search: "Grep the repository for a string. args: {query}",
-    git_commit: "Stage all changes and commit. args: {message}",
-    web_search: "Search the web. args: {query, limit?}",
-    web_fetch: "Fetch a web page as readable text. args: {url}",
+/**
+ * Model-facing tool schemas, GENERATED from TOOL_DEFINITIONS.
+ *
+ * These were hand-written, with `parameters: { properties: {}, additionalProperties: true }`
+ * — so the model was told nothing about argument names, types, required-ness or
+ * bounds, and the only description of the real shapes lived in free text that
+ * nothing kept in step with the validator. Generating them means the host's
+ * validator and the model's contract cannot drift.
+ */
+export function ollamaToolSchemas(): readonly ToolSchema[] {
+  const summaries: Readonly<Record<ToolName, string>> = {
+    read_file: "Read a workspace file.",
+    write_file: "Write or overwrite a workspace file.",
+    run_shell: "Run a shell command in the workspace.",
+    run_tests: "Run the project's test command.",
+    repo_search: "Grep the repository for a string.",
+    git_commit: "Stage this run's changes and commit them.",
+    web_search: "Search the web.",
+    web_fetch: "Fetch a web page as readable text.",
   };
-  return TOOLS.map((name) => ({
-    type: "function" as const,
-    function: {
-      name,
-      description: descriptions[name] ?? name,
-      parameters: { type: "object", properties: {}, additionalProperties: true },
-    },
-  }));
+
+  return TOOLS.map((name) => {
+    const definition = TOOL_DEFINITIONS[name];
+    const properties: Record<string, Record<string, unknown>> = {};
+    const required: string[] = [];
+
+    for (const [argument, spec] of Object.entries(definition.args)) {
+      properties[argument] =
+        spec.type === "integer"
+          ? { type: "integer", minimum: spec.min, maximum: spec.max }
+          // maxBytes is a byte budget; as maxLength it is a ceiling in
+          // characters, which is conservative for any multi-byte input.
+          : { type: "string", maxLength: spec.maxBytes };
+      if (spec.required !== false) required.push(argument);
+    }
+
+    return {
+      type: "function" as const,
+      function: {
+        name,
+        description: `${summaries[name]} side effect: ${definition.sideEffect}.`,
+        parameters: {
+          type: "object",
+          properties,
+          required,
+          // The host rejects unknown arguments, so advertising them as allowed
+          // only invites the model to send something that will be refused.
+          additionalProperties: false,
+        },
+      },
+    };
+  });
 }

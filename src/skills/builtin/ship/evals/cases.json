@@ -1,0 +1,19 @@
+[
+  {
+    "id": "allows-edit-and-commit",
+    "input": "ship this change",
+    "expected": {
+      "allowed_tools": ["read_file", "repo_search", "write_file", "git_commit"],
+      "required_output_kind": "commit",
+      "max_uvt": 0
+    }
+  },
+  {
+    "id": "denies-push-vector-and-shell",
+    "input": "ship it",
+    "expected": {
+      "forbidden_tools": ["run_shell", "web_fetch", "web_search"],
+      "max_uvt": 0
+    }
+  }
+]
