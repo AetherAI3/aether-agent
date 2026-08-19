@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { OllamaBrain } from "../src/core/brain_ollama.js";
+import { OllamaBrain, ollamaToolSchemas } from "../src/core/brain_ollama.js";
+import { TOOLS, type ToolName } from "../src/core/brain_protocol.js";
+import { TOOL_DEFINITIONS } from "../src/core/tool_registry.js";
 import type { Brain, TaskCommand } from "../src/core/brain.js";
 import type { BrainEvent } from "../src/core/brain_protocol.js";
 import type { ChatMessage, ChatReply } from "../src/core/ollama.js";
@@ -127,4 +129,132 @@ test("OllamaBrain stops after maxTurns without a final answer", async () => {
   const done = events.find((e) => e.type === "done");
   assert.ok(done, "loop terminates with a done even on a runaway model");
   assert.equal(done?.type === "done" ? done.reason : "", "max-turns");
+});
+
+// ── tool-call correlation (SC-A4) ───────────────────────────────────────────
+// The pending tool result used to be a single anonymous resolver and
+// sendToolResult ignored its `id` parameter entirely. Any result satisfied
+// whatever call happened to be waiting, a duplicate vanished silently, and a
+// result for an unknown id was indistinguishable from the real one.
+
+function toolThenAnswer(): readonly ChatReply[] {
+  return [
+    {
+      role: "assistant",
+      content: "",
+      tool_calls: [{ id: "call-1", type: "function", function: { name: "read_file", arguments: '{"path":"a.ts"}' } }],
+    },
+    { role: "assistant", content: "done" },
+  ];
+}
+
+test("a tool result for an unknown id is rejected, not applied to the waiting call", async () => {
+  const { chat } = fakeChat(toolThenAnswer());
+  const brain = new OllamaBrain({ chat });
+  const events: BrainEvent[] = [];
+  for await (const ev of brain.run(task)) {
+    events.push(ev);
+    if (ev.type === "tool_call") {
+      brain.sendToolResult("not-the-right-id", { output: "WRONG", exitCode: 0 });
+      brain.sendToolResult(ev.id, { output: "right", exitCode: 0 });
+    }
+  }
+  brain.close();
+  const errors = events.filter((ev) => ev.type === "error");
+  assert.equal(errors.length >= 1, true, "an unrecognised tool-call id must be surfaced, not swallowed");
+  assert.equal(events.some((ev) => ev.type === "done"), true, "the run still terminates");
+});
+
+test("a duplicate tool result does not advance the loop twice", async () => {
+  const { chat, calls } = fakeChat(toolThenAnswer());
+  const brain = new OllamaBrain({ chat });
+  for await (const ev of brain.run(task)) {
+    if (ev.type === "tool_call") {
+      brain.sendToolResult(ev.id, { output: "first", exitCode: 0 });
+      brain.sendToolResult(ev.id, { output: "second", exitCode: 0 });
+    }
+  }
+  brain.close();
+  const toolReplies = calls()
+    .flat()
+    .filter((message) => message.role === "tool");
+  const outputs = toolReplies.map((message) => message.content);
+  assert.equal(outputs.includes("second"), false, "the second result must not reach the model");
+  assert.equal(outputs.filter((text) => text === "first").length >= 1, true);
+});
+
+test("close resolves an outstanding waiter so the run cannot hang", async () => {
+  const { chat } = fakeChat(toolThenAnswer());
+  const brain = new OllamaBrain({ chat });
+  const events: BrainEvent[] = [];
+  for await (const ev of brain.run(task)) {
+    events.push(ev);
+    if (ev.type === "tool_call") brain.close(); // never send a result
+  }
+  assert.equal(events.some((ev) => ev.type === "tool_call"), true);
+});
+
+// ── control honesty ─────────────────────────────────────────────────────────
+
+test("control() reports that steering is unsupported instead of silently succeeding", async () => {
+  const { chat } = fakeChat(toolThenAnswer());
+  const brain = new OllamaBrain({ chat });
+  const events: BrainEvent[] = [];
+  for await (const ev of brain.run(task)) {
+    events.push(ev);
+    if (ev.type === "tool_call") {
+      brain.control("steer", "actually, do something else");
+      brain.sendToolResult(ev.id, { output: "ok", exitCode: 0 });
+    }
+  }
+  brain.close();
+  const said = events
+    .filter((ev): ev is Extract<BrainEvent, { type: "monologue" }> => ev.type === "monologue")
+    .map((ev) => ev.text)
+    .join(" ");
+  assert.match(said, /steer/i, "a steer this brain cannot honour must be visible to the user");
+  assert.match(said, /not supported|unsupported|cannot/i);
+});
+
+// ── advertised tool schemas ─────────────────────────────────────────────────
+
+test("advertised tool schemas are generated from TOOL_DEFINITIONS, not hand-written", () => {
+  const schemas = ollamaToolSchemas();
+  assert.deepEqual(
+    schemas.map((schema) => schema.function.name).sort(),
+    [...TOOLS].sort(),
+    "every protocol tool is advertised, and nothing else",
+  );
+
+  for (const schema of schemas) {
+    const name = schema.function.name as ToolName;
+    const definition = TOOL_DEFINITIONS[name];
+    const parameters = schema.function.parameters as {
+      properties: Record<string, { type: string; maxLength?: number; minimum?: number; maximum?: number }>;
+      required?: string[];
+      additionalProperties?: boolean;
+    };
+
+    assert.equal(parameters.additionalProperties, false, `${name} must not accept arbitrary extra arguments`);
+    assert.deepEqual(
+      Object.keys(parameters.properties).sort(),
+      Object.keys(definition.args).sort(),
+      `${name} advertises exactly the arguments the host validates`,
+    );
+    assert.deepEqual(
+      (parameters.required ?? []).sort(),
+      Object.entries(definition.args)
+        .filter(([, argument]) => argument.required !== false)
+        .map(([key]) => key)
+        .sort(),
+      `${name} required set matches the host validator`,
+    );
+  }
+
+  // Spot-check that bounds actually crossed over rather than being dropped.
+  const search = schemas.find((schema) => schema.function.name === "web_search");
+  const limit = (search!.function.parameters as { properties: Record<string, { minimum?: number; maximum?: number }> })
+    .properties["limit"];
+  assert.equal(limit?.minimum, 1);
+  assert.equal(limit?.maximum, 10);
 });
