@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "id": "aether/review-pr",
+  "version": "1.0.0",
+  "name": "Review PR",
+  "description": "Read-only review of a pull request or pending diff: correctness, tests, security, and style findings, each with a file and line reference. Never edits files, commits, or touches the network.",
+  "entrypoint": "SKILL.md",
+  "triggers": {
+    "commands": [
+      "review-pr"
+    ],
+    "phrases": [
+      "review this pr",
+      "review the pull request",
+      "review this diff"
+    ],
+    "automatic": true
+  },
+  "tools": {
+    "allowed": [
+      "read_file",
+      "repo_search"
+    ],
+    "required": [
+      "read_file"
+    ],
+    "denied": [
+      "write_file",
+      "run_shell",
+      "run_tests",
+      "git_commit",
+      "web_search",
+      "web_fetch"
+    ]
+  },
+  "permissions": {
+    "requires": [
+      "workspace.read",
+      "git.read"
+    ],
+    "may_request": [],
+    "forbids": [
+      "workspace.write",
+      "git.commit",
+      "git.push",
+      "network.general"
+    ]
+  },
+  "context": {
+    "max_tokens": 1500,
+    "resources": []
+  },
+  "outputs": {
+    "kinds": [
+      "review"
+    ],
+    "verification": [
+      "every finding cites a file and line"
+    ]
+  },
+  "dependencies": {
+    "skills": []
+  },
+  "compatibility": {
+    "min_agent_version": "0.1.0",
+    "capability_contract": 1
+  },
+  "health": {
+    "eval_manifest": "evals/cases.json"
+  }
+}

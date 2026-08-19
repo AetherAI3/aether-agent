@@ -15,8 +15,9 @@ aether                                  # no args = interactive REPL
 
 <!-- CLI-COMMANDS:START -->
 `help`, `agent`, `chat`, `resume`, `run`, `models`, `agents`, `auth`,
-`github`, `vault`, `workflow`, `memory`, `image`, `video`, `output`, `audit`,
-`receipt`, `doctor`, `mcp`, `config`
+`github`, `vault`, `workflow`, `memory`, `skills`, `capabilities`, `image`,
+`video`, `output`, `audit`, `receipt`, `doctor`, `support-bundle`, `mcp`,
+`config`
 <!-- CLI-COMMANDS:END -->
 
 <!-- SLASH-COMMANDS:START -->
@@ -200,6 +201,47 @@ aether doctor --json               # schema-versioned report for automation
 
 `--deep` still means the read-only report it always meant; it now points at
 `--live` for the end-to-end proof.
+
+### `aether skills <subcommand>` — inspect, trust, and manage agent skills
+
+Skills are packaged instructions the agent can load. Built-in skills ship with
+the package; user skills live under your config directory; project skills live
+in the repository you are working in.
+
+```bash
+aether skills list                 # every discovered skill, with scope and trust
+aether skills show <id>            # one skill: manifest, declared tools, digest
+aether skills check [--all]        # validate manifests and report index errors
+aether skills trust <id>           # approve a project skill at its current digest
+aether skills lock                 # pin discovered project skills to a lockfile
+```
+
+**Project skills are untrusted until you approve them.** Trust is bound to the
+skill's content digest, so editing a trusted skill revokes that trust until you
+approve the new digest. A skill declaration narrows what the agent may do — it
+never grants a tool the host would otherwise refuse.
+
+### `aether capabilities [--available]` — what this build can actually do
+
+Prints the capability contract: tools, their side-effect class, and the
+permission each requires. `--available` additionally reports what is usable in
+your current session rather than what exists in principle.
+
+The command prefers the server manifest and falls back to a packaged snapshot
+when the server cannot be reached. It says which one it used, and why, rather
+than presenting stale data as live.
+
+### `aether support-bundle` — a redacted diagnostic archive
+
+Writes a `.tar` of metadata-only diagnostics for troubleshooting: a fast doctor
+report, runtime facts, sanitized config, and skill and instruction inventories.
+
+It carries counts, ids and digests — never prompts, file contents, tokens,
+environment values or raw command text. Every entry is scanned before the
+archive is finalized; if a secret is detected the bundle is refused rather than
+written, and an interrupted run leaves no partial file behind.
+
+Like `aether doctor`, it makes no network call and spends nothing.
 
 ### `aether mcp [list|doctor|repair]` — manage and diagnose MCP servers
 With no subcommand (in a TTY), opens the same interactive MCP manager as the
