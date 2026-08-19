@@ -124,8 +124,19 @@ export function worktreeBranch(task: string, id: string): string {
 }
 
 /** git args to add a worktree on a new branch off current HEAD. Pure. */
-export function worktreeAddArgs(repoRoot: string, branch: string, dir: string): string[] {
-  return ["-C", repoRoot, "worktree", "add", "-b", branch, dir];
+export function worktreeAddArgs(
+  repoRoot: string,
+  branch: string,
+  dir: string,
+  startRevision?: string,
+): string[] {
+  // git fetch updates remote refs and FETCH_HEAD; it does NOT move the mirror's
+  // checked-out HEAD. Without an explicit start point, `worktree add` branches
+  // off whatever the mirror already had — which can be days behind the tip the
+  // run just reported fetching. The revision goes last: git reads the final
+  // positional as the start point.
+  const argv = ["-C", repoRoot, "worktree", "add", "-b", branch, dir];
+  return startRevision ? [...argv, startRevision] : argv;
 }
 
 /** Resolve the repo root for `cwd`, or null if not inside a git repo.
@@ -140,7 +151,7 @@ export function repoRootOf(cwd: string): string | null {
  * Throws with an actionable message if `cwd` isn't a git repo or git fails.
  * `id` is injected (default: short base-36 timestamp) so tests are deterministic.
  */
-export function createWorktree(cwd: string, task: string, id?: string): Worktree {
+export function createWorktree(cwd: string, task: string, id?: string, startRevision?: string): Worktree {
   const repoRoot = repoRootOf(cwd);
   if (!repoRoot) {
     throw new Error("--worktree needs a git repo (run `git init` first, or drop the flag)");
@@ -148,7 +159,7 @@ export function createWorktree(cwd: string, task: string, id?: string): Worktree
   const safeId = id ?? Date.now().toString(36);
   const branch = worktreeBranch(task, safeId);
   const dir = join(worktreesRoot(), branch.replace(/\//g, "-"));
-  const r = spawnSync("git", worktreeAddArgs(repoRoot, branch, dir), { encoding: "utf8" });
+  const r = spawnSync("git", worktreeAddArgs(repoRoot, branch, dir, startRevision), { encoding: "utf8" });
   if (r.status !== 0) {
     const why = ((r.stderr ?? "") + (r.stdout ?? "")).trim() || "git worktree add failed";
     throw new Error(`could not create worktree: ${why}`);
