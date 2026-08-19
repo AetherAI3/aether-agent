@@ -5,32 +5,18 @@
 // It proves one sentence: **start on one model, continue on another, on another
 // machine, and let the tests decide when it is done.**
 //
-// The demo builds a throwaway git repo with a genuinely failing test, runs the
-// real `aether` CLI over it on model A, exports a handoff file, sets up a SECOND
-// checkout at a different absolute path (machine B), deletes the first one, and
-// runs the CLI there on model B with `--resume <handoff>` and no restated
-// context. The host's verify gate — not the model — decides the final verdict.
+// What the demo does, what is real, what is stubbed, and how to record it are
+// documented once in docs/demo/handoff.md — read that, not a second copy here.
+// Two things about the CODE that the doc has no reason to mention:
 //
-// What is real: the CLI, the git repos, the file edits, the tool permission
-// gate, the handoff file, `node --test`, and the verify gate.
+//  - runCli MUST NOT use spawnSync. The scripted model is served by this same
+//    process, so a synchronous spawn blocks the event loop and the agent's very
+//    first request is never answered.
+//  - the stub keys its script on the model NAME, which is how session B's
+//    prompt gets captured and asserted separately from session A's.
 //
-// What is stubbed BY DEFAULT: the model. A tiny local HTTP server speaks the
-// Ollama OpenAI-compatible API with scripted replies, so the run is
-// byte-deterministic and needs no download, no GPU, and no account — which is
-// what makes it usable as a CI gate. The stub also ASSERTS what it was asked:
-// session B's first request must contain the continuation brief, naming session
-// A's model and the file it touched. That assertion is the actual proof; if the
-// context did not cross, the demo fails.
-//
-// To run the identical script against real models instead (this is what a
-// screen recording should show):
-//
-//   AETHER_DEMO_REAL=1 npm run demo:handoff
-//   AETHER_DEMO_MODEL_A=qwen2.5-coder:7b AETHER_DEMO_MODEL_B=qwen3:4b \
-//     AETHER_DEMO_REAL=1 npm run demo:handoff
-//
-// Real mode needs Ollama running with those tags pulled. The models then decide
-// what to do, so the transcript varies — the verify gate still has the last word.
+// AETHER_DEMO_REAL=1 (optionally with AETHER_DEMO_MODEL_A / _B) runs the
+// identical script against real Ollama models instead.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { spawn, spawnSync } from "node:child_process";
@@ -112,19 +98,22 @@ interface ScriptedTurn {
   content?: string;
 }
 
+/** Both sessions run the same four beats — read, rewrite, test, report — so the
+ *  script is one shape with two substitutions rather than two blocks to keep
+ *  aligned. The determinism of the demo depends on them staying identical. */
+const session = (source: string, report: string): ScriptedTurn[] => [
+  { tool: { name: "read_file", args: { path: "src/slug.js" } } },
+  { tool: { name: "write_file", args: { path: "src/slug.js", content: source } } },
+  { tool: { name: "run_tests", args: { command: TEST_CMD } } },
+  { content: report },
+];
+
 const SCRIPTS: Record<string, ScriptedTurn[]> = {
-  [MODEL_A]: [
-    { tool: { name: "read_file", args: { path: "src/slug.js" } } },
-    { tool: { name: "write_file", args: { path: "src/slug.js", content: HALF_FIXED_SOURCE } } },
-    { tool: { name: "run_tests", args: { command: TEST_CMD } } },
-    { content: "Lowercasing and hyphenation are in. The surrounding-whitespace case is still red." },
-  ],
-  [MODEL_B]: [
-    { tool: { name: "read_file", args: { path: "src/slug.js" } } },
-    { tool: { name: "write_file", args: { path: "src/slug.js", content: FIXED_SOURCE } } },
-    { tool: { name: "run_tests", args: { command: TEST_CMD } } },
-    { content: "Trimmed the input before slugifying. Both cases pass." },
-  ],
+  [MODEL_A]: session(
+    HALF_FIXED_SOURCE,
+    "Lowercasing and hyphenation are in. The surrounding-whitespace case is still red.",
+  ),
+  [MODEL_B]: session(FIXED_SOURCE, "Trimmed the input before slugifying. Both cases pass."),
 };
 
 interface StubState {
@@ -258,14 +247,16 @@ async function main(): Promise<number> {
     ollamaHost = stub.host;
   }
 
-  const env = (): Record<string, string> => ({
+  // Nothing below varies per call — the CLI child env is fixed once the stub
+  // (or the real Ollama host) is known.
+  const env: Record<string, string> = {
     AETHER_CONFIG_DIR: config,
     AETHER_LOG_DIR: logs,
     AETHER_BACKEND: "local",
     AETHER_NO_ANIM: "1",
     AETHER_NO_HISTORY: "1",
     OLLAMA_HOST: ollamaHost,
-  });
+  };
 
   const problems: string[] = [];
   try {
@@ -276,7 +267,7 @@ async function main(): Promise<number> {
     const a = await runCli(
       ["agent", "--local", "--model", MODEL_A, "--quiet", "--test-cmd", TEST_CMD, TASK],
       machineA,
-      env(),
+      env,
     );
     process.stdout.write(a.stdout);
     process.stdout.write(a.stderr);
@@ -284,7 +275,7 @@ async function main(): Promise<number> {
 
     banner("The handoff");
     const handoffFile = join(root, "handoff.json");
-    const exported = await runCli(["resume", "export", "--out", handoffFile], machineA, env());
+    const exported = await runCli(["resume", "export", "--out", handoffFile], machineA, env);
     process.stdout.write(exported.stdout);
     process.stdout.write(exported.stderr);
     if (exported.status !== 0) problems.push("`aether resume export` failed");
@@ -314,7 +305,7 @@ async function main(): Promise<number> {
     const b = await runCli(
       ["agent", "--local", "--model", MODEL_B, "--quiet", "--test-cmd", TEST_CMD, "--resume", handoffFile],
       machineB,
-      env(),
+      env,
     );
     process.stdout.write(b.stdout);
     process.stdout.write(b.stderr);

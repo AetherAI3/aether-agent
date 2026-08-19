@@ -13,10 +13,11 @@ import {
   parseHandoff,
   readHandoff,
   readRepoIdentity,
-  resolveHandoff,
+  resolveResume,
   summarizeEvents,
+  wroteFile,
   writeHandoff,
-  type Handoff,
+  type ResolvedResume,
 } from "../src/core/handoff.js";
 import type { LoadedSession } from "../src/core/session_resume.js";
 
@@ -173,51 +174,63 @@ test("continuationTask puts the new instruction after the brief", () => {
   assert.ok(text.indexOf("Prior session") < text.indexOf("now delete the dead branch"));
 });
 
-test("isHandoffPath separates a file from an opaque session id", () => {
+test("isHandoffPath partitions the input against the session-id rule", () => {
+  // The two branches must agree with requireOpaqueId — the rule loadSession
+  // itself enforces — or a value falls through both. A hand-rolled separator
+  // class is exactly how that goes wrong: these Windows cases used to be
+  // classified as session ids and die as "invalid session id".
   assert.equal(isHandoffPath("./aether-handoff.json"), true);
   assert.equal(isHandoffPath("C:\\work\\handoff.json"), true);
   assert.equal(isHandoffPath("handoff.json"), true);
+  assert.equal(isHandoffPath("C:\\work\\handoff"), true, "a Windows path without .json is still a path");
+  assert.equal(isHandoffPath("..\\out\\handoff"), true);
+  assert.equal(isHandoffPath("../out/handoff"), true);
+  assert.equal(isHandoffPath("~/handoff"), true);
+  assert.equal(isHandoffPath(".."), true);
   assert.equal(isHandoffPath("2026-08-19T10-00-00-000Z-local-4242"), false);
 });
 
-test("resolveHandoff reads a FILE without any workspace check", () => {
+test("resolveResume reads a FILE without any workspace check", () => {
   // The whole point of the file form: it lands in a checkout whose absolute
   // path does not match where the work started.
   const dir = mkdtempSync(join(tmpdir(), "aether-handoff-"));
   try {
     const path = join(dir, "handoff.json");
     writeHandoff(path, buildHandoff(session([])));
-    const h: Handoff = resolveHandoff(path, "C:\\somewhere\\entirely\\else");
-    assert.equal(h.sessionId, "s1");
+    const resolved: ResolvedResume = resolveResume(path, "C:\\somewhere\\entirely\\else");
+    assert.equal(resolved.handoff.sessionId, "s1");
+    assert.equal(resolved.session, null, "the file form carries no transcript — that is the point");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("resolveHandoff explains an unreadable handoff file by name", () => {
+test("resolveResume explains an unreadable handoff file by name", () => {
   const dir = mkdtempSync(join(tmpdir(), "aether-handoff-"));
   try {
     const path = join(dir, "broken.json");
     writeFileSync(path, "{ not json", "utf8");
-    assert.throws(() => resolveHandoff(path, dir), /cannot read handoff/);
+    assert.throws(() => resolveResume(path, dir), /cannot read handoff/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("resolveHandoff distils a local session id through the injected loader", () => {
+test("resolveResume distils a local session id through the injected loader", () => {
   const loaded = session([{ type: "monologue", text: "did a thing", depth: 0 }]);
-  const h = resolveHandoff("s1", "/work", (id, _root, scope) => {
+  const r = resolveResume("s1", "/work", (id, _root, scope) => {
     assert.equal(id, "s1");
     assert.equal(scope, "/work");
     return loaded;
   });
-  assert.equal(h.sessionId, "s1");
-  assert.ok(h.highlights.includes("did a thing"));
+  assert.equal(r.handoff.sessionId, "s1");
+  assert.ok(r.handoff.highlights.includes("did a thing"));
+  // The session comes back with the handoff, so the caller never re-reads it.
+  assert.equal(r.session, loaded);
 });
 
-test("resolveHandoff rejects an empty reference", () => {
-  assert.throws(() => resolveHandoff("  ", "/work"), /needs a session id or a handoff file/);
+test("resolveResume rejects an empty reference", () => {
+  assert.throws(() => resolveResume("  ", "/work"), /needs a session id or a handoff file/);
 });
 
 test("readRepoIdentity is best-effort: a non-repo yields nothing, not an error", () => {
@@ -252,10 +265,38 @@ test("a missing handoff file says how to make one", () => {
   const dir = mkdtempSync(join(tmpdir(), "aether-handoff-"));
   try {
     assert.throws(
-      () => resolveHandoff(join(dir, "absent.json"), dir),
+      () => resolveResume(join(dir, "absent.json"), dir),
       /no handoff file at .*absent\.json — write one with: aether resume export/,
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("wroteFile is the ONE definition of 'the run changed a file'", () => {
+  // cmdCode's live blast-radius set and a handoff's filesTouched both call this,
+  // so they cannot disagree about what counts as a write.
+  assert.equal(wroteFile({ type: "tool_call", id: "1", name: "write_file", args: { path: "a.ts" } }), "a.ts");
+  assert.equal(wroteFile({ type: "tool_call", id: "2", name: "read_file", args: { path: "a.ts" } }), null);
+  assert.equal(wroteFile({ type: "tool_call", id: "3", name: "write_file", args: {} }), null);
+  assert.equal(wroteFile({ type: "tool_call", id: "4", name: "write_file", args: { path: "" } }), null);
+  assert.equal(wroteFile({ type: "monologue", text: "write_file", depth: 0 }), null);
+});
+
+test("a handoff cannot smuggle terminal escapes into the brief", () => {
+  // Handoff files arrive from another machine, and their strings are both
+  // printed to the terminal and prepended to the brain's prompt.
+  const esc = "\x1b";
+  const h = parseHandoff({
+    kind: HANDOFF_KIND,
+    schemaVersion: 1,
+    sessionId: "s1",
+    task: `clean ${esc}[31mup${esc}[0m the parser`,
+    highlights: [`${esc}]0;pwned${esc}\did a thing`],
+    filesTouched: [`src/${esc}[2Ka.ts`],
+  });
+  const brief = continuationBrief(h);
+  assert.equal(brief.includes(esc), false, "no escape byte survives into the brief");
+  assert.match(brief, /clean up the parser/);
+  assert.match(brief, /did a thing/);
 });

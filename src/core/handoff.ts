@@ -22,13 +22,21 @@
 // contents and shell commands, and is exactly what the session log already
 // redacts. The brief is a summary a human could have written, which is what
 // makes it safe to move between machines.
+//
+// A handoff read back in is UNTRUSTED input — it arrived from another machine.
+// Every field is validated on the way in, and every string is run through the
+// terminal sanitizer, because these strings are both printed and prepended to
+// the brain's prompt.
 
-import { readFileSync, writeFileSync } from "node:fs";
 import type { BrainEvent } from "./brain_protocol.js";
 import { decodeEvent } from "./brain_protocol.js";
-import { loadSession, type LoadedSession } from "./session_resume.js";
+import { atomicWriteFile, readJsonFile } from "./durable_store.js";
+import { loadSession, replayLines, type LoadedSession } from "./session_resume.js";
 import { logsRoot } from "./session_log.js";
+import { requireOpaqueId } from "./workspace_scope.js";
 import type { RunResult, Runner } from "./worktree.js";
+import { clipCodePoints } from "../ui/theme.js";
+import { sanitizeTerm } from "../ui/text.js";
 
 export const HANDOFF_SCHEMA_VERSION = 1;
 export const HANDOFF_KIND = "aether-agent-handoff";
@@ -39,7 +47,7 @@ export interface HandoffRepo {
   remote?: string;
   /** Branch the prior run ended on. */
   branch?: string;
-  /** HEAD sha at export time — lets the receiving side spot a diverged tree. */
+  /** HEAD sha at export time — recorded for provenance; nothing reads it yet. */
   head?: string;
 }
 
@@ -72,9 +80,17 @@ const MAX_HIGHLIGHTS = 40;
 const MAX_HIGHLIGHT_CHARS = 300;
 const MAX_FILES = 60;
 
+/** Flatten, sanitize, and bound one line of untrusted narration. */
 function clip(text: string, max = MAX_HIGHLIGHT_CHARS): string {
-  const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length > max ? flat.slice(0, max - 1) + "…" : flat;
+  return clipCodePoints(sanitizeTerm(text).replace(/\s+/g, " ").trim(), max);
+}
+
+/** True when this event is the host writing a file — the ONE definition of
+ *  "the run changed something", shared with cmdCode's live blast-radius set. */
+export function wroteFile(ev: BrainEvent): string | null {
+  if (ev.type !== "tool_call" || ev.name !== "write_file") return null;
+  const path = ev.args["path"];
+  return typeof path === "string" && path ? path : null;
 }
 
 /** The narration worth carrying forward: stages entered, what the model said it
@@ -86,34 +102,47 @@ export function summarizeEvents(events: Array<Record<string, unknown>>): {
   filesTouched: string[];
 } {
   const highlights: string[] = [];
-  const files: string[] = [];
+  // Keep the TAIL: the end of a run is what the next one builds on. Bounding as
+  // we go means a 10k-event session never holds 10k clipped strings at once.
+  const remember = (line: string): void => {
+    highlights.push(line);
+    if (highlights.length > MAX_HIGHLIGHTS) highlights.shift();
+  };
+  const files = new Set<string>();
   for (const raw of events) {
     const ev: BrainEvent | null = decodeEvent(raw);
     if (!ev) continue;
-    if (ev.type === "tool_call") {
-      const path = ev.args["path"];
-      if (ev.name === "write_file" && typeof path === "string") {
-        if (!files.includes(path) && files.length < MAX_FILES) files.push(path);
-      }
+    const written = wroteFile(ev);
+    if (written) {
+      if (files.size < MAX_FILES) files.add(written);
       continue;
     }
-    if (ev.type === "stage") highlights.push(`stage: ${clip(ev.name)}`);
-    else if (ev.type === "monologue" && ev.text.trim()) highlights.push(clip(ev.text));
-    else if (ev.type === "checkpoint") highlights.push(`checkpoint ${clip(ev.gitSha, 40)}`);
+    if (ev.type === "tool_call") continue;
+    if (ev.type === "stage") remember(`stage: ${clip(ev.name)}`);
+    else if (ev.type === "monologue" && ev.text.trim()) remember(clip(ev.text));
+    else if (ev.type === "checkpoint") remember(`checkpoint ${clip(ev.gitSha, 40)}`);
     else if (ev.type === "done") {
       // The final answer usually arrives twice — once as the closing monologue,
       // once inside `done`. Say it once.
-      const said = `${ev.ok ? "finished" : "stopped"}: ${clip(ev.result)}`;
-      if (highlights[highlights.length - 1] !== clip(ev.result)) highlights.push(said);
-    }
-    else if (ev.type === "error") highlights.push(`error: ${clip(ev.msg)}`);
+      const result = clip(ev.result);
+      if (highlights[highlights.length - 1] !== result) {
+        remember(`${ev.ok ? "finished" : "stopped"}: ${result}`);
+      }
+    } else if (ev.type === "error") remember(`error: ${clip(ev.msg)}`);
   }
-  // Keep the tail: the END of a run is what the next one has to build on.
-  return { highlights: highlights.slice(-MAX_HIGHLIGHTS), filesTouched: files };
+  return { highlights, filesTouched: [...files] };
+}
+
+/** Assemble a repo record, dropping empty fields. `undefined` when nothing is
+ *  known — the shape is built in two places (probe and parse), so it is one
+ *  rule here rather than two spellings that can drift. */
+function repoFrom(remote?: string, branch?: string, head?: string): HandoffRepo | undefined {
+  if (!remote && !branch && !head) return undefined;
+  return { ...(remote && { remote }), ...(branch && { branch }), ...(head && { head }) };
 }
 
 /** Read the repository identity of `cwd`. Every probe is best-effort — a plain
- *  directory with no git in it yields an empty record, never an error. */
+ *  directory with no git in it yields nothing, never an error. */
 export function readRepoIdentity(cwd: string, run: Runner): HandoffRepo | undefined {
   const value = (args: string[]): string | undefined => {
     let r: RunResult;
@@ -125,11 +154,11 @@ export function readRepoIdentity(cwd: string, run: Runner): HandoffRepo | undefi
     const out = r.stdout.trim();
     return r.status === 0 && out ? out : undefined;
   };
-  const remote = value(["remote", "get-url", "origin"]);
-  const branch = value(["rev-parse", "--abbrev-ref", "HEAD"]);
-  const head = value(["rev-parse", "HEAD"]);
-  if (!remote && !branch && !head) return undefined;
-  return { ...(remote && { remote }), ...(branch && { branch }), ...(head && { head }) };
+  return repoFrom(
+    value(["remote", "get-url", "origin"]),
+    value(["rev-parse", "--abbrev-ref", "HEAD"]),
+    value(["rev-parse", "HEAD"]),
+  );
 }
 
 export interface BuildHandoffOptions {
@@ -142,7 +171,6 @@ export interface BuildHandoffOptions {
 export function buildHandoff(session: LoadedSession, opts: BuildHandoffOptions = {}): Handoff {
   const m = session.manifest;
   const { highlights, filesTouched } = summarizeEvents(session.events);
-  const remaining = m.remaining;
   const testCmd = opts.testCmd ?? m.testCmd;
   return {
     schemaVersion: HANDOFF_SCHEMA_VERSION,
@@ -154,7 +182,7 @@ export function buildHandoff(session: LoadedSession, opts: BuildHandoffOptions =
     started: m.started,
     ended: m.ended ?? null,
     finalStatus: m.finalStatus ?? "running",
-    ...(typeof remaining === "number" && remaining > 0 ? { remaining } : {}),
+    ...(typeof m.remaining === "number" && m.remaining > 0 ? { remaining: m.remaining } : {}),
     ...(opts.repo ? { repo: opts.repo } : {}),
     highlights,
     filesTouched,
@@ -162,69 +190,127 @@ export function buildHandoff(session: LoadedSession, opts: BuildHandoffOptions =
   };
 }
 
+/** A plain JSON object, or undefined for null/array/primitive. */
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  return value != null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
 /** Validate an untrusted handoff document. Handoffs travel between machines, so
  *  a file that is merely JSON is not enough — every field the brief renders is
- *  checked, and anything unrecognized is rejected rather than half-used. */
+ *  checked and sanitized, and anything unrecognized is dropped rather than
+ *  half-used. */
 export function parseHandoff(value: unknown): Handoff {
-  const body = value != null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  const body = asObject(value);
   if (!body) throw new Error("handoff file is not a JSON object");
   if (body["kind"] !== HANDOFF_KIND) throw new Error("not an Aether Agent handoff file");
   const version = body["schemaVersion"];
-  if (typeof version !== "number" || !Number.isInteger(version) || version < 1) {
-    throw new Error("handoff file has no usable schemaVersion");
-  }
-  if (version > HANDOFF_SCHEMA_VERSION) {
+  // Number.isInteger already rejects every non-number, so this one check covers
+  // both "not a number" and "not a whole version".
+  if (!Number.isInteger(version)) throw new Error("handoff file has no usable schemaVersion");
+  const schemaVersion = version as number;
+  if (schemaVersion < 1) throw new Error("handoff file has no usable schemaVersion");
+  if (schemaVersion > HANDOFF_SCHEMA_VERSION) {
     throw new Error(
-      `handoff was written by a newer Aether Agent (schema ${version}); upgrade with: npm i -g aether-agents`,
+      `handoff was written by a newer Aether Agent (schema ${schemaVersion}); upgrade with: npm i -g aether-agents`,
     );
   }
-  const str = (key: string): string => (typeof body[key] === "string" ? (body[key] as string) : "");
+  const field = (source: Record<string, unknown> | undefined, key: string): string =>
+    typeof source?.[key] === "string" ? clip(source[key] as string) : "";
+  const str = (key: string): string => field(body, key);
   const strings = (key: string): string[] =>
     Array.isArray(body[key]) ? (body[key] as unknown[]).filter((v): v is string => typeof v === "string") : [];
-  const brain = body["brain"] === "cloud" ? "cloud" : "local";
   const sessionId = str("sessionId");
   const task = str("task");
   if (!sessionId || !task) throw new Error("handoff file is missing its session id or task");
-  const repoRaw = body["repo"];
-  const repo = repoRaw != null && typeof repoRaw === "object" && !Array.isArray(repoRaw)
-    ? (repoRaw as Record<string, unknown>)
-    : undefined;
-  const repoStr = (key: string): string | undefined =>
-    repo && typeof repo[key] === "string" && repo[key] ? (repo[key] as string) : undefined;
-  const remoteId = repoStr("remote");
-  const branchId = repoStr("branch");
-  const headId = repoStr("head");
+  const repo = asObject(body["repo"]);
+  const identity = repoFrom(field(repo, "remote"), field(repo, "branch"), field(repo, "head"));
   const remaining = body["remaining"];
-  const ended = body["ended"];
   const testCmd = str("testCmd");
   return {
-    schemaVersion: version,
+    schemaVersion,
     kind: HANDOFF_KIND,
     sessionId,
     task,
     model: str("model"),
-    brain,
+    brain: body["brain"] === "cloud" ? "cloud" : "local",
     started: str("started"),
-    ended: typeof ended === "string" ? ended : null,
+    ended: str("ended") || null,
     finalStatus: str("finalStatus") || "unknown",
     ...(typeof remaining === "number" && remaining > 0 ? { remaining } : {}),
-    ...(remoteId || branchId || headId
-      ? { repo: { ...(remoteId && { remote: remoteId }), ...(branchId && { branch: branchId }), ...(headId && { head: headId }) } }
-      : {}),
-    highlights: strings("highlights").map((h) => clip(h)).slice(-MAX_HIGHLIGHTS),
-    filesTouched: strings("filesTouched").slice(0, MAX_FILES),
+    ...(identity ? { repo: identity } : {}),
+    // Bound BEFORE sanitizing: a hostile file with 10k highlights should cost 40
+    // clips, not 10k.
+    highlights: strings("highlights").slice(-MAX_HIGHLIGHTS).map((h) => clip(h)),
+    filesTouched: strings("filesTouched").slice(0, MAX_FILES).map((f) => clip(f)),
     ...(testCmd ? { testCmd } : {}),
   };
 }
 
 export function writeHandoff(path: string, handoff: Handoff): void {
-  writeFileSync(path, JSON.stringify(handoff, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
+  // Atomic like every other durable file this CLI owns (config, goals, history,
+  // mcp store): an interrupted export must not destroy a good handoff or leave
+  // half a JSON document that `--resume` will refuse. Creates missing parents,
+  // so `--out reports/handoff.json` works.
+  atomicWriteFile(path, JSON.stringify(handoff, null, 2) + "\n");
 }
 
 export function readHandoff(path: string): Handoff {
-  return parseHandoff(JSON.parse(readFileSync(path, "utf8")));
+  const read = readJsonFile<unknown>(path);
+  if (!read.ok) {
+    if (read.reason === "missing") {
+      throw new Error(`no handoff file at ${path} — write one with: aether resume export --out ${path}`);
+    }
+    throw new Error(`cannot read handoff ${path}: ${read.detail}`);
+  }
+  return parseHandoff(read.value);
+}
+
+/** A `--resume` value that names a FILE rather than a local session id.
+ *
+ *  The two branches must partition the input against the SAME rule the loader
+ *  enforces, or a value can fall through both: `requireOpaqueId` (the canonical
+ *  session-id shape, and what `loadSession` calls a moment later) is the rule,
+ *  so anything it rejects — a Windows or POSIX separator, `..`, `~/`, a dotted
+ *  name — is a path. The `.json` shortcut keeps an ordinary bare filename on
+ *  the file side even though it is a legal id. */
+export function isHandoffPath(value: string): boolean {
+  if (value.toLowerCase().endsWith(".json")) return true;
+  try {
+    requireOpaqueId(value, "session id");
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/** What a `--resume` reference resolved to: always a handoff, plus the loaded
+ *  session when the reference was a local id (the file form has no transcript —
+ *  that is the point of it). Returned together so the caller reads the log once
+ *  and the file-vs-id decision is made in exactly one place. */
+export interface ResolvedResume {
+  handoff: Handoff;
+  session: LoadedSession | null;
+}
+
+/**
+ * Resolve a `--resume` value.
+ *
+ * A file is never workspace-scoped: importing one is an explicit act by the
+ * person holding it, and its whole purpose is to land in a checkout whose
+ * absolute path does not match where the work started. A session id still is.
+ */
+export function resolveResume(
+  value: string,
+  cwd: string,
+  load: typeof loadSession = loadSession,
+): ResolvedResume {
+  const ref = value.trim();
+  if (!ref) throw new Error("--resume needs a session id or a handoff file");
+  if (isHandoffPath(ref)) return { handoff: readHandoff(ref), session: null };
+  const session = load(ref, logsRoot(), cwd);
+  return { handoff: buildHandoff(session), session };
 }
 
 /**
@@ -275,45 +361,11 @@ export function continuationTask(h: Handoff, nextTask: string): string {
   return `${continuationBrief(h)}\n\n## Your task now\n\n${next}\n`;
 }
 
-/**
- * Resolve a `--resume` value into a handoff.
- *
- * Two shapes, distinguished without guessing: a session id is an opaque
- * directory name under the logs root (no separators, no extension), so anything
- * carrying a path separator or ending in .json is read as a handoff FILE — the
- * form that came from another machine. Everything else is a local session id
- * and is distilled on the spot.
- *
- * A file is never workspace-scoped: importing one is an explicit act by the
- * person holding it, and its whole purpose is to land in a checkout whose
- * absolute path does not match where the work started.
- */
-export function resolveHandoff(
-  value: string,
-  cwd: string,
-  load: (id: string, root: string, scope: string) => LoadedSession = defaultLoadSession,
-  root?: string,
-): Handoff {
-  const ref = value.trim();
-  if (!ref) throw new Error("--resume needs a session id or a handoff file");
-  if (isHandoffPath(ref)) {
-    try {
-      return readHandoff(ref);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
-        throw new Error(`no handoff file at ${ref} — write one with: aether resume export --out ${ref}`);
-      }
-      const why = err instanceof Error ? err.message : String(err);
-      throw new Error(`cannot read handoff ${ref}: ${why}`);
-    }
-  }
-  return buildHandoff(load(ref, root ?? logsRoot(), cwd));
+/** The lines shown to the HUMAN for what is being continued: a local session
+ *  replays its whole transcript, a handoff file has only its highlights (it
+ *  never carried a transcript — that is the point of it). */
+export function resumeReplayLines(resolved: ResolvedResume, ref: string): string[] {
+  if (resolved.session) return replayLines(resolved.session.events);
+  const h = resolved.handoff;
+  return [`⇄ continuing ${h.sessionId} (${h.finalStatus}) from ${ref}`, ...h.highlights.map((l) => "  " + l)];
 }
-
-/** A --resume value that names a file on disk rather than a local session id. */
-export function isHandoffPath(value: string): boolean {
-  return /[\/]/.test(value) || value.toLowerCase().endsWith(".json");
-}
-
-const defaultLoadSession = (id: string, root: string, scope: string): LoadedSession =>
-  loadSession(id, root, scope);

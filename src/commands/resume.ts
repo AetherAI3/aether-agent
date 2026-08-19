@@ -21,28 +21,27 @@ export function resumeHint(sessionId: string): string {
 /** Default filename for `aether resume export` when --out is not given. */
 export const DEFAULT_HANDOFF_FILE = "aether-handoff.json";
 
-/** Load by id, or the newest session in this workspace when no id is given. */
+/** Load by id, or the newest session in this workspace when no id is given.
+ *  Reports the failure itself and returns null, so both entry points share one
+ *  error path instead of two copies that must be kept in step. */
 function pick(ctx: AppContext, id: string): LoadedSession | null {
-  return id ? loadSession(id, logsRoot(), ctx.flags.cwd) : latestSession(ctx.flags.cwd);
-}
-
-function noSessions(): number {
-  process.stderr.write('no sessions to resume (run `aether agent "<task>"` first)\n');
-  return 1;
+  let session: LoadedSession | null;
+  try {
+    session = id ? loadSession(id, logsRoot(), ctx.flags.cwd) : latestSession(ctx.flags.cwd);
+  } catch (err) {
+    process.stderr.write(String(err instanceof Error ? err.message : err) + "\n");
+    return null;
+  }
+  if (!session) process.stderr.write('no sessions to resume (run `aether agent "<task>"` first)\n');
+  return session;
 }
 
 /** `aether resume export [id] [--out <file>]`. */
-function cmdResumeExport(ctx: AppContext, id: string, out: string | undefined): number {
-  let s: LoadedSession | null;
-  try {
-    s = pick(ctx, id);
-  } catch (err) {
-    process.stderr.write(String(err instanceof Error ? err.message : err) + "\n");
-    return 1;
-  }
-  if (!s) return noSessions();
+export function cmdResumeExport(ctx: AppContext, id: string, out?: string): number {
+  const session = pick(ctx, id);
+  if (!session) return 1;
   const target = out?.trim() ? out.trim() : join(ctx.flags.cwd, DEFAULT_HANDOFF_FILE);
-  const handoff = buildHandoff(s, { repo: readRepoIdentity(ctx.flags.cwd, defaultRunner()) });
+  const handoff = buildHandoff(session, { repo: readRepoIdentity(ctx.flags.cwd, defaultRunner()) });
   try {
     writeHandoff(target, handoff);
   } catch (err) {
@@ -61,26 +60,17 @@ function cmdResumeExport(ctx: AppContext, id: string, out: string | undefined): 
   return 0;
 }
 
-export async function cmdResume(ctx: AppContext, id: string, out?: string): Promise<number> {
-  if (id === "export") return cmdResumeExport(ctx, "", out);
-  if (id.startsWith("export ")) return cmdResumeExport(ctx, id.slice("export ".length).trim(), out);
-  let s;
-  try {
-    s = pick(ctx, id);
-  } catch (err) {
-    process.stderr.write(String(err instanceof Error ? err.message : err) + "\n");
-    return 1;
-  }
-  if (!s) return noSessions();
-  process.stdout.write(theme.dim(`▸ ${s.manifest.sessionId} · ${s.manifest.task}\n\n`));
-  for (const line of replayLines(s.events)) process.stdout.write(line + "\n");
+export function cmdResume(ctx: AppContext, id: string): number {
+  const session = pick(ctx, id);
+  if (!session) return 1;
+  process.stdout.write(theme.dim(`▸ ${session.manifest.sessionId} · ${session.manifest.task}\n\n`));
+  for (const line of replayLines(session.events)) process.stdout.write(line + "\n");
   process.stdout.write(
     "\n" +
-      theme.dim(`status: ${s.manifest.finalStatus ?? "running"} · continue with: `) +
-      `aether agent --resume ${s.manifest.sessionId}\n` +
+      theme.dim(`status: ${session.manifest.finalStatus ?? "running"} · continue with: `) +
+      `aether agent --resume ${session.manifest.sessionId}\n` +
       theme.dim("  moving machines? ") +
-      `aether resume export ${s.manifest.sessionId}\n`,
+      `aether resume export ${session.manifest.sessionId}\n`,
   );
   return 0;
 }
-

@@ -18,7 +18,7 @@ import { ToolExecutor } from "../core/tool_executor.js";
 import { stdioPrompt } from "../ui/interact.js";
 import { defaultRunner } from "../core/worktree.js";
 import { HostRenderer } from "../ui/host_render.js";
-import { SessionLog, logsRoot } from "../core/session_log.js";
+import { SessionLog } from "../core/session_log.js";
 import { finalVerify, type BrainDone } from "../core/verify_gate.js";
 import { StatusRenderer } from "../ui/status_renderer.js";
 import { AnimationController } from "../ui/animations.js";
@@ -35,8 +35,7 @@ import {
   stageGate,
   writeDiffLines,
 } from "./code_support.js";
-import { loadSession, replayLines } from "../core/session_resume.js";
-import { continuationTask, isHandoffPath, resolveHandoff, type Handoff } from "../core/handoff.js";
+import { continuationTask, resolveResume, resumeReplayLines, wroteFile, type ResolvedResume } from "../core/handoff.js";
 import { resumeHint } from "./resume.js";
 import { createWorktree, mergeHint, type Worktree } from "../core/worktree.js";
 import { parseRepoSpec, ensureLocalClone, prCreateHint, type RepoSpec } from "../core/repo.js";
@@ -92,37 +91,26 @@ export function applyEventToStatus(
   }
 }
 
-/** Show the human what is being continued. A local session id replays its full
- * transcript; a handoff FILE has no transcript to replay (that is the point —
- * it is a summary that survived the trip), so its highlights stand in.
- * Fail-soft: an unreadable session prints a note and never aborts the new run. */
-function replaySession(ref: string, cwd: string, handoff: Handoff | null, emit: (line: string) => void): void {
-  if (isHandoffPath(ref)) {
-    if (!handoff) return;
-    emit(`⇄ continuing ${handoff.sessionId} (${handoff.finalStatus}) from ${ref}`);
-    for (const line of handoff.highlights) emit("  " + line);
-    return;
-  }
-  try {
-    const prior = loadSession(ref, logsRoot(), cwd);
-    for (const line of replayLines(prior.events)) emit(line);
-  } catch (err) {
-    process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
-  }
-}
-
 export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Promise<number> {
   // --resume carries the prior session's context forward, so it is also a task
   // of its own: with no new instruction the run continues the ORIGINAL task.
-  let handoff: Handoff | null = null;
+  // Resolved ONCE — the handoff the brain reads and the lines the human sees
+  // come from the same read, so a session log is never parsed twice and the
+  // file-vs-id decision is made in exactly one place.
+  let resumed: ResolvedResume | null = null;
   if (opts.resume) {
     try {
-      handoff = resolveHandoff(opts.resume, ctx.flags.cwd);
+      resumed = resolveResume(opts.resume, ctx.flags.cwd);
     } catch (err) {
       process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
       return 1;
     }
   }
+  const handoff = resumed?.handoff ?? null;
+  const replay = (emit: (line: string) => void): void => {
+    if (!resumed || !opts.resume) return;
+    for (const line of resumeReplayLines(resumed, opts.resume)) emit(line);
+  };
   if (!task.trim() && !handoff) {
     process.stderr.write('✗ nothing to do — try: aether agent "fix the failing tests"\n');
     return 1;
@@ -298,10 +286,11 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   const cols = process.stdout.columns && process.stdout.columns > 0 ? process.stdout.columns : 80;
   // Blast radius for the end-of-run summary: every file the brain wrote.
   const touched = new Set<string>();
+  // Same predicate a handoff uses for `filesTouched`, so the live blast radius
+  // and the exported record can never disagree about what "wrote a file" means.
   const trackWrites = (ev: BrainEvent): void => {
-    if (ev.type === "tool_call" && ev.name === "write_file" && typeof ev.args["path"] === "string") {
-      touched.add(ev.args["path"] as string);
-    }
+    const written = wroteFile(ev);
+    if (written) touched.add(written);
   };
 
   let onEvent: (ev: BrainEvent) => void | Promise<void>;
@@ -321,7 +310,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   if (animated) {
     const sr = new StatusRenderer({ mode: brainKind === "local" ? "local" : "api" });
     sr.start();
-    if (opts.resume) replaySession(opts.resume, ctx.flags.cwd, handoff, (line) => sr.log(line));
+    replay((line) => sr.log(line));
     const anim = new AnimationController({
       onFrame: (_stage, art) => sr.setAnim(art),
       onProgress: (used, c) => sr.setProgress(used, c),
@@ -378,7 +367,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     };
   } else {
     const renderer = new HostRenderer({ poolGb, quiet: opts.quiet, json: ctx.flags.json });
-    if (opts.resume) replaySession(opts.resume, ctx.flags.cwd, handoff, (line) => process.stdout.write(line + "\n"));
+    replay((line) => process.stdout.write(line + "\n"));
     onEvent = async (ev: BrainEvent): Promise<void> => {
       applyToLedger(ledger, ev);
       trackWrites(ev);

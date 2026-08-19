@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cmdResume, DEFAULT_HANDOFF_FILE, resumeHint } from "../src/commands/resume.js";
+import { cmdResume, cmdResumeExport, DEFAULT_HANDOFF_FILE, resumeHint } from "../src/commands/resume.js";
 import type { AppContext } from "../src/core/context.js";
 
 test("resumeHint quotes the exact re-entry command", () => {
@@ -15,7 +15,7 @@ test("resumeHint quotes the exact re-entry command", () => {
 
 // `aether resume export` is the machine-to-machine half of resume: it turns the
 // local session log into one file you can carry. These tests drive the real
-// command against a seeded log root, capturing stdout/stderr.
+// commands against a seeded log root, capturing stdout/stderr.
 
 function seedSession(root: string, id: string, cwd: string): void {
   const dir = join(root, id);
@@ -54,111 +54,124 @@ function fakeContext(cwd: string): AppContext {
   } as unknown as AppContext;
 }
 
-/** Run one command with stdout/stderr captured. */
-async function capture(run: () => Promise<number>): Promise<{ code: number; out: string; err: string }> {
-  const realOut = process.stdout.write.bind(process.stdout);
-  const realErr = process.stderr.write.bind(process.stderr);
-  let out = "";
-  let err = "";
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stdout as any).write = (chunk: string): boolean => ((out += chunk), true);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (process.stderr as any).write = (chunk: string): boolean => ((err += chunk), true);
-  try {
-    const code = await run();
-    return { code, out, err };
-  } finally {
-    process.stdout.write = realOut;
-    process.stderr.write = realErr;
-  }
+interface Fixture {
+  /** Directory the session log root lives in (AETHER_LOG_DIR). */
+  logs: string;
+  /** The "workspace" the session belongs to, and the command's cwd. */
+  work: string;
+  /** Scratch root, for --out targets outside the workspace. */
+  root: string;
+  ctx: AppContext;
 }
 
-test("`aether resume export` writes a handoff next to the work by default", async () => {
-  const root = mkdtempSync(join(tmpdir(), "aether-resume-"));
-  const logs = join(root, "logs");
-  const work = join(root, "work");
-  mkdirSync(work, { recursive: true });
-  const previous = process.env["AETHER_LOG_DIR"];
-  process.env["AETHER_LOG_DIR"] = logs;
-  try {
-    seedSession(logs, "s1", work);
-    const { code, out } = await capture(() => cmdResume(fakeContext(work), "export"));
-    assert.equal(code, 0);
-    const written = join(work, DEFAULT_HANDOFF_FILE);
-    assert.ok(existsSync(written), "handoff file was written");
-    const handoff = JSON.parse(readFileSync(written, "utf8"));
-    assert.equal(handoff.kind, "aether-agent-handoff");
-    assert.equal(handoff.sessionId, "s1");
-    assert.equal(handoff.model, "qwen3:4b");
-    assert.equal(handoff.remaining, 1);
-    assert.equal(handoff.testCmd, "npm test");
-    assert.deepEqual(handoff.filesTouched, ["src/parse.ts"]);
-    // The command has to tell the user how to spend what it just made.
-    assert.match(out, /aether agent --resume/);
-  } finally {
-    if (previous === undefined) delete process.env["AETHER_LOG_DIR"];
-    else process.env["AETHER_LOG_DIR"] = previous;
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("`aether resume export <id> --out <file>` honours the destination", async () => {
-  const root = mkdtempSync(join(tmpdir(), "aether-resume-"));
-  const logs = join(root, "logs");
-  const work = join(root, "work");
-  mkdirSync(work, { recursive: true });
-  const previous = process.env["AETHER_LOG_DIR"];
-  process.env["AETHER_LOG_DIR"] = logs;
-  try {
-    seedSession(logs, "s1", work);
-    const target = join(root, "carried.json");
-    const { code } = await capture(() => cmdResume(fakeContext(work), "export s1", target));
-    assert.equal(code, 0);
-    assert.equal(JSON.parse(readFileSync(target, "utf8")).sessionId, "s1");
-  } finally {
-    if (previous === undefined) delete process.env["AETHER_LOG_DIR"];
-    else process.env["AETHER_LOG_DIR"] = previous;
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("`aether resume export` with no sessions fails loudly rather than writing an empty file", async () => {
+/** Run one case against an isolated log root, with stdout/stderr captured.
+ *  Everything — temp dirs, the AETHER_LOG_DIR override, both streams — is
+ *  restored on the way out, so a failing assertion cannot leak the log root
+ *  into every later test in the process. */
+function withLogRoot(
+  body: (f: Fixture) => number,
+  seed: (f: Fixture) => void = () => {},
+): { code: number; out: string; err: string } {
   const root = mkdtempSync(join(tmpdir(), "aether-resume-"));
   const logs = join(root, "logs");
   const work = join(root, "work");
   mkdirSync(work, { recursive: true });
   mkdirSync(logs, { recursive: true });
-  const previous = process.env["AETHER_LOG_DIR"];
+  const previousLogDir = process.env["AETHER_LOG_DIR"];
+  const realOut = process.stdout.write.bind(process.stdout);
+  const realErr = process.stderr.write.bind(process.stderr);
+  let out = "";
+  let err = "";
   process.env["AETHER_LOG_DIR"] = logs;
+  const fixture: Fixture = { logs, work, root, ctx: fakeContext(work) };
   try {
-    const { code, err } = await capture(() => cmdResume(fakeContext(work), "export"));
-    assert.equal(code, 1);
-    assert.match(err, /no sessions to resume/);
-    assert.equal(existsSync(join(work, DEFAULT_HANDOFF_FILE)), false);
+    seed(fixture);
+    (process.stdout as { write: unknown }).write = (chunk: string): boolean => ((out += chunk), true);
+    (process.stderr as { write: unknown }).write = (chunk: string): boolean => ((err += chunk), true);
+    try {
+      return { code: body(fixture), out, err };
+    } finally {
+      process.stdout.write = realOut;
+      process.stderr.write = realErr;
+    }
   } finally {
-    if (previous === undefined) delete process.env["AETHER_LOG_DIR"];
-    else process.env["AETHER_LOG_DIR"] = previous;
+    if (previousLogDir === undefined) delete process.env["AETHER_LOG_DIR"];
+    else process.env["AETHER_LOG_DIR"] = previousLogDir;
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+const seedOne = (f: Fixture): void => seedSession(f.logs, "s1", f.work);
+
+test("`aether resume export` writes a handoff next to the work by default", () => {
+  let written = "";
+  const { code, out } = withLogRoot((f) => {
+    written = join(f.work, DEFAULT_HANDOFF_FILE);
+    const result = cmdResumeExport(f.ctx, "");
+    // Read inside the fixture — the temp tree is removed on the way out.
+    if (existsSync(written)) written = readFileSync(written, "utf8");
+    return result;
+  }, seedOne);
+  assert.equal(code, 0);
+  const handoff = JSON.parse(written);
+  assert.equal(handoff.kind, "aether-agent-handoff");
+  assert.equal(handoff.sessionId, "s1");
+  assert.equal(handoff.model, "qwen3:4b");
+  assert.equal(handoff.remaining, 1);
+  assert.equal(handoff.testCmd, "npm test");
+  assert.deepEqual(handoff.filesTouched, ["src/parse.ts"]);
+  // The command has to tell the user how to spend what it just made.
+  assert.match(out, /aether agent --resume/);
 });
 
-test("`aether resume` replay points at both re-entry routes", async () => {
-  const root = mkdtempSync(join(tmpdir(), "aether-resume-"));
-  const logs = join(root, "logs");
-  const work = join(root, "work");
-  mkdirSync(work, { recursive: true });
-  const previous = process.env["AETHER_LOG_DIR"];
-  process.env["AETHER_LOG_DIR"] = logs;
-  try {
-    seedSession(logs, "s1", work);
-    const { code, out } = await capture(() => cmdResume(fakeContext(work), ""));
-    assert.equal(code, 0);
-    assert.match(out, /the tokenizer rejects it/);
-    assert.match(out, /aether agent --resume s1/);
-    assert.match(out, /aether resume export s1/);
-  } finally {
-    if (previous === undefined) delete process.env["AETHER_LOG_DIR"];
-    else process.env["AETHER_LOG_DIR"] = previous;
-    rmSync(root, { recursive: true, force: true });
-  }
+test("`aether resume export <id> --out <file>` honours the destination", () => {
+  let written = "";
+  const { code } = withLogRoot((f) => {
+    const target = join(f.root, "carried.json");
+    const result = cmdResumeExport(f.ctx, "s1", target);
+    if (existsSync(target)) written = readFileSync(target, "utf8");
+    return result;
+  }, seedOne);
+  assert.equal(code, 0);
+  assert.equal(JSON.parse(written).sessionId, "s1");
+});
+
+test("`aether resume export --out` creates a missing parent directory", () => {
+  // Atomic writes carry mkdir -p, so `--out reports/handoff.json` works from a
+  // clean checkout instead of failing with ENOENT.
+  let existed = false;
+  const { code } = withLogRoot((f) => {
+    const target = join(f.root, "reports", "nested", "carried.json");
+    const result = cmdResumeExport(f.ctx, "s1", target);
+    existed = existsSync(target);
+    return result;
+  }, seedOne);
+  assert.equal(code, 0);
+  assert.equal(existed, true);
+});
+
+test("`aether resume export` with no sessions fails loudly rather than writing an empty file", () => {
+  let leftBehind = true;
+  const { code, err } = withLogRoot((f) => {
+    const result = cmdResumeExport(f.ctx, "");
+    leftBehind = existsSync(join(f.work, DEFAULT_HANDOFF_FILE));
+    return result;
+  });
+  assert.equal(code, 1);
+  assert.match(err, /no sessions to resume/);
+  assert.equal(leftBehind, false);
+});
+
+test("`aether resume` replay points at both re-entry routes", () => {
+  const { code, out } = withLogRoot((f) => cmdResume(f.ctx, ""), seedOne);
+  assert.equal(code, 0);
+  assert.match(out, /the tokenizer rejects it/);
+  assert.match(out, /aether agent --resume s1/);
+  assert.match(out, /aether resume export s1/);
+});
+
+test("an unknown session id is reported, not swallowed", () => {
+  const { code, err } = withLogRoot((f) => cmdResume(f.ctx, "no-such-session"), seedOne);
+  assert.equal(code, 1);
+  assert.match(err, /no such session/);
 });
