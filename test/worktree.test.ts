@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -182,3 +183,94 @@ test("mergeHint names the branch, merge, and discard paths", () => {
   assert.match(hint, /merge aether\/x-1/);
   assert.match(hint, /worktree remove \/wt\/x/);
 });
+
+// ── exact remote base (SC-A7) ───────────────────────────────────────────────
+// `git fetch` moves remote refs and FETCH_HEAD; it does NOT move the mirror's
+// checked-out HEAD. So `worktree add -b <branch> <dir>` with no start-point
+// branches off whatever the mirror already had, even though the run just
+// reported a freshly fetched tip. The base must be pinned explicitly.
+
+test("worktreeAddArgs pins the start revision when one is given", () => {
+  assert.deepEqual(worktreeAddArgs("/repo", "aether/x-1", "/wt", "c".repeat(40)), [
+    "-C",
+    "/repo",
+    "worktree",
+    "add",
+    "-b",
+    "aether/x-1",
+    "/wt",
+    "c".repeat(40),
+  ]);
+});
+
+test("worktreeAddArgs without a start revision is unchanged", () => {
+  assert.deepEqual(worktreeAddArgs("/repo", "aether/x-1", "/wt"), [
+    "-C",
+    "/repo",
+    "worktree",
+    "add",
+    "-b",
+    "aether/x-1",
+    "/wt",
+  ]);
+});
+
+test("the pinned revision is the last argv element, so git reads it as the start point", () => {
+  const argv = worktreeAddArgs("/repo", "aether/x-1", "/wt", "deadbee");
+  assert.equal(argv[argv.length - 1], "deadbee");
+  assert.equal(argv[argv.length - 2], "/wt", "the directory must still precede the start point");
+});
+
+// Real-git canary for the stale-base defect. Everything above asserts argv;
+// this asserts the resulting checkout. The failure it guards is specific:
+// `git fetch` advances remote refs and FETCH_HEAD but leaves the mirror's own
+// HEAD where it was, so an unpinned `worktree add` starts from the OLD commit
+// while the run has just printed the NEW one.
+{
+  const git = (cwd: string, ...args: string[]): string =>
+    spawnSync("git", ["-c", "core.literalPathspecs=true", "-C", cwd, ...args], { encoding: "utf8" }).stdout.trim();
+  const canSpawnGit = !spawnSync("git", ["--version"], { encoding: "utf8" }).error;
+
+  test("a pinned worktree starts at the fetched revision, not the mirror's stale HEAD", (t) => {
+    if (!canSpawnGit) return t.skip("git not available");
+    const root = mkdtempSync(join(tmpdir(), "aether-base-"));
+    const remote = join(root, "remote");
+    const mirror = join(root, "mirror");
+
+    // A remote with one commit; clone it, so mirror HEAD == remote tip == A.
+    mkdirSync(remote, { recursive: true });
+    git(remote, "init", "-q", "-b", "main");
+    git(remote, "config", "user.email", "t@t.t");
+    git(remote, "config", "user.name", "t");
+    writeFileSync(join(remote, "a.txt"), "A\n");
+    git(remote, "add", "-A");
+    git(remote, "commit", "-q", "-m", "A");
+    spawnSync("git", ["clone", "-q", remote, mirror], { encoding: "utf8" });
+    const staleHead = git(mirror, "rev-parse", "HEAD");
+
+    // The remote moves on. The mirror knows nothing about it yet.
+    writeFileSync(join(remote, "a.txt"), "C\n");
+    git(remote, "add", "-A");
+    git(remote, "commit", "-q", "-m", "C");
+    const remoteTip = git(remote, "rev-parse", "HEAD");
+    assert.notEqual(staleHead, remoteTip, "the fixture must actually diverge");
+
+    // Fetch, exactly as refreshMirror does — refs move, HEAD does not.
+    git(mirror, "fetch", "--prune", "origin");
+    const fetched = git(mirror, "rev-parse", "FETCH_HEAD");
+    assert.equal(fetched, remoteTip, "fetch should resolve the remote tip");
+    assert.equal(
+      git(mirror, "rev-parse", "HEAD"),
+      staleHead,
+      "fetch must NOT move the mirror's HEAD — this is the whole defect",
+    );
+
+    // Cut the worktree the way the product now does: pinned to the fetched tip.
+    const dir = join(root, "wt");
+    const r = spawnSync("git", worktreeAddArgs(mirror, "aether/pinned-1", dir, fetched), { encoding: "utf8" });
+    assert.equal(r.status, 0, `worktree add failed: ${r.stderr}`);
+
+    assert.equal(git(dir, "rev-parse", "HEAD"), remoteTip, "the worktree must start at the fetched revision");
+    assert.notEqual(git(dir, "rev-parse", "HEAD"), staleHead, "it must not start at the mirror's stale HEAD");
+  });
+}

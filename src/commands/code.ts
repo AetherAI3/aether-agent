@@ -148,6 +148,9 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   //    A non-TTY run without --yes proceeds in place with zero prompts/side
   //    effects, so pipes, CI, and tests never hang.
   let repoSpec: RepoSpec | null = null;
+  // The exact revision a --repo worktree must start from. Null for a plain
+  // --worktree run, where the user's own checkout is the intended base.
+  let repoBase: string | null = null;
   let worktree: Worktree | null = null;
   let cwd: string;
   if (opts.repo || opts.worktree) {
@@ -167,19 +170,30 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
             ? "(fetched)"
             : `(NOT REFRESHED — ${co.freshness.reason ?? "reason unknown"})`;
         process.stderr.write(`⎇ repo ${repoSpec.full} ${how}${tip}\n  ${co.dir}\n`);
-        if (co.freshness.state !== "fresh") {
+        // Refuse rather than branch off a base nobody can name. git fetch moves
+        // remote refs, not the mirror's HEAD, so without a known tip the run
+        // would silently start from whatever was on disk while having just
+        // printed a reassuring fetch line.
+        if (co.freshness.state !== "fresh" || !co.freshness.remoteTip) {
           process.stderr.write(
-            "  ! this worktree will branch off whatever the mirror already had;\n" +
-              "    its base is not known to match the remote.\n",
+            `✗ refusing to start: the base for ${repoSpec.full} is not known to match the remote.\n` +
+              `  ${co.freshness.reason ?? "no revision was resolved"}\n` +
+              "  a worktree cut now would branch off whatever the mirror already had.\n" +
+              "  reconnect and retry, or work in a local checkout you control.\n",
           );
+          return 1;
         }
+        repoBase = co.freshness.remoteTip;
       } catch (err) {
         process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
         return 1;
       }
     }
     try {
-      worktree = createWorktree(repoRoot, label);
+      // Pin the worktree to the revision the mirror actually fetched. git fetch
+      // moves remote refs, not the mirror's HEAD, so an unpinned `worktree add`
+      // branches off a base that can be well behind the tip just reported.
+      worktree = createWorktree(repoRoot, label, undefined, repoBase ?? undefined);
       process.stderr.write(`⌥ worktree ${worktree.branch}\n  ${worktree.dir}\n`);
     } catch (err) {
       process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
