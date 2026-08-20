@@ -446,12 +446,30 @@ Requires an active orchestrator — switch with `/agent neo` or `/agent kronus` 
 | `AETHER_LOG_DIR` | `~/.aether-agent/logs` | Where session logs (and therefore `aether resume`) live. |
 | `AETHER_BACKEND` | `auto` | `local` \| `cloud` \| `auto` — overrides the config `backend`. |
 | `AETHER_LOCAL_BRAIN` | *(unset)* | `python` runs the separately-installed Unlimited-Context brain instead of the built-in Ollama one. |
-| `OLLAMA_HOST` | `http://localhost:11434` | Where the offline brain looks for Ollama. |
+| `OLLAMA_HOST` | `http://localhost:11434` | Where the offline brain looks for Ollama. Accepts Ollama's own scheme-less form (`127.0.0.1:11434`) as well as a full URL — see below. |
 | `AETHER_STREAM_TIMEOUT_MS` | `120000` | Stream open/idle timeout (ms). `0` disables it. |
 | `AETHER_NO_ANIM` | *(unset)* | `1` disables all animated status lines and the thinking pulse. |
 | `NO_COLOR` | *(unset)* | Any value disables ANSI colors (https://no-color.org). |
 
 See [`.env.example`](.env.example).
+
+### `OLLAMA_HOST` accepted forms
+
+`ollama serve` prints and binds a **scheme-less** `host:port`, and that is what most
+people paste into `OLLAMA_HOST`. Every accepted form below is normalized to a full
+base URL before any request is built:
+
+| You set | Aether uses | Note |
+|---|---|---|
+| *(unset or empty)* | `http://localhost:11434` | The default. |
+| `127.0.0.1:11434` | `http://127.0.0.1:11434` | Scheme-less — `http://` is added. |
+| `localhost:11434` | `http://localhost:11434` | Scheme-less. |
+| `0.0.0.0:11434` | `http://127.0.0.1:11434` | `0.0.0.0` is a *bind* address, not a *connect* address. |
+| `http://localhost:11434/` | `http://localhost:11434` | Trailing slashes are stripped. |
+| `https://ollama.example.com` | `https://ollama.example.com` | A remote/proxied Ollama. |
+
+Anything that still will not parse as an `http`/`https` URL is rejected up front with
+an error naming the bad value, instead of failing later as "cannot reach Ollama".
 
 ---
 

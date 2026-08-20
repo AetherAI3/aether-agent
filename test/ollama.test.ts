@@ -7,6 +7,8 @@ import {
   ollamaChat,
   extractToolCalls,
   samplingFor,
+  normalizeOllamaHost,
+  DEFAULT_OLLAMA_HOST,
   DEFAULT_OLLAMA_MODEL,
   type ChatMessage,
   type ToolSchema,
@@ -212,4 +214,89 @@ test("ollamaChat throws a model-not-pulled hint on a 404", async () => {
 
 test("DEFAULT_OLLAMA_MODEL is the universal small coder default", () => {
   assert.equal(DEFAULT_OLLAMA_MODEL, "qwen2.5-coder:7b");
+});
+
+// --- normalizeOllamaHost: Ollama's own scheme-less OLLAMA_HOST convention ----
+test("normalizeOllamaHost accepts the scheme-less host:port ollama serve prints", () => {
+  assert.equal(normalizeOllamaHost("127.0.0.1:11434"), "http://127.0.0.1:11434");
+  assert.equal(normalizeOllamaHost("localhost:11434"), "http://localhost:11434");
+});
+
+test("normalizeOllamaHost maps the 0.0.0.0 bind address to a connectable one", () => {
+  assert.equal(normalizeOllamaHost("0.0.0.0:11434"), "http://127.0.0.1:11434");
+  assert.equal(normalizeOllamaHost("http://0.0.0.0:11434"), "http://127.0.0.1:11434");
+});
+
+test("normalizeOllamaHost keeps explicit schemes and strips trailing slashes", () => {
+  assert.equal(normalizeOllamaHost("http://localhost:11434/"), "http://localhost:11434");
+  assert.equal(normalizeOllamaHost("http://localhost:11434///"), "http://localhost:11434");
+  assert.equal(normalizeOllamaHost("https://ollama.example.com"), "https://ollama.example.com");
+  assert.equal(normalizeOllamaHost("https://ollama.example.com/proxy/"), "https://ollama.example.com/proxy");
+});
+
+test("normalizeOllamaHost falls back to the default for empty/whitespace/undefined", () => {
+  assert.equal(normalizeOllamaHost(undefined), DEFAULT_OLLAMA_HOST);
+  assert.equal(normalizeOllamaHost(""), DEFAULT_OLLAMA_HOST);
+  assert.equal(normalizeOllamaHost("   "), DEFAULT_OLLAMA_HOST);
+  assert.equal(normalizeOllamaHost("  127.0.0.1:11434  "), "http://127.0.0.1:11434");
+});
+
+test("normalizeOllamaHost rejects unusable values and names the bad value", () => {
+  assert.throws(() => normalizeOllamaHost("ftp://localhost:11434"), /ftp/);
+  assert.throws(() => normalizeOllamaHost("http://"), /"http:\/\/"|no hostname|Invalid Ollama host/);
+  assert.throws(() => normalizeOllamaHost(":::"), /Invalid Ollama host/);
+});
+
+// The bug this fixes: a scheme-less host was concatenated raw, so fetch() got
+// "127.0.0.1:11434/v1/chat/completions" -> "Failed to parse URL", which the
+// unreachable-handler then reported as "set OLLAMA_HOST" — the thing the user did.
+test("ollamaChat completes a turn against a scheme-less host:port", async () => {
+  const { base, server } = await stub((_req, _body, res) => {
+    res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: "pong" } }] }));
+  });
+  try {
+    const schemeless = base.replace(/^https?:\/\//, "");
+    assert.ok(!schemeless.includes("://"), "test really is exercising the scheme-less form");
+    const reply = await ollamaChat([{ role: "user", content: "ping" }], { host: schemeless });
+    assert.equal(reply.content, "pong");
+  } finally {
+    server.close();
+  }
+});
+
+test("ollamaChat surfaces a bad OLLAMA_HOST as a host error, not 'cannot reach Ollama'", async () => {
+  await assert.rejects(
+    () => ollamaChat([{ role: "user", content: "x" }], { host: "ftp://localhost:11434" }),
+    /Invalid Ollama host/,
+  );
+});
+
+// --- the timeout must cover the BODY, not just the headers ------------------
+// stream:false means the whole completion arrives in the body. A server that
+// answers 200 and then stalls mid-body used to hang forever, because the timer
+// was cleared as soon as headers arrived.
+test("ollamaChat times out when the server stalls mid-body after 200 headers", async () => {
+  const server = createServer((req, res) => {
+    req.on("data", () => {});
+    req.on("end", () => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.write('{"choices":[{"message":{"role":"assistant","content":"');
+      // ...and then never finishes. No res.end().
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    await assert.rejects(
+      () =>
+        ollamaChat([{ role: "user", content: "x" }], {
+          host: `http://127.0.0.1:${port}`,
+          timeoutMs: 400,
+        }),
+      /timed out after/,
+    );
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
 });

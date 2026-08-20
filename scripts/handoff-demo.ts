@@ -24,6 +24,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizeOllamaHost } from "../src/core/ollama.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..");
@@ -240,7 +241,9 @@ async function main(): Promise<number> {
 
   const state: StubState = { turns: new Map(), firstPrompt: new Map(), failures: [] };
   let server: Server | null = null;
-  let ollamaHost = process.env["OLLAMA_HOST"] ?? "http://localhost:11434";
+  // Normalize so Ollama's own scheme-less OLLAMA_HOST convention ("127.0.0.1:11434")
+  // is a usable base URL for the child CLI instead of an unparseable string.
+  let ollamaHost = normalizeOllamaHost(process.env["OLLAMA_HOST"]);
   if (!REAL) {
     const stub = await startStub(state);
     server = stub.server;

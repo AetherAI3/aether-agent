@@ -12,7 +12,7 @@ import { isSafeUrl, webFetch, webSearch } from "./web.js";
 import { OllamaBrain } from "./brain_ollama.js";
 import { CloudBrain } from "./brain_cloud.js";
 import { ToolExecutor, type ToolResult } from "./tool_executor.js";
-import { DEFAULT_OLLAMA_HOST, DEFAULT_OLLAMA_MODEL } from "./ollama.js";
+import { DEFAULT_OLLAMA_HOST, DEFAULT_OLLAMA_MODEL, normalizeOllamaHost } from "./ollama.js";
 import { defaultTokenStore, type TokenStore } from "./auth.js";
 import { loadConfig } from "./config.js";
 import { ApiClient } from "./transport.js";
@@ -40,7 +40,7 @@ export async function ollamaUp(host: string, timeoutMs = 4000): Promise<boolean>
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeoutMs);
   try {
-    const res = await fetch(host.replace(/\/$/, "") + "/api/tags", { signal: ctl.signal });
+    const res = await fetch(normalizeOllamaHost(host) + "/api/tags", { signal: ctl.signal });
     return res.ok;
   } catch {
     return false;
@@ -210,7 +210,16 @@ export async function smokeMain(): Promise<number> {
   const cfg = loadConfig();
   const baseUrl = cfg.baseUrl || "https://api.aethersystems.net/cloud";
   const model = cfg.defaultModel || DEFAULT_OLLAMA_MODEL;
-  const host = process.env["OLLAMA_HOST"] || DEFAULT_OLLAMA_HOST;
+  // Normalize here so a scheme-less OLLAMA_HOST (Ollama's own convention) is
+  // diagnosed as a bad value instead of being reported as "Ollama is down".
+  const rawHost = process.env["OLLAMA_HOST"] || DEFAULT_OLLAMA_HOST;
+  let host = DEFAULT_OLLAMA_HOST;
+  let hostError = "";
+  try {
+    host = normalizeOllamaHost(rawHost);
+  } catch (err) {
+    hostError = err instanceof Error ? err.message : String(err);
+  }
 
   const safe = async (name: string, fn: () => Promise<Check>): Promise<Check> => {
     try {
@@ -219,11 +228,12 @@ export async function smokeMain(): Promise<number> {
       return { name, status: "FAIL", detail: `crashed: ${err instanceof Error ? err.message : String(err)}` };
     }
   };
+  const badHost = (name: string): Check => ({ name, status: "FAIL", detail: hostError });
 
   const results: Check[] = [
     checkSsrf(),
-    await safe("ollama", () => checkOllama(host)),
-    await safe("local turn", () => checkLocalTurn(host, model)),
+    hostError ? badHost("ollama") : await safe("ollama", () => checkOllama(host)),
+    hostError ? badHost("local turn") : await safe("local turn", () => checkLocalTurn(host, model)),
     await safe("web_search", () => checkWebSearch()),
     await safe("web_fetch", () => checkWebFetch()),
     await safe("auth", () => checkAuth(baseUrl)),

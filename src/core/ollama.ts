@@ -89,6 +89,60 @@ const PROFILES: readonly Profile[] = [
 // Safe default for an unknown tag: deterministic, like Qwen coding.
 const DEFAULT_SAMPLING: Sampling = { temperature: 0.2, top_p: 0.9, top_k: 40 };
 
+// --- host normalization ------------------------------------------------------
+// Ollama's own convention for OLLAMA_HOST is a scheme-LESS host:port — that is
+// exactly what `ollama serve` prints and binds ("127.0.0.1:11434", "0.0.0.0:11434").
+// Concatenating "/v1/chat/completions" onto that produces a string fetch() cannot
+// parse, so every local turn died with "Failed to parse URL" and an error hint
+// telling the user to set the very variable they had just set. Normalize once,
+// here, and route every call site through it.
+
+/** Matches an explicit `scheme://` prefix (http, https, or anything else). */
+const SCHEME_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+
+/**
+ * Canonicalize an Ollama base URL. Accepts every form users actually type:
+ *   `127.0.0.1:11434` · `localhost:11434` · `0.0.0.0:11434` ·
+ *   `http://localhost:11434` · `https://ollama.example.com` ·
+ *   `http://localhost:11434/` (trailing slashes stripped) · `` (→ default).
+ *
+ * A bare `0.0.0.0` is a *bind* address, not a *connect* address, so it maps to
+ * `127.0.0.1` for the client side. Throws an Error naming the offending value
+ * when the result still will not parse.
+ */
+export function normalizeOllamaHost(raw?: string | null): string {
+  const trimmed = (raw ?? "").trim();
+  if (trimmed === "") return DEFAULT_OLLAMA_HOST;
+
+  const candidate = SCHEME_RE.test(trimmed) ? trimmed : `http://${trimmed}`;
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    throw new Error(
+      `Invalid Ollama host ${JSON.stringify(trimmed)}. Use 'host:port' (e.g. 127.0.0.1:11434) ` +
+        `or a full URL (e.g. http://localhost:11434).`,
+    );
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(
+      `Invalid Ollama host ${JSON.stringify(trimmed)}: unsupported scheme '${url.protocol.replace(/:$/, "")}'. ` +
+        `Ollama speaks http (or https behind a proxy).`,
+    );
+  }
+  if (url.hostname === "") {
+    throw new Error(
+      `Invalid Ollama host ${JSON.stringify(trimmed)}: no hostname. Use 'host:port' (e.g. 127.0.0.1:11434).`,
+    );
+  }
+  // 0.0.0.0 / :: mean "bind every interface"; you cannot connect to them portably.
+  if (url.hostname === "0.0.0.0") url.hostname = "127.0.0.1";
+  else if (url.hostname === "[::]") url.hostname = "[::1]";
+
+  const path = url.pathname.replace(/\/+$/, "");
+  return `${url.protocol}//${url.host}${path}`;
+}
+
 /** The sampling knobs for a model tag (first substring match; safe default). */
 export function samplingFor(model: string): Sampling {
   const low = (model || "").toLowerCase();
@@ -236,7 +290,7 @@ export async function ollamaChat(
   messages: readonly ChatMessage[],
   opts: ChatOptions = {},
 ): Promise<ChatReply> {
-  const host = (opts.host || process.env["OLLAMA_HOST"] || DEFAULT_OLLAMA_HOST).replace(/\/+$/, "");
+  const host = normalizeOllamaHost(opts.host || process.env["OLLAMA_HOST"] || DEFAULT_OLLAMA_HOST);
   const model = opts.model || DEFAULT_OLLAMA_MODEL;
   const sampling = samplingFor(model);
   const temperature = opts.temperature ?? sampling.temperature;
@@ -255,51 +309,72 @@ export async function ollamaChat(
   const controller = new AbortController();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } catch (err) {
+  const timedOut = (): Error =>
+    new Error(`Ollama request timed out after ${Math.round(timeoutMs / 1000)}s (${url}).`);
+  const isAbort = (err: unknown): boolean => {
     const msg = err instanceof Error ? err.message : String(err);
-    if ((err instanceof Error && err.name === "AbortError") || msg.includes("aborted")) {
-      throw new Error(`Ollama request timed out after ${Math.round(timeoutMs / 1000)}s (${url}).`);
+    return (err instanceof Error && err.name === "AbortError") || msg.includes("aborted");
+  };
+
+  // The timer must stay armed until the BODY is read, not just until headers
+  // arrive: stream:false means the whole completion is in the body, so a server
+  // that answers 200 and then stalls mid-body would otherwise hang forever.
+  try {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (isAbort(err)) throw timedOut();
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Cannot reach Ollama at ${host}. Is it running? Start it with 'ollama serve' ` +
+          `(default port 11434), or set OLLAMA_HOST. Underlying error: ${msg}`,
+      );
     }
-    throw new Error(
-      `Cannot reach Ollama at ${host}. Is it running? Start it with 'ollama serve' ` +
-        `(default port 11434), or set OLLAMA_HOST. Underlying error: ${msg}`,
-    );
+
+    if (!res.ok) {
+      let text = "";
+      try {
+        text = await res.text();
+      } catch (err) {
+        if (isAbort(err)) throw timedOut();
+      }
+      if (res.status === 404) {
+        throw new Error(
+          `Ollama model '${model}' not found (404). Pull it first: 'ollama pull ${model}'. ` +
+            `Server said: ${text.slice(0, 300)}`,
+        );
+      }
+      throw new Error(`Ollama error ${res.status} at ${url}: ${text.slice(0, 300)}`);
+    }
+
+    let json: Record<string, unknown> = {};
+    try {
+      json = (await res.json()) as Record<string, unknown>;
+    } catch (err) {
+      if (isAbort(err)) throw timedOut();
+      json = {};
+    }
+    const choices = json["choices"];
+    const first = Array.isArray(choices) && isRecord(choices[0]) ? (choices[0] as Record<string, unknown>) : {};
+    const message = isRecord(first["message"]) ? (first["message"] as Record<string, unknown>) : {};
+    const content = typeof message["content"] === "string" ? message["content"] : "";
+
+    const structured = normalizeToolCalls(message["tool_calls"]);
+    const toolCalls = structured.length > 0 ? structured : extractToolCalls(content);
+
+    const reply: ChatReply = {
+      role: "assistant",
+      content,
+      ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+    };
+    return reply;
   } finally {
     clearTimeout(timer);
   }
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    if (res.status === 404) {
-      throw new Error(
-        `Ollama model '${model}' not found (404). Pull it first: 'ollama pull ${model}'. ` +
-          `Server said: ${text.slice(0, 300)}`,
-      );
-    }
-    throw new Error(`Ollama error ${res.status} at ${url}: ${text.slice(0, 300)}`);
-  }
-
-  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  const choices = json["choices"];
-  const first = Array.isArray(choices) && isRecord(choices[0]) ? (choices[0] as Record<string, unknown>) : {};
-  const message = isRecord(first["message"]) ? (first["message"] as Record<string, unknown>) : {};
-  const content = typeof message["content"] === "string" ? message["content"] : "";
-
-  const structured = normalizeToolCalls(message["tool_calls"]);
-  const toolCalls = structured.length > 0 ? structured : extractToolCalls(content);
-
-  const reply: ChatReply = {
-    role: "assistant",
-    content,
-    ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-  };
-  return reply;
 }
