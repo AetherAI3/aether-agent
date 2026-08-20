@@ -56,7 +56,7 @@ This file began as the starting point and now records the completed run.
 - A production verifier enforcing manifest, package allowlist/size, workflow, release, installer, and installed-CLI invariants.
 - A Windows portability repair for workspace containment when runner temp paths use an alias; lexical traversal and canonical symlink guards remain independently enforced.
 - Operations, rollback, backup, observability, ownership, and required-administrator-control documentation.
-- Full loop artifacts and governance trail under `_loopstate/LOOP-07`, `LOOP-17`, `LOOP-11`, `LOOP-12`, and `LOOP-13`.
+- Full loop artifacts and governance trail under `docs/loops/LOOP-07`, `LOOP-17`, `LOOP-11`, `LOOP-12`, and `LOOP-13`.
 
 ## Remaining operator gate
 

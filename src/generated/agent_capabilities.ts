@@ -3,7 +3,17 @@
 // Source commit: 97eacd3e9aca4df226cae638f8f8868b8219fe88
 // Contract version: 1
 // Canonical sha256: 8da094234a370a28dfd6206f039425f086307aa9ca0a67bc004d3d453716ac04
-// Regenerate: node scratchpad gen_fallback.mjs (see docs/releases/skills-health notes)
+// Regenerate (no generator script is checked in; this is the whole procedure):
+//   1. Take contracts/agent-capabilities.v1.json from the source repo at the
+//      commit you want to pin.
+//   2. Paste it as AGENT_CAPABILITIES_FALLBACK below, and set the header's
+//      "Source commit" to that commit.
+//   3. Recompute AGENT_CAPABILITIES_DIGEST as the sha256 of the CANONICAL
+//      encoding — JSON with object keys sorted recursively, no whitespace:
+//        sha256(JSON.stringify(sortKeysDeep(contract)))
+//      and copy it into the "Canonical sha256" header line too.
+//   4. Update AGENT_CAPABILITIES_SOURCE.commit / .contractVersion to match.
+// The digest below was verified to reproduce under exactly that recipe.
 
 /** Offline fallback snapshot of the canonical agent capability contract. */
 export const AGENT_CAPABILITIES_FALLBACK = {
