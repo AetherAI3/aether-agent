@@ -8,7 +8,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CloudBrain } from "../src/core/brain_cloud.js";
+import { CloudBrain, checkDevSession, devProtocolVersions } from "../src/core/brain_cloud.js";
 import { ApiClient } from "../src/core/transport.js";
 import type { BrainEvent } from "../src/core/brain_protocol.js";
 import type { TokenStore } from "../src/core/auth.js";
@@ -23,10 +23,16 @@ interface Call {
 
 /** A dev-protocol server fake: create → JSON; stream attempts → scripted SSE
  *  bodies (one per reconnect); tool-results/control/DELETE → recorded JSON. */
-function devServer(streams: string[][], opts?: { failToolResultTimes?: number }) {
+function devServer(
+  streams: string[][],
+  opts?: { failToolResultTimes?: number; sessionId?: string | null; protocolVersion?: number | null },
+) {
   const calls: Call[] = [];
   let attempt = 0;
   let toolResultFailures = opts?.failToolResultTimes ?? 0;
+  // null means "omit the field entirely" — a 200 that answers neither question.
+  const sessionId = opts?.sessionId === undefined ? "devs_abc" : opts.sessionId;
+  const protocolVersion = opts?.protocolVersion === undefined ? 1 : opts.protocolVersion;
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -44,12 +50,10 @@ function devServer(streams: string[][], opts?: { failToolResultTimes?: number })
       }) as unknown as Response;
 
     if (url.endsWith("/agent/dev/sessions") && method === "POST") {
-      return json(200, {
-        session_id: "devs_abc",
-        protocol_version: 1,
-        model: "sonnet",
-        tools: ["read_file", "write_file"],
-      });
+      const created: Record<string, unknown> = { model: "sonnet", tools: ["read_file", "write_file"] };
+      if (sessionId !== null) created["session_id"] = sessionId;
+      if (protocolVersion !== null) created["protocol_version"] = protocolVersion;
+      return json(200, created);
     }
     if (url.includes("/stream") && method === "GET") {
       const frames = streams[Math.min(attempt, streams.length - 1)] ?? [];
@@ -343,5 +347,83 @@ test("a non-404 create failure surfaces as an error, not a silent legacy downgra
     for await (const ev of brain.run(TASK)) out.push(ev);
     assert.ok(out.some((e) => e.type === "error"));
     assert.ok(!out.some((e) => e.type === "monologue"));
+  });
+});
+
+test("devProtocolVersions reads the accepted set from the capability contract", () => {
+  // The contract has always carried this list; until now nothing consumed it.
+  assert.deepEqual(devProtocolVersions({ dev_session_protocol_versions: [1, 2] }), [1, 2]);
+  // Packaged contract when no resolved contract is supplied.
+  assert.deepEqual(devProtocolVersions(), [1]);
+  // A contract with a missing or unusable list still leaves the client with the
+  // version it actually declares on the wire, never an empty accept-set.
+  assert.deepEqual(devProtocolVersions({}), [1]);
+  assert.deepEqual(devProtocolVersions({ dev_session_protocol_versions: ["two"] }), [1]);
+});
+
+test("checkDevSession names both versions so the message is actionable", () => {
+  assert.equal(checkDevSession({ session_id: "s", protocol_version: 1 }, [1]), null);
+  const mismatch = checkDevSession({ session_id: "s", protocol_version: 2 }, [1]);
+  assert.ok(mismatch);
+  assert.match(mismatch, /v2/);
+  assert.match(mismatch, /v1/);
+  assert.match(mismatch, /upgrade/i);
+  assert.match(String(checkDevSession({ protocol_version: 1 }, [1])), /session_id/);
+  assert.match(String(checkDevSession({ session_id: "  ", protocol_version: 1 }, [1])), /session_id/);
+});
+
+test("a create response with no session_id fails the run instead of streaming /undefined/stream", async () => {
+  const { fetchImpl, calls } = devServer([[]], { sessionId: null });
+  await withFetch(fetchImpl, async () => {
+    const brain = new CloudBrain(new ApiClient("https://stub.test", tokens));
+    const out: BrainEvent[] = [];
+    for await (const ev of brain.run(TASK)) out.push(ev);
+    assert.ok(out.some((e) => e.type === "error"), "must surface an error");
+    assert.ok(
+      !calls.some((c) => c.url.includes("undefined")),
+      "must never build a request path out of an absent session id",
+    );
+  });
+});
+
+test("an unsupported dev protocol version fails the run and does NOT downgrade to legacy", async () => {
+  // A version mismatch is not "this server has no dev route". Folding it into
+  // the 404/403 downgrade would trade a loud, fixable incompatibility for a
+  // silent loss of the local tool round-trip.
+  const { fetchImpl, calls } = devServer([[]], { protocolVersion: 2 });
+  await withFetch(fetchImpl, async () => {
+    const brain = new CloudBrain(new ApiClient("https://stub.test", tokens));
+    const out: BrainEvent[] = [];
+    for await (const ev of brain.run(TASK)) out.push(ev);
+    const err = out.find((e) => e.type === "error");
+    assert.ok(err && err.type === "error");
+    assert.match(err.msg, /v2/);
+    assert.match(err.msg, /v1/);
+    assert.ok(!calls.some((c) => c.url.includes("/agent/chat/stream")), "must not fall back to the legacy stream");
+    assert.ok(!calls.some((c) => c.url.includes("/stream") && c.method === "GET"), "must not attach to the dev stream");
+  });
+});
+
+test("a build whose contract advertises v2 attaches to a v2 session", async () => {
+  // The accepted set comes from the resolved contract, so a client shipped with
+  // a newer contract negotiates upward without another edit to brain_cloud.ts.
+  const { fetchImpl, calls } = devServer(
+    [[frame({ type: "done", seq: 1, ok: true, uvt: 1, cents: 0 })]],
+    { protocolVersion: 2 },
+  );
+  await withFetch(fetchImpl, async () => {
+    const brain = new CloudBrain(new ApiClient("https://stub.test", tokens), {
+      contract: { contract_version: 1, dev_session_protocol_versions: [1, 2] },
+      digest: "test",
+      source: "fallback",
+      overlay: null,
+      warnings: [],
+    });
+    const out: BrainEvent[] = [];
+    for await (const ev of brain.run(TASK)) out.push(ev);
+    assert.ok(!out.some((e) => e.type === "error"), JSON.stringify(out));
+    assert.ok(calls.some((c) => c.url.includes("/stream") && c.method === "GET"));
+    const done = out.find((e) => e.type === "done");
+    assert.ok(done && done.type === "done" && done.ok === true);
   });
 });
