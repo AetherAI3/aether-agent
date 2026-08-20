@@ -1,15 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpWorkspace } from "./tmp_workspace.js";
 import { spawnSync } from "node:child_process";
 import { ToolExecutor } from "../src/core/tool_executor.js";
 
 const canSpawnGit = !spawnSync("git", ["--version"], { encoding: "utf8" }).error;
 
 function initRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), "aether-gitcommit-"));
+  const dir = tmpWorkspace("aether-gitcommit-");
   spawnSync("git", ["init", "-q"], { cwd: dir });
   spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: dir });
   spawnSync("git", ["config", "user.name", "Test"], { cwd: dir });
@@ -24,7 +24,11 @@ test("git_commit passes a message with shell metacharacters through unexecuted",
   const dir = initRepo();
   try {
     const exec = new ToolExecutor(dir);
-    writeFileSync(join(dir, "a.txt"), "changed\n");
+    // Write through the tool, the way the agent does. The commit guard's
+    // baseline is armed by the first mutating tool call, so a change made
+    // behind the executor's back is (correctly) part of the baseline and would
+    // not be a commit candidate.
+    exec.execute("write_file", { path: "a.txt", content: "changed\n" });
     const r = exec.execute("git_commit", { message: 'fix "cap & retry" `whoami` $(id)' });
     assert.equal(r.exitCode, 0);
     const log = spawnSync("git", ["log", "-1", "--pretty=%s"], { cwd: dir, encoding: "utf8" });
@@ -52,7 +56,7 @@ test("run_tests with no explicit command and no configured testCmd does not defa
   // silent fallback to a real test runner. brain_protocol.ts's wire-encoding
   // default was fixed there; this covers the sibling default in ToolExecutor
   // itself, which is what actually executes brain-initiated run_tests calls.
-  const dir = mkdtempSync(join(tmpdir(), "aether-runtests-"));
+  const dir = tmpWorkspace("aether-runtests-");
   try {
     const exec = new ToolExecutor(dir); // no testCmd passed — must NOT become "pytest -q"
     const r = await exec.executeAsync("run_tests", {});
@@ -64,7 +68,7 @@ test("run_tests with no explicit command and no configured testCmd does not defa
 });
 
 test("run_tests still honors an explicit command even with no configured testCmd", async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "aether-runtests-explicit-"));
+  const dir = tmpWorkspace("aether-runtests-explicit-");
   try {
     const exec = new ToolExecutor(dir);
     const r = await exec.executeAsync("run_tests", { command: process.platform === "win32" ? "exit 0" : "true" });
@@ -76,7 +80,7 @@ test("run_tests still honors an explicit command even with no configured testCmd
 });
 
 test("run_tests honors a configured testCmd when the call omits an explicit command", async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "aether-runtests-cfg-"));
+  const dir = tmpWorkspace("aether-runtests-cfg-");
   try {
     const exec = new ToolExecutor(dir, process.platform === "win32" ? "exit 0" : "true");
     const r = await exec.executeAsync("run_tests", {});
@@ -87,12 +91,42 @@ test("run_tests honors a configured testCmd when the call omits an explicit comm
   }
 });
 
+test("the commit guard is armed by the first mutating tool, not by construction", async (t) => {
+  // Constructing a ToolExecutor used to run two synchronous `git` calls, which
+  // froze `aether agent` / `aether chat` before the first turn even in runs
+  // that never committed. The baseline now comes from the first MUTATING tool
+  // call. This asserts the whole ordering at once: construction does not arm
+  // it, a read does not arm it, and the write does — so a change made behind
+  // the executor's back before that point is baseline, not a commit candidate.
+  if (!canSpawnGit) { t.skip("sandbox blocks child process spawning"); return; }
+  const dir = initRepo();
+  try {
+    const exec = new ToolExecutor(dir);
+    writeFileSync(join(dir, "a.txt"), "edited outside the agent\n");
+    assert.equal(exec.execute("read_file", { path: "a.txt" }).exitCode, 0);
+
+    const wrote = exec.execute("write_file", { path: "b.txt", content: "agent wrote this\n" });
+    assert.equal(wrote.exitCode, 0);
+
+    const r = exec.execute("git_commit", { message: "feat: only what the agent touched" });
+    assert.equal(r.exitCode, 0, r.output);
+
+    const named = spawnSync("git", ["show", "--name-only", "--pretty=format:", "HEAD"], {
+      cwd: dir,
+      encoding: "utf8",
+    }).stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+    assert.deepEqual(named, ["b.txt"], "must commit the agent's write and not the out-of-band edit");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("git_commit surfaces a real failure instead of reporting the old HEAD as success", async (t) => {
   if (!canSpawnGit) { t.skip("sandbox blocks child process spawning"); return; }
   const dir = initRepo();
   try {
     const exec = new ToolExecutor(dir);
-    writeFileSync(join(dir, "a.txt"), "changed again\n");
+    exec.execute("write_file", { path: "a.txt", content: "changed again\n" });
     // Break the repo's ability to commit: a pre-commit hook that always fails.
     const hookPath = join(dir, ".git", "hooks", "pre-commit");
     mkdirSync(join(dir, ".git", "hooks"), { recursive: true });

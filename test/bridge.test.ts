@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync, symlinkSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { TEMP_ROOT, tmpWorkspace } from "./tmp_workspace.js";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -146,7 +146,7 @@ test("LineBuffer yields multiple complete lines in one chunk", () => {
 
 // --- tool executor (one path-guard, [exit N] shape) ------------------------
 test("ToolExecutor writes then reads a file in the workspace", () => {
-  const dir = mkdtempSync(join(tmpdir(), "aether-tool-"));
+  const dir = tmpWorkspace("aether-tool-");
   try {
     const ex = new ToolExecutor(dir);
     const w = ex.execute("write_file", { path: "a.txt", content: "hello" });
@@ -161,7 +161,7 @@ test("ToolExecutor writes then reads a file in the workspace", () => {
 });
 
 test("ToolExecutor refuses a path escaping the workspace", () => {
-  const dir = mkdtempSync(join(tmpdir(), "aether-tool-"));
+  const dir = tmpWorkspace("aether-tool-");
   try {
     const ex = new ToolExecutor(dir);
     const r = ex.execute("read_file", { path: "../../etc/passwd" });
@@ -173,7 +173,7 @@ test("ToolExecutor refuses a path escaping the workspace", () => {
 });
 
 test("repo_search finds literal matches recursively without external grep", () => {
-  const dir = mkdtempSync(join(tmpdir(), "aether-search-"));
+  const dir = tmpWorkspace("aether-search-");
   try {
     mkdirSync(join(dir, "sub"));
     mkdirSync(join(dir, "node_modules"));
@@ -197,7 +197,7 @@ test("repo_search finds literal matches recursively without external grep", () =
 });
 
 test("repo_search caps matches at 40 hits", () => {
-  const dir = mkdtempSync(join(tmpdir(), "aether-search-cap-"));
+  const dir = tmpWorkspace("aether-search-cap-");
   try {
     writeFileSync(join(dir, "many.txt"), Array.from({ length: 50 }, (_, i) => `needle ${i}`).join("\n"), "utf8");
     const r = new ToolExecutor(dir).execute("repo_search", { query: "needle" });
@@ -222,7 +222,7 @@ test("capHeadTail keeps the END (pytest summary) when output is over the cap", (
 });
 
 test("unknown tool returns a clear error, never throws", () => {
-  const ex = new ToolExecutor(tmpdir());
+  const ex = new ToolExecutor(TEMP_ROOT);
   const r = ex.execute("frobnicate", {});
   assert.equal(r.exitCode, 1);
   assert.match(r.output, /unknown tool/);
@@ -254,7 +254,7 @@ class FakeBrain implements Brain {
 }
 
 test("hostLoop executes a tool_call and feeds the result back", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "aether-host-"));
+  const dir = tmpWorkspace("aether-host-");
   try {
     const brain = new FakeBrain();
     const exec = new ToolExecutor(dir);
@@ -279,7 +279,7 @@ test("hostLoop executes a tool_call and feeds the result back", async () => {
 });
 
 test("hostLoop gate denies a tool_call: not executed, brain gets a refusal result", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "aether-gate-"));
+  const dir = tmpWorkspace("aether-gate-");
   try {
     const brain = new FakeBrain(); // emits write_file id=c1 then done on result
     const exec = new ToolExecutor(dir);
@@ -327,7 +327,7 @@ class TwoCallBrain implements Brain {
 }
 
 test("two sequential tool calls: each result pairs to its own id, in order", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "aether-corr-"));
+  const dir = tmpWorkspace("aether-corr-");
   try {
     const exec = new ToolExecutor(dir);
     exec.execute("write_file", { path: "a.txt", content: "AAA" });
@@ -347,8 +347,8 @@ test("two sequential tool calls: each result pairs to its own id, in order", asy
 
 // --- probe 2: path-guard canonicalization (the security boundary) ----------
 test("path-guard rejects traversal, absolute, and symlink escapes", () => {
-  const dir = mkdtempSync(join(tmpdir(), "aether-guard-"));
-  const outside = mkdtempSync(join(tmpdir(), "aether-outside-"));
+  const dir = tmpWorkspace("aether-guard-");
+  const outside = tmpWorkspace("aether-outside-");
   try {
     const ex = new ToolExecutor(dir);
     // .. traversal
@@ -378,7 +378,7 @@ test("run_shell surfaces a non-zero exit code and captures stderr", async (t) =>
   // `node -e` (not a platform-specific shell one-liner) so this passes
   // identically on Windows and POSIX without a win32/posix branch, and runs
   // in an isolated tmpdir so it can't leave stray output under process.cwd().
-  const ex = new ToolExecutor(mkdtempSync(join(tmpdir(), "aether-sh-")));
+  const ex = new ToolExecutor(tmpWorkspace("aether-sh-"));
   const r = await ex.executeAsync("run_shell", {
     command: `node -e "process.stderr.write('boom'); process.exit(3)"`,
   });

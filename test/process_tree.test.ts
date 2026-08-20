@@ -11,9 +11,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpWorkspace } from "./tmp_workspace.js";
 import { ToolExecutor } from "../src/core/tool_executor.js";
 
 /** True while a pid exists. Signal 0 tests for existence without delivering. */
@@ -59,7 +59,7 @@ function pidsFrom(output: string): { child: number | null; grandchild: number | 
 }
 
 test("a timed-out command kills its whole tree, not just the shell", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "aether-tree-"));
+  const dir = tmpWorkspace("aether-tree-");
   const script = treeScript(dir);
   const exec = new ToolExecutor(dir);
 
@@ -78,7 +78,7 @@ test("a timed-out command kills its whole tree, not just the shell", async () =>
 });
 
 test("an aborted command kills its whole tree and reports aborted, not timed out", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "aether-abort-"));
+  const dir = tmpWorkspace("aether-abort-");
   const script = treeScript(dir);
   const exec = new ToolExecutor(dir);
   const controller = new AbortController();
@@ -104,7 +104,7 @@ test("an aborted command kills its whole tree and reports aborted, not timed out
 });
 
 test("a normal command still returns its real exit code and output", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "aether-ok-"));
+  const dir = tmpWorkspace("aether-ok-");
   const exec = new ToolExecutor(dir);
 
   const ok = await exec.executeAsync("run_shell", { command: `"${process.execPath}" -e "console.log('hi')"` });
@@ -119,7 +119,7 @@ test("the event loop keeps running while a command is in flight", async () => {
   // spawnSync blocked the loop outright, freezing heartbeats, renderers and any
   // AbortController for the duration. Proving a timer fires during the call is
   // what distinguishes async execution from a merely faster synchronous one.
-  const dir = mkdtempSync(join(tmpdir(), "aether-loop-"));
+  const dir = tmpWorkspace("aether-loop-");
   const exec = new ToolExecutor(dir);
   let ticks = 0;
   const timer = setInterval(() => {

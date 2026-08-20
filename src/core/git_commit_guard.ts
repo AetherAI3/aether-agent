@@ -11,11 +11,57 @@ export interface GitRunner {
   run(args: string[]): GitRunResult;
 }
 
+/**
+ * Options prefixed to EVERY git invocation this runner makes.
+ *
+ * `--no-optional-locks` is not cosmetic. Without it a plain `git status`
+ * rewrites the user's index as a side effect of being read, so merely starting
+ * the agent mutates the repository and can lose a race with the user's own git
+ * process in the same worktree. Inspection must be inspection.
+ * `core.literalPathspecs` keeps a path that happens to begin with `:` from
+ * being reinterpreted as pathspec magic.
+ */
+export const GIT_GLOBAL_ARGS: readonly string[] = [
+  "--no-optional-locks",
+  "-c",
+  "core.literalPathspecs=true",
+];
+
+/**
+ * The pathspec appended to the two repository-state probes.
+ *
+ * `git status` reports the WHOLE repository, not the directory it runs in.
+ * Unbounded, the probe is O(entire repository) even when the agent's workspace
+ * is one small directory inside it, and `--untracked-files=all` turns that into
+ * an enumeration of every untracked path individually. The guard only ever
+ * stages paths inside the workspace, so bounding the probe to the workspace
+ * subtree removes work that could never have produced a candidate.
+ */
+export const WORKSPACE_PATHSPEC: readonly string[] = ["--", "."];
+
+/** `git status` probe: dirty paths in the workspace subtree, NUL-delimited. */
+export const STATUS_PROBE: readonly string[] = [
+  "status",
+  "--porcelain=v1",
+  "-z",
+  "--untracked-files=all",
+  ...WORKSPACE_PATHSPEC,
+];
+
+/** `git diff --cached` probe: staged paths in the workspace subtree. */
+export const STAGED_PROBE: readonly string[] = [
+  "diff",
+  "--cached",
+  "--name-only",
+  "-z",
+  ...WORKSPACE_PATHSPEC,
+];
+
 export class SpawnGitRunner implements GitRunner {
   constructor(private readonly cwd: string) {}
 
   run(args: string[]): GitRunResult {
-    const result = spawnSync("git", ["-c", "core.literalPathspecs=true", ...args], {
+    const result = spawnSync("git", [...GIT_GLOBAL_ARGS, ...args], {
       cwd: this.cwd,
       shell: false,
       encoding: "utf8",
@@ -98,14 +144,27 @@ export interface GitCommitResult {
   exitCode: number;
 }
 
+/**
+ * Staging guard for the `git_commit` tool.
+ *
+ * Constructing the guard takes the "already dirty before the agent touched
+ * anything" baseline, so construction must happen BEFORE the run's first
+ * workspace mutation — it cannot be deferred all the way to the first
+ * `git_commit` call. At that point the baseline would equal the current state,
+ * the set difference in `planGitCommit` would be empty for every commit, and
+ * the tool would become an unconditional no-op. The owner (`ToolExecutor`)
+ * therefore constructs the guard lazily on the first MUTATING tool call rather
+ * than at CLI start: still before anything can have changed, but off the
+ * startup path and never paid at all by a run that only reads.
+ */
 export class GitCommitGuard {
   private readonly initialDirty: string[];
   private readonly initialStaged: string[];
   private readonly initError: string | null;
 
   constructor(private readonly runner: GitRunner) {
-    const dirty = runner.run(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
-    const staged = runner.run(["diff", "--cached", "--name-only", "-z"]);
+    const dirty = runner.run([...STATUS_PROBE]);
+    const staged = runner.run([...STAGED_PROBE]);
     this.initialDirty = dirty.ok ? parsePorcelainPaths(dirty.stdout) : [];
     this.initialStaged = staged.ok ? parseNulPaths(staged.stdout) : [];
     this.initError = dirty.ok && staged.ok ? null : "not a usable git repository";
@@ -114,8 +173,8 @@ export class GitCommitGuard {
   commit(message: string): GitCommitResult {
     if (this.initError) return { output: "[git_commit refused: " + this.initError + "]", exitCode: 1 };
 
-    const dirty = this.runner.run(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
-    const staged = this.runner.run(["diff", "--cached", "--name-only", "-z"]);
+    const dirty = this.runner.run([...STATUS_PROBE]);
+    const staged = this.runner.run([...STAGED_PROBE]);
     if (!dirty.ok || !staged.ok) {
       return { output: "[git_commit refused: unable to inspect repository state]", exitCode: 1 };
     }
@@ -131,7 +190,7 @@ export class GitCommitGuard {
     const added = this.runner.run(["add", "-A", "--", ...plan.candidates]);
     if (!added.ok) return { output: "[git_commit add failed: " + added.stderr.trim() + "]", exitCode: added.exitCode };
 
-    const after = this.runner.run(["diff", "--cached", "--name-only", "-z"]);
+    const after = this.runner.run([...STAGED_PROBE]);
     const stagedAfter = after.ok ? parseNulPaths(after.stdout) : [];
     if (!after.ok || !samePaths(stagedAfter, plan.candidates)) {
       this.runner.run(["reset", "-q", "HEAD", "--", ...plan.candidates]);
