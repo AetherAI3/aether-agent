@@ -16,3 +16,8 @@ _tmp/
 
 # agent runtime output (plans the agent writes during /plan runs)
 .hermes/
+
+# packed tarballs — `npm pack` output is a build artifact, never source.
+# The release workflow packs a fresh one from the tagged commit; a committed
+# copy goes stale the moment anything merges after it.
+*.tgz
