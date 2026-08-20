@@ -8,8 +8,10 @@
 
 set -eu
 
-# Pin a specific release with AETHER_VERSION=0.2.0. The default follows npm's
-# latest dist-tag, while the quoted package spec prevents shell interpretation.
+# Pin a specific PUBLISHED release with AETHER_VERSION=<version>, e.g. 0.1.0.
+# The default follows npm's latest dist-tag, while the quoted package spec
+# prevents shell interpretation. A version that is not on the registry yet
+# cannot be installed this way — build from source instead (see README).
 AETHER_VERSION="${AETHER_VERSION:-latest}"
 case "$AETHER_VERSION" in
   ""|*[!0-9A-Za-z.+-]*)
@@ -116,6 +118,12 @@ fi
 if ! npm install -g "aether-agents@${AETHER_VERSION}" --ignore-scripts; then
   error "Install failed. Check your network and npm permissions."
   echo ""
+  if [ "$AETHER_VERSION" != "latest" ]; then
+    info "If you see 'No matching version found', ${AETHER_VERSION} is not on the"
+    info "registry yet. Published versions: npm view aether-agents versions"
+    info "To run an unpublished version, build from source — see the README."
+    echo ""
+  fi
   info "If you see EACCES errors, try one of:"
   info "  npm install -g aether-agents@${AETHER_VERSION} --ignore-scripts --prefix ~/.local"
   info "  Or install Node with a version manager from https://nodejs.org/en/download"

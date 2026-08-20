@@ -1,3 +1,49 @@
+# Aether Agent v0.2.0 — the work outlives the session
+
+**August 19, 2026**
+
+Start a task on one model. Finish it on another, on another machine. Your tests
+decide when it's done.
+
+- **Handoffs** — `aether resume export` writes one portable file: the task, the
+  model that ran it, the verify gate's verdict, how many tests were still
+  failing, the files that changed, the verification command, and the repository
+  it belongs to. Copy it anywhere and continue with `aether agent --resume
+  <file>`, on whatever model you want. Nothing in it is keyed to an absolute
+  path, so the receiving checkout does not have to live where the work started —
+  and no file contents, shell commands, or credential-shaped values ride along.
+- **`--resume` now reaches the brain** — the prior session is summarized into a
+  continuation brief the model reads before its own instruction, rather than
+  being replayed only for the human. With no new task, the run continues the
+  original one. No re-pasted chat history.
+- **`aether agent --local "<task>"` works after a plain npm install** — the
+  one-shot offline form used to spawn the separately-installed Python brain and
+  die with `spawn python ENOENT`. It now drives the Ollama brain that ships in
+  the package. `AETHER_LOCAL_BRAIN=python` opts back in.
+- **Session logs stopped redacting your file paths** — the credential filter
+  matched `pat` inside `path`, so every edited file in every log read
+  `[REDACTED]`. Real credential keys are still redacted.
+- **A run that never reached your tests no longer reports a failing one.**
+- **`npm run demo:handoff`** — a five-second deterministic proof of all of it:
+  two sessions, two models, two checkouts, one verify gate, no account and no
+  model download. See [`docs/demo/handoff.md`](docs/demo/handoff.md).
+
+**Availability.** 0.2.0 is on `main`, but it is **not yet published to npm** —
+the registry’s `latest` dist-tag still resolves to 0.1.0, so a plain
+`npm i -g aether-agents` installs 0.1.0 and none of the above. Until the 0.2.0
+release is cut, build it from source:
+
+```bash
+git clone https://github.com/AetherAI3/aether-agent
+cd aether-agent && npm ci && npm run build && npm link
+```
+
+Once 0.2.0 is published, `npm i -g aether-agents --ignore-scripts` will upgrade in
+place: no configuration changes, no migration, and 0.1.x session logs are read
+unchanged.
+
+---
+
 # Aether Agent — your artifacts get an identity, and doctor stops guessing
 
 **August 14, 2026**
@@ -37,40 +83,6 @@ Nothing to do on upgrade: `output open <number>` keeps working and existing
 history migrates on first read. Full detail in
 [docs/releases/2026-08-14.md](docs/releases/2026-08-14.md).
 
----
-
-# Aether Agent v0.2.0 — the work outlives the session
-
-**August 19, 2026**
-
-Start a task on one model. Finish it on another, on another machine. Your tests
-decide when it's done.
-
-- **Handoffs** — `aether resume export` writes one portable file: the task, the
-  model that ran it, the verify gate's verdict, how many tests were still
-  failing, the files that changed, the verification command, and the repository
-  it belongs to. Copy it anywhere and continue with `aether agent --resume
-  <file>`, on whatever model you want. Nothing in it is keyed to an absolute
-  path, so the receiving checkout does not have to live where the work started —
-  and no file contents, shell commands, or credential-shaped values ride along.
-- **`--resume` now reaches the brain** — the prior session is summarized into a
-  continuation brief the model reads before its own instruction, rather than
-  being replayed only for the human. With no new task, the run continues the
-  original one. No re-pasted chat history.
-- **`aether agent --local "<task>"` works after a plain npm install** — the
-  one-shot offline form used to spawn the separately-installed Python brain and
-  die with `spawn python ENOENT`. It now drives the Ollama brain that ships in
-  the package. `AETHER_LOCAL_BRAIN=python` opts back in.
-- **Session logs stopped redacting your file paths** — the credential filter
-  matched `pat` inside `path`, so every edited file in every log read
-  `[REDACTED]`. Real credential keys are still redacted.
-- **A run that never reached your tests no longer reports a failing one.**
-- **`npm run demo:handoff`** — a five-second deterministic proof of all of it:
-  two sessions, two models, two checkouts, one verify gate, no account and no
-  model download. See [`docs/demo/handoff.md`](docs/demo/handoff.md).
-
-Upgrade with `npm i -g aether-agents --ignore-scripts`. No configuration
-changes, no migration; 0.1.x session logs are read unchanged.
 
 ---
 

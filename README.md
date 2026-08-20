@@ -34,6 +34,18 @@ Two things make it different from the rest of the terminal-agent shelf:
 
 **Aether Agent is in beta.** Updates are shipping quickly.
 
+> **What `npm i -g` gives you today: 0.1.0.** The npm `latest` dist-tag is still
+> `0.1.0`; **0.2.0 is on `main` but not yet published**. So the features described
+> under [v0.2.0 in the release notes](RELEASE_NOTES.md) — portable handoffs,
+> `--resume` reaching the brain, `aether agent --local "<task>"` working straight
+> after an install — are **not** in the package the command above installs. Until
+> the 0.2.0 release is cut, build from source to get them:
+>
+> ```bash
+> git clone https://github.com/AetherAI3/aether-agent
+> cd aether-agent && npm ci && npm run build && npm link
+> ```
+
 ## Carry the work across models and machines
 
 ```bash
@@ -89,7 +101,7 @@ aether agent --local           #      …same terminal, nothing leaves the machi
 
 > Running the separate Python brain instead — Aether's open-source (Apache-2.0) **[Unlimited Context](https://github.com/AetherAI3/Unlimited-Context-LLM)** engine, which gives an Ollama model a billion-token working memory — is opt-in with `AETHER_LOCAL_BRAIN=python` once you have installed it. It is not bundled with the npm package.
 
-> Prefer the installer UI? Download [`install.sh`](install.sh) or [`install.ps1`](install.ps1), inspect it, then run it locally. Set `AETHER_VERSION=0.2.0` (shell) or `-Version 0.2.0` (PowerShell) to pin an exact release. The canonical npm command above verifies registry integrity and disables lifecycle scripts; there are no native or runtime dependencies and no daemon.
+> Prefer the installer UI? Download [`install.sh`](install.sh) or [`install.ps1`](install.ps1), inspect it, then run it locally. Both follow npm's `latest` dist-tag, which today is **0.1.0**; `AETHER_VERSION=<version>` (shell) or `-Version <version>` (PowerShell) pins an exact **published** release, so a version that is not on the registry yet — 0.2.0 included — will fail with `No matching version found`. The canonical npm command above verifies registry integrity and disables lifecycle scripts; there are no native or runtime dependencies and no daemon.
 
 ## Models & pricing
 
