@@ -35,6 +35,7 @@ import { decodeSse, type StreamFrame } from "./stream.js";
 import { HttpError, StreamIncompleteError, StreamUnavailableError } from "./errors.js";
 import { appendCustody } from "./custody.js";
 import { hintFor } from "./error_hints.js";
+import { fallbackCapabilities, type ResolvedCapabilities } from "./capabilities.js";
 
 /** Version of the dev-session wire protocol this client speaks. */
 export const DEV_PROTOCOL_VERSION = 1;
@@ -50,6 +51,75 @@ interface DevSessionCreated {
   tools?: string[];
 }
 
+/**
+ * The dev-session protocol versions this build can decode, read from the
+ * active capability contract (`dev_session_protocol_versions`) and falling back
+ * to the single version the client declares on the wire.
+ *
+ * The contract has always carried this list; nothing read it. Sourcing the
+ * accepted set from the resolved contract is what makes the handshake real: a
+ * client shipped with a newer contract accepts the versions that contract
+ * names, without another release of this file.
+ */
+export function devProtocolVersions(contract?: Record<string, unknown>): number[] {
+  const raw = (contract ?? fallbackCapabilities().contract)["dev_session_protocol_versions"];
+  const versions = Array.isArray(raw)
+    ? raw
+        .filter((v): v is number => typeof v === "number" && Number.isFinite(v))
+        .map((v) => Math.trunc(v))
+    : [];
+  return versions.length ? [...new Set(versions)] : [DEV_PROTOCOL_VERSION];
+}
+
+/**
+ * Validate the create response before a single byte of the stream is read.
+ * Returns null when the session is usable, or the message to fail the run with.
+ *
+ * Two distinct holes, both reachable from a 200:
+ *
+ *  - No `session_id`. Nothing checked it, so `undefined` flowed straight into
+ *    the path builders and the client issued requests against
+ *    `/agent/dev/sessions/undefined/stream`.
+ *  - A `protocol_version` this build does not speak. The client declares its
+ *    version on create and the server echoes one back; the answer was never
+ *    read. When the server ships a version with any changed frame shape, the
+ *    tolerant `??` / `Number()` mapping in stream.ts turns fields this build no
+ *    longer finds into zeros and empty strings rather than errors — a silently
+ *    mis-decoded session instead of a refused one.
+ *
+ * This deliberately does NOT route into the legacy 404/403 downgrade: a
+ * version mismatch is not "this server has no dev route", and quietly dropping
+ * to the one-way chat stream would convert a loud, fixable incompatibility into
+ * an unexplained loss of the local tool round-trip.
+ */
+export function checkDevSession(created: unknown, speaks: readonly number[]): string | null {
+  const record = (created ?? {}) as Partial<DevSessionCreated>;
+  const spoken = speaks.length ? speaks : [DEV_PROTOCOL_VERSION];
+  const id = record.session_id;
+  if (typeof id !== "string" || id.trim() === "") {
+    return "cloud dev session was created without a session_id — refusing to open a stream against an unnamed session";
+  }
+  const version = record.protocol_version;
+  const list = spoken.map((v) => "v" + String(v)).join(", ");
+  if (typeof version !== "number" || !Number.isFinite(version)) {
+    return (
+      "cloud dev session did not declare a protocol_version; this build speaks " +
+      list +
+      " and will not attach to an unversioned session — upgrade the agent (npm i -g aether-agents@latest)"
+    );
+  }
+  if (!spoken.includes(Math.trunc(version))) {
+    return (
+      "cloud dev session speaks protocol v" +
+      String(version) +
+      " but this build speaks " +
+      list +
+      " — upgrade the agent (npm i -g aether-agents@latest)"
+    );
+  }
+  return null;
+}
+
 export class CloudBrain implements Brain {
   private aborted = false;
   private net: AbortController | null = null;
@@ -57,8 +127,22 @@ export class CloudBrain implements Brain {
   private lastSeq = 0;
   /** Serializes upstream result POSTs so they arrive in execution order. */
   private upstream: Promise<void> = Promise.resolve();
+  /** Dev-session protocol versions this build will attach to. */
+  private readonly speaks: number[];
 
-  constructor(private readonly api: ApiClient) {}
+  /**
+   * `capabilities` is optional so existing call sites are unchanged; without it
+   * the packaged contract snapshot supplies the accepted version set. A caller
+   * that has already resolved the server contract should pass it, so a server
+   * that legitimately advertises a newer dev protocol is honored rather than
+   * refused on stale packaged data.
+   */
+  constructor(
+    private readonly api: ApiClient,
+    capabilities?: ResolvedCapabilities,
+  ) {
+    this.speaks = devProtocolVersions(capabilities?.contract);
+  }
 
   run(task: TaskCommand): AsyncIterable<BrainEvent> {
     const queue = new EventQueue();
@@ -87,6 +171,11 @@ export class CloudBrain implements Brain {
         }
         throw err;
       }
+      // Deliberately outside the catch above: a malformed or version-mismatched
+      // create is NOT a legacy server, and must not degrade to the one-way chat
+      // stream. Fail the run loudly instead.
+      const refusal = checkDevSession(created, this.speaks);
+      if (refusal) throw new Error(refusal);
       this.sessionId = created.session_id;
       queue.push({ type: "stage", name: "execute", face: "⟨◉⟩" }); // uplink face
       await this.devPump(queue);
