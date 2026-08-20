@@ -25,6 +25,17 @@ const DEFAULT_TEST_CMD = "";
 const SNAPSHOT_MAX_BYTES = 1024 * 1024;
 const SEARCH_MAX_HITS = 40;
 const SEARCH_SKIP_DIRS = new Set([".git", "node_modules", "dist"]);
+/**
+ * Tools that can change the workspace. The git commit guard's baseline must be
+ * taken before the first of these runs, and there is no reason to take it
+ * before that: a session that only reads never touches git at all.
+ */
+const MUTATING_TOOLS: ReadonlySet<string> = new Set([
+  "write_file",
+  "run_shell",
+  "run_tests",
+  "git_commit",
+]);
 
 /** Per-call execution controls for the shell-backed tools. */
 export interface RunOptions {
@@ -51,7 +62,12 @@ export interface FileSnapshot {
 
 export class ToolExecutor {
   private readonly root: string;
-  private readonly committer: GitCommitGuard;
+  /**
+   * Built on first use by armCommitGuard(), never in the constructor. See the
+   * comment there — constructing it runs synchronous git probes, and doing that
+   * eagerly froze the CLI before its first turn.
+   */
+  private committer: GitCommitGuard | null = null;
 
   constructor(
     cwd: string,
@@ -60,7 +76,29 @@ export class ToolExecutor {
     // Canonicalize the root once (resolve any symlinks in the workspace path).
     const r = resolve(cwd);
     this.root = existsSync(r) ? realpathSync(r) : r;
-    this.committer = new GitCommitGuard(new SpawnGitRunner(this.root));
+  }
+
+  /**
+   * Build the git commit guard if this run has not built one yet.
+   *
+   * Constructing the guard is what takes its "dirty before the agent started"
+   * baseline, and that costs two synchronous `git` calls. Doing it in the
+   * ToolExecutor constructor meant every `aether agent` / `aether chat` paid
+   * for it at startup, on the main thread, before the first turn rendered —
+   * whether or not the run ever committed anything.
+   *
+   * The baseline still has to be taken before the agent's first mutation, so
+   * it cannot be deferred to the first `git_commit`: at that point the baseline
+   * would equal the current state and every commit would find nothing new.
+   * The correct moment is the first MUTATING tool call — the workspace is
+   * provably untouched by this run, the CLI is already interactive, and a
+   * session that only reads never pays the cost at all.
+   */
+  private armCommitGuard(): GitCommitGuard {
+    if (!this.committer) {
+      this.committer = new GitCommitGuard(new SpawnGitRunner(this.root));
+    }
+    return this.committer;
   }
 
   /**
@@ -219,6 +257,9 @@ export class ToolExecutor {
       return { output: `[tool ${name} rejected: ${validation.error}]`, exitCode: 1 };
     }
     const args = validation.args;
+    // Take the git baseline before the first tool that could change the
+    // workspace — never at construction, and never as late as git_commit.
+    if (MUTATING_TOOLS.has(name)) this.armCommitGuard();
     try {
       switch (name as ToolName) {
         case "read_file":
@@ -259,6 +300,9 @@ export class ToolExecutor {
       return { output: `[tool ${name} rejected: ${validation.error}]`, exitCode: 1 };
     }
     const args = validation.args;
+    // run_shell / run_tests never reach execute() — arm here too, before the
+    // command that may edit the workspace actually starts.
+    if (MUTATING_TOOLS.has(name)) this.armCommitGuard();
     if (name === "web_search") {
       const limit = Number(args["limit"]);
       const text = await webSearch(
@@ -367,7 +411,7 @@ export class ToolExecutor {
   }
 
   private gitCommit(message: string): ToolResult {
-    return this.committer.commit(message);
+    return this.armCommitGuard().commit(message);
   }
 }
 

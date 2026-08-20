@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { tmpWorkspace } from "./tmp_workspace.js";
 import { TOOLS } from "../src/core/brain_protocol.js";
 import { ToolExecutor } from "../src/core/tool_executor.js";
 import {
@@ -70,7 +70,7 @@ test("validators reject unknown, malformed, oversized, and extra arguments", () 
 });
 
 test("executor rejects malformed calls before filesystem side effects", () => {
-  const dir = mkdtempSync(join(tmpdir(), "aether-tool-schema-"));
+  const dir = tmpWorkspace("aether-tool-schema-");
   const executor = new ToolExecutor(dir);
   const result = executor.execute("write_file", { path: "created.txt", content: 42 });
   assert.equal(result.exitCode, 1);

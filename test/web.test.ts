@@ -10,7 +10,7 @@ import {
   webSearch,
 } from "../src/core/web.js";
 import { ToolExecutor } from "../src/core/tool_executor.js";
-import { tmpdir } from "node:os";
+import { TEMP_ROOT } from "./tmp_workspace.js";
 
 // --- isSafeUrl: the SSRF guard (refuse loopback/private/link-local + non-http) ---
 test("isSafeUrl refuses non-http(s) schemes", () => {
@@ -206,27 +206,27 @@ test("webSearch happy path: parses DDG-shaped results via injected transport", a
 
 // --- ToolExecutor.executeAsync: web tools route through the executor --------
 test("executeAsync('web_fetch') refuses a loopback url via the production guard", async () => {
-  const ex = new ToolExecutor(tmpdir());
+  const ex = new ToolExecutor(TEMP_ROOT);
   const r = await ex.executeAsync("web_fetch", { url: "http://127.0.0.1:1/" });
   assert.equal(r.exitCode, 0, "web tools are advisory output, exit 0");
   assert.match(r.output, /\[web_fetch refused:/);
 });
 
 test("executeAsync('web_search') refuses a non-http url and returns a string", async () => {
-  const ex = new ToolExecutor(tmpdir());
+  const ex = new ToolExecutor(TEMP_ROOT);
   const r = await ex.executeAsync("web_search", { query: "" });
   assert.equal(typeof r.output, "string");
 });
 
 test("sync execute() on a web tool points at the async path (no silent no-op)", () => {
-  const ex = new ToolExecutor(tmpdir());
+  const ex = new ToolExecutor(TEMP_ROOT);
   const r = ex.execute("web_fetch", { url: "https://example.com" });
   assert.equal(r.exitCode, 1);
   assert.match(r.output, /async/);
 });
 
 test("executeAsync delegates the 6 sync tools to execute() unchanged", async () => {
-  const ex = new ToolExecutor(tmpdir());
+  const ex = new ToolExecutor(TEMP_ROOT);
   const r = await ex.executeAsync("frobnicate", {});
   assert.equal(r.exitCode, 1);
   assert.match(r.output, /unknown tool/);

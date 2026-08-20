@@ -19,9 +19,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpWorkspace } from "./tmp_workspace.js";
 import { ToolExecutor } from "../src/core/tool_executor.js";
 import { ContextRegistry } from "../src/core/context_registry.js";
 
@@ -31,7 +31,7 @@ test("canary 1: a refused write never lands, and the write path is real", async 
   // bridge.test.ts already proves the brain receives a refusal. What it does
   // not check is the disk. A gate that refuses in the transcript while the
   // write still lands is the failure that matters, and it would pass there.
-  const dir = mkdtempSync(join(tmpdir(), "aether-canary1-"));
+  const dir = tmpWorkspace("aether-canary1-");
   const target = join(dir, "guarded.txt");
   writeFileSync(target, "ORIGINAL\n");
   const exec = new ToolExecutor(dir);

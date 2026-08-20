@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  GIT_GLOBAL_ARGS,
   GitCommitGuard,
+  STAGED_PROBE,
+  STATUS_PROBE,
   parseNulPaths,
   parsePorcelainPaths,
   planGitCommit,
@@ -26,6 +29,22 @@ class FakeRunner implements GitRunner {
     return result;
   }
 }
+
+test("repository probes are bounded to the workspace and take no optional locks", () => {
+  // `git status` reports the whole repository regardless of where it runs, and
+  // `--untracked-files=all` enumerates every untracked path individually. A
+  // workspace that is a small directory inside a large repository therefore
+  // paid O(entire repository) per probe — measured at over 120s on a machine
+  // whose temp directory sits inside a version-controlled home directory. The
+  // pathspec bounds it to the subtree the guard can actually stage from.
+  assert.ok(STATUS_PROBE.includes("--"), "status probe must carry a pathspec");
+  assert.deepEqual(STATUS_PROBE.slice(-2), ["--", "."]);
+  assert.deepEqual(STAGED_PROBE.slice(-2), ["--", "."]);
+  // Reading a repository must not write to it: without this, merely starting
+  // the agent rewrites the user's index.
+  assert.ok(GIT_GLOBAL_ARGS.includes("--no-optional-locks"));
+  assert.ok(GIT_GLOBAL_ARGS.includes("core.literalPathspecs=true"));
+});
 
 test("porcelain parsers handle rename records, spaces, and deduplication", () => {
   assert.deepEqual(
