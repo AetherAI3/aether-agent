@@ -11,11 +11,11 @@ to npm are founder-owned and are listed at the end, unrun.
 | Proposed tag | `v0.3.0` |
 | Branch base | `426b12464c2a19549f421adb43348f83d028628e` (`origin/main`, after #98) |
 | Release commit | the merge commit of this PR into `main` — **re-run the candidate on it before tagging** (§6.2) |
-| Evidence commit | `a63e1c6e590352dcf5bc2607218e9ca59e1cff33` |
+| Evidence commit | `22aa02141fba158927cb1f01e4344cfa3e8f1a01` |
 | Tarball | `aether-agents-0.3.0.tgz` |
-| Tarball sha256 | `25f33524bd866275674eccbf8cfe5706f14e925cb0ba35861dc6bc21a9245a2d` |
-| Tarball size | 589,829 bytes packed / 2,435,029 unpacked |
-| Packed entries | 524 |
+| Tarball sha256 | `8c5c119d93cabf49af0c49c97addb055308d508af93f8675a26b6f5c8ecba307` |
+| Tarball size | 597,400 bytes packed / 2,459,474 unpacked |
+| Packed entries | 527 |
 
 ## 1. Semantic version decision
 
@@ -100,11 +100,11 @@ That runs `.github/workflows/release.yml`'s sequence against a detached
 --tag v0.3.0` → `npm pack` → global install of **that tarball** into a clean
 prefix → CLI proofs run from the installed package.
 
-Recorded run — commit `a63e1c6e590352dcf5bc2607218e9ca59e1cff33`, `commitBound:
+Recorded run — commit `22aa02141fba158927cb1f01e4344cfa3e8f1a01`, `commitBound:
 true`, `ok: true`, process exit 0:
 
 ```
-PASS     commit-identity — a63e1c6e590352dcf5bc2607218e9ca59e1cff33
+PASS     commit-identity — 22aa02141fba158927cb1f01e4344cfa3e8f1a01
 PASS     stage-commit — detached worktree of that commit
 PASS     npm-ci-ignore-scripts — found 0 vulnerabilities
 PASS     npm-audit-high — found 0 vulnerabilities
@@ -114,9 +114,9 @@ PASS     release-tests — 4 release test files, exit 0
 NOT-RUN  npm-test — NOT RUN here — the full suite is release.yml's gate.
                     This report says nothing about it.
 PASS     verify-production — {"ok":true,"package":"aether-agents","version":"0.3.0",
-                             "packedFiles":524,"packedBytes":2435029,"workflows":3}
+                             "packedFiles":527,"packedBytes":2459474,"workflows":3}
 PASS     pack — aether-agents-0.3.0.tgz
-                sha256:25f33524bd866275674eccbf8cfe5706f14e925cb0ba35861dc6bc21a9245a2d
+                sha256:8c5c119d93cabf49af0c49c97addb055308d508af93f8675a26b6f5c8ecba307
 PASS     install-tarball — <prefix>/node_modules/aether-agents
 PASS     installed --version — 0.3.0
 PASS     installed --help — 46 lines, lists skills, capabilities, resume, agent, doctor
@@ -130,15 +130,20 @@ RELEASE CANDIDATE OK
 The last five lines all ran the CLI that `npm install --global` placed on disk
 from that exact tarball, in a clean prefix — not `dist/` in a source checkout.
 
-The digest was produced twice: once from an uncommitted working tree and once
-from the detached worktree of `a63e1c6e`, and both runs produced
-`25f33524bd866275674eccbf8cfe5706f14e925cb0ba35861dc6bc21a9245a2d`. That is
-evidence the packed content is stable across the docs-only commit, not a claim of
-cross-machine reproducibility (see §5).
+**The digest changed when the base moved, and that is the point.** An earlier
+candidate at `a63e1c6e` — before #98 was on `main` — produced
+`25f33524bd866275674eccbf8cfe5706f14e925cb0ba35861dc6bc21a9245a2d` over 524
+entries. #98 added `dist/src/core/command_dispatch.*` and rewrote `main.js`, so
+the packed content is genuinely different and the digest is too. A digest that
+had survived that change would have meant the pack was not reading the tree.
+
+Neither figure is a cross-machine reproducibility claim (see §5), and neither is
+the digest a founder should tag against: §6.2 re-runs the candidate on the merge
+commit, because any lane landing before the tag moves this number again.
 
 Independently, `npm run typecheck` exits 0 and the release-owned test files —
 `version`, `release_coherence`, `release_canaries`, `production_hardening` —
-report 21 pass / 0 fail.
+report 24 pass / 0 fail.
 
 ### Mutation check on the load-bearing gate
 
@@ -148,31 +153,31 @@ gate is real, `"!dist/src/commands/skills.js"` was added to the `files`
 allowlist, which silently drops `aether skills` from the tarball:
 
 ```
-verify:production  ->  {"ok":true, ... "packedFiles":523}          MISSED IT
+verify:production  ->  {"ok":true, ... "packedFiles":526}          MISSED IT
 release_coherence  ->  FAIL: dist/src/commands/skills.js
                              (agent skills runtime — `aether skills`)
 ```
 
-Restored: 524 packed files, 7/7 pass. The pre-existing production gate does not
+Restored: 527 packed files, 10/10 pass. The pre-existing production gate does not
 catch a dropped feature, because it does not know what the notes promised.
 
 ### Packaged file manifest
 
-524 entries, 2,435,029 bytes unpacked. Five files at the package root, everything
+527 entries, 2,459,474 bytes unpacked. Five files at the package root, everything
 else under `dist/src/` — the allowlist is `dist/src` plus four documents, and
 nothing else reaches a user.
 
 | Path | Entries | Size |
 |---|---:|---:|
 | `COMMANDS.md`, `LICENSE`, `NOTICE.md`, `README.md`, `package.json` | 5 | — |
-| `dist/src/core/**` | 270 | 1290.8 KiB |
+| `dist/src/core/**` | 273 | 1305.8 KiB |
 | `dist/src/ui/**` | 111 | 331.2 KiB |
-| `dist/src/commands/**` | 105 | 637.1 KiB |
+| `dist/src/commands/**` | 105 | 648.5 KiB |
 | `dist/src/skills/**` (six built-in skills) | 18 | 21.7 KiB |
 | `dist/src/generated/**` | 3 | 15.0 KiB |
-| `dist/src/{index,main,types,version}.*` | 12 | 28.1 KiB |
+| `dist/src/{index,main,types,version}.*` | 12 | 25.7 KiB |
 
-By extension: 167 `.js`, 167 `.d.ts`, 167 `.js.map`, 13 `.json`, 9 `.md`, 1
+By extension: 168 `.js`, 168 `.d.ts`, 168 `.js.map`, 13 `.json`, 9 `.md`, 1
 extensionless. Source maps ship, as they did in 0.1.0; that is existing policy,
 unchanged by this release.
 
