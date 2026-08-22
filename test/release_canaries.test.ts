@@ -10,17 +10,21 @@
 //   2 live-child cancel      test/process_tree.test.ts  (whole tree, by pid)
 //   3 reconnect replay       HERE
 //   4 remote freshness       test/worktree.test.ts      (real git, pinned base)
-//   5 fake-gh ship           NOT WRITABLE — see the end of this file
+//   5 fake-gh ship           test/ship_rail.test.ts     (argv asserted, #86)
 //   6 cap across reconnect   HERE
-//   7 brain parity           NOT WRITABLE — see the end of this file
+//   7 brain parity           test/brain_parity.test.ts  (injectable seam, #87)
 //
-// 5 and 7 are deliberately absent rather than stubbed. A test that asserts
-// nothing is worse than a gap, because it reads as coverage.
+// This map was accurate when written and stopped being accurate two commits
+// later: #86 landed the ship rail and canary 5 with it, #87 landed the parity
+// seam and canary 7. The closing note that said both were unwritable outlived
+// the condition it described. A stale "not covered" reads as a standing excuse
+// not to write the test, which is how a gap survives being closed.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpWorkspace } from "./tmp_workspace.js";
 import { ToolExecutor } from "../src/core/tool_executor.js";
 import { ContextRegistry } from "../src/core/context_registry.js";
@@ -113,17 +117,31 @@ test("canary 6b: an unmeasured session is never reported as capped", () => {
   assert.equal(reg.usageStatus(), "unknown");
 });
 
-// ── The two that cannot be written yet ──────────────────────────────────────
+// ── The map above is enforced, not asserted in prose ────────────────────────
 //
-// Canary 5 — fake-gh ship.
-//   There is no PR-creation path to exercise. repo.ts's prCreateHint returns a
-//   STRING for the user to run; no subprocess ever invokes `gh pr create`. A
-//   fake-gh harness would assert against code that does not exist. This canary
-//   arrives with the review/ship rail, not before it.
-//
-// Canary 7 — local/Ollama brain parity.
-//   LocalBrain spawns a Python module that is not vendored here and exposes no
-//   injectable transport, so no test can drive it. Comparing normalized
-//   transcripts needs a seam on the Python path first.
-//
-// Both are tracked as gaps rather than stubbed green.
+// Canaries 2, 4, 5 and 7 live in other files. A coverage map that only claims
+// they exist is a comment, and comments do not fail when the file they name is
+// deleted or renamed — which is precisely how the previous version of this
+// header went stale in the other direction.
+
+test("every canary this file delegates is a real file with real assertions", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const delegated: Array<[string, string]> = [
+    ["canary 2 (live-child cancel)", "process_tree.test.js"],
+    ["canary 4 (remote freshness)", "worktree.test.js"],
+    ["canary 5 (fake-gh ship)", "ship_rail.test.js"],
+    ["canary 7 (brain parity)", "brain_parity.test.js"],
+  ];
+  for (const [canary, file] of delegated) {
+    // Read the TypeScript source, not the compiled copy: a test file that
+    // compiled to an empty module would still exist on disk under dist/.
+    const source = join(here, "..", "..", "test", file.replace(/\.js$/, ".ts"));
+    assert.equal(existsSync(source), true, `${canary}: ${source} does not exist`);
+    const text = readFileSync(source, "utf8");
+    assert.ok(/\bassert\./.test(text), `${canary}: ${file} contains no assertions`);
+    assert.ok(
+      (text.match(/^test\(/gm) ?? []).length > 0,
+      `${canary}: ${file} declares no top-level tests`,
+    );
+  }
+});
