@@ -22,7 +22,7 @@ import {
 import { latestSession } from "../src/core/session_resume.js";
 import { SessionLog } from "../src/core/session_log.js";
 import { cmdSessions, SESSIONS_CLI_COMMAND } from "../src/commands/sessions.js";
-import { CLI_COMMANDS } from "../src/commands/cli_registry.js";
+import { CLI_PARSE_OPTIONS, findDispatchedCliCommand } from "../src/commands/cli_registry.js";
 import { budgetLine, continuityLines, shortRemote } from "../src/ui/splash.js";
 import { stripAnsi } from "../src/ui/theme.js";
 import type { SessionIndexEntry } from "../src/core/session_index.js";
@@ -384,16 +384,24 @@ test("a probe that finds nothing, or throws, leaves the branch absent — never 
   }
 });
 
-test("the CLI registry row and the command's own spec are the same row", () => {
+test("the CLI registry row and the command's own spec are the same row", async () => {
   // The spec lives next to the implementation and is copied into the shared,
   // additive-only registry by hand. Asserting the copy's own fields (which is
   // what the sessions test does) proves nothing about the registry: this is the
   // assertion that actually fails if the two drift, or if the row is dropped.
-  const registered = CLI_COMMANDS.find((command) => command.name === SESSIONS_CLI_COMMAND.name);
-  assert.ok(registered, "`aether sessions` is missing from the CLI registry — the command would be unreachable");
+  const registered = findDispatchedCliCommand(SESSIONS_CLI_COMMAND.name);
+  assert.ok(registered, "`aether sessions` is missing from the dispatch table — the command would be unreachable");
   assert.equal(registered.args, SESSIONS_CLI_COMMAND.args);
   assert.equal(registered.summary, SESSIONS_CLI_COMMAND.summary);
   assert.equal(registered.section, SESSIONS_CLI_COMMAND.section);
+  // Reachability is now structural rather than asserted: the entry carries its
+  // own loader, so a mistyped wiring cannot fall through to a billed chat turn.
+  assert.equal(typeof (await registered.load()), "function");
+  // The flags the command reads must be flags the parser was told about, and
+  // the ones it does NOT own (--all, --out are global) must not be redeclared.
+  assert.deepEqual(Object.keys(registered.flags ?? {}).sort(), ["no-select", "undo"]);
+  for (const owned of ["undo", "no-select"]) assert.ok(owned in CLI_PARSE_OPTIONS);
+  for (const global of ["all", "out"]) assert.ok(global in CLI_PARSE_OPTIONS);
 });
 
 test("inspect tells the three unknowns apart", async () => {

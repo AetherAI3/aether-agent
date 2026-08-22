@@ -17,6 +17,7 @@ import { CloudBrain } from "../core/brain_cloud.js";
 import { ToolExecutor } from "../core/tool_executor.js";
 import { stdioPrompt } from "../ui/interact.js";
 import { defaultRunner } from "../core/worktree.js";
+import { isCurrentWorkspace } from "../core/workspace_scope.js";
 import { HostRenderer } from "../ui/host_render.js";
 import { SessionLog } from "../core/session_log.js";
 import { finalVerify, type BrainDone } from "../core/verify_gate.js";
@@ -248,7 +249,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
           // repo gate). Recorded so the library can say which checkout the work
           // is in, and so the branch it reports is the branch the commits
           // landed on rather than the launch directory's. (Lane AA-CONT-04.)
-          ...(cwd !== ctx.flags.cwd ? { worktree: cwd } : {}),
+          ...(cwd && ctx.flags.cwd && !isCurrentWorkspace(cwd, ctx.flags.cwd) ? { worktree: cwd } : {}),
           ...(opts.testCmd ? { testCmd: opts.testCmd } : {}),
         },
         nowIso(),

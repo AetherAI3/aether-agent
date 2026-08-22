@@ -368,8 +368,12 @@ export function handoffEntry(h: Handoff): SessionIndexEntry {
     ...(h.repo?.remote ? { repoRemote: h.repo.remote } : {}),
     ...(h.repo?.branch ? { branch: h.repo.branch } : {}),
     ...(h.repo?.head ? { headRev: h.repo.head } : {}),
-    // The handoff carries the actual paths, so this count is exact for what it
-    // measures — the files the prior run wrote — and is never a placeholder.
-    filesTouched: h.filesTouched.length,
+    // The handoff carries the actual paths, so the count is exact — UNTIL it
+    // hits the bound. `summarizeEvents` stops adding at MAX_FILES and
+    // `parseHandoff` slices to it again, so a run that wrote 200 files arrives
+    // carrying 60. Reporting "60" there would be a confident wrong number, and
+    // this library's rule is that a number nobody can vouch for is omitted:
+    // at the bound the count is left absent and renders as "unknown".
+    ...(h.filesTouched.length < MAX_FILES ? { filesTouched: h.filesTouched.length } : {}),
   };
 }

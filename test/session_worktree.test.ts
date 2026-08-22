@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionLog } from "../src/core/session_log.js";
 import { readSessionIndex } from "../src/core/session_index.js";
-import { normalizeWorkspace } from "../src/core/workspace_scope.js";
+import { isCurrentWorkspace, normalizeWorkspace } from "../src/core/workspace_scope.js";
 
 function withRoot(body: (root: string) => void): void {
   const root = mkdtempSync(join(tmpdir(), "aether-worktree-"));
@@ -94,3 +94,18 @@ test("with no worktree the launch directory is the checkout, and nothing invents
     assert.ok(row, "the session is still in the library");
     assert.equal(row?.branch, undefined);
   }));
+
+test("a differently-spelled path is not a redirect", () => {
+  // cmdCode decides whether the run was redirected by comparing the executing
+  // directory to the launch directory. Comparing the RAW strings made every
+  // `--cwd .` (and every trailing separator, and on Windows every casing
+  // difference) look like a worktree, so a plain in-place run recorded one.
+  // The comparison is normalized, and this is the property it relies on.
+  const here = process.cwd();
+  assert.equal(isCurrentWorkspace(here, "."), true, "`.` is where we already are");
+  assert.equal(isCurrentWorkspace(here + "/", here), true, "a trailing separator is not a move");
+  if (process.platform === "win32") {
+    assert.equal(isCurrentWorkspace(here.toUpperCase(), here), true, "Windows paths are case-insensitive");
+  }
+  assert.equal(isCurrentWorkspace(join(here, "elsewhere"), here), false, "a real redirect still reads as one");
+});

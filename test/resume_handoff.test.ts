@@ -167,3 +167,15 @@ test("terminal escapes inside a handoff never reach the screen", () =>
     assert.ok(!stripAnsi(out).includes("\u001b"));
     assert.match(stripAnsi(out), /fix the parser/);
   }));
+
+test("a file count that hit the handoff's bound is not reported as the total", () => {
+  // summarizeEvents stops adding at MAX_FILES and parseHandoff slices to it
+  // again, so a run that wrote far more arrives carrying exactly the bound.
+  // Printing that number would be a confident wrong answer.
+  const capped = handoffEntry(handoff({ filesTouched: Array.from({ length: 60 }, (_, i) => `src/f${i}.ts`) }));
+  assert.equal(capped.filesTouched, undefined, "at the bound the count is unknown, not 60");
+  assert.match(stripAnsi(continuityHeader({ kind: "handoff", entry: capped }).join("\n")), /written {3}unknown/);
+
+  const exact = handoffEntry(handoff({ filesTouched: ["a.ts", "b.ts", "c.ts"] }));
+  assert.equal(exact.filesTouched, 3, "below the bound the count is real and is shown");
+});

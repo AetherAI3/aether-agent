@@ -82,6 +82,8 @@ async function main(argv: string[]): Promise<number> {
     audit: Boolean(values["audit"]),
     yes: Boolean(values["yes"]),
     local: Boolean(values["local"]),
+    all: Boolean(values["all"]),
+    ...(typeof values["out"] === "string" ? { out: values["out"] as string } : {}),
     cwd: typeof values["cwd"] === "string" ? (values["cwd"] as string) : process.cwd(),
   };
   // y/N confirmation for destructive prompts (e.g. switching model mid-session).
@@ -215,20 +217,6 @@ async function main(argv: string[]): Promise<number> {
       return rest[0] === "export"
         ? cmdResumeExport(ctx, rest[1] ?? "", sf(values["out"]))
         : cmdResume(ctx, rest[0] ?? "");
-    }
-    // Lane AA-CONT-04. main.ts is shared and additive-only: this case and the
-    // `resume list` line above are the whole wiring. Global parseArgs eats the
-    // flags before `rest` is built, so they are handed back to the command's
-    // own parser here rather than duplicating a second flag table.
-    case "sessions": {
-      const { cmdSessions } = await import("./commands/sessions.js");
-      const out = sf(values["out"]);
-      return cmdSessions(ctx, [
-        ...rest,
-        ...(values["all"] ? ["--all"] : []),
-        ...(values["undo"] ? ["--undo"] : []),
-        ...(out ? ["--out", out] : []),
-      ]);
     }
     case "chat":
       return cmdChat(ctx, rest.join(" "));

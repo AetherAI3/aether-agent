@@ -13,13 +13,6 @@ export const CLI_COMMANDS: CommandSpec[] = [
   { name: "agent", aliases: ["code"], args: "[task]", summary: "run the coding agent or open its REPL", section: "Start" },
   { name: "chat", args: "[prompt]", summary: "start chat or send one prompt", section: "Start" },
   { name: "resume", args: "[session-id|export [id] --out <file>]", summary: "replay a local session, or export it as a portable handoff", section: "Start" },
-  // Lane AA-CONT-04. cli_registry.ts is shared and additive-only: this is the
-  // one line this lane adds. The spec is mirrored by SESSIONS_CLI_COMMAND in
-  // commands/sessions.ts and pinned equal by test/sessions_cmd.test.ts, so the
-  // help text and the implementation cannot drift. Not imported from there on
-  // purpose — this module is loaded on every cold start, and the sessions
-  // command is loaded lazily.
-  { name: "sessions", args: "[inspect|continue|export|archive|clean] [id]", summary: "browse, inspect and continue past project sessions", section: "Start" },
   { name: "run", args: "<neo|kronus> <task>", summary: "stream an orchestrator run", section: "Start" },
   { name: "models", args: "[use <id>]", summary: "list models or set the default", section: "Start" },
   { name: "agents", summary: "list available orchestrators", section: "Start" },
@@ -133,6 +126,42 @@ export const DISPATCH_COMMANDS: DispatchedCommand[] = [
             only: flags.list("only"),
           },
         });
+    },
+  },
+  {
+    // Lane AA-CONT-04. The session library was wired through main.ts's switch
+    // before this seam existed; it belongs here, where the name, the help text,
+    // the flags and the handler are one entry. `--all`, `--undo` and
+    // `--no-select` were exactly the "captured into values and stripped from
+    // the positionals" case this table was built to end: the command's own
+    // parser never saw them, so `aether sessions --all` silently listed one
+    // project.
+    name: "sessions",
+    args: "[inspect|continue|export|archive|clean] [id]",
+    summary: "browse, inspect and continue past project sessions",
+    section: "Start",
+    // `--all` and `--out` are GLOBAL: other commands already own those
+    // spellings, so the table cannot hand either to this one, and a command
+    // that shadowed a global would silently change what it means everywhere.
+    // They arrive on ctx.flags instead; only what is genuinely this command's
+    // is declared here.
+    flags: {
+      undo: { type: "boolean", default: false },
+      "no-select": { type: "boolean", default: false },
+    },
+    load: async () => {
+      const { cmdSessions } = await import("./sessions.js");
+      // Parsed flags are handed back as argv tokens because the command's own
+      // parser is what `aether resume list` and the tests drive it through —
+      // one parser, not two spellings of the same flags.
+      return (ctx, argv, flags) =>
+        cmdSessions(ctx, [
+          ...argv,
+          ...(ctx.flags.all ? ["--all"] : []),
+          ...(flags.bool("undo") ? ["--undo"] : []),
+          ...(flags.bool("no-select") ? ["--no-select"] : []),
+          ...(ctx.flags.out ? ["--out", ctx.flags.out] : []),
+        ]);
     },
   },
 ];
