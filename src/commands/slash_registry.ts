@@ -61,7 +61,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "recon", args: "<topic>", summary: "deep reconnaissance", section: "Agent Modes" },
   { name: "plan", args: "<topic>", summary: "write implementation plan", section: "Agent Modes" },
   { name: "research", args: "<topic>", summary: "research-gather-summarize", section: "Agent Modes" },
-  { name: "review", summary: "full project review + summary", section: "Agent Modes" },
+  { name: "project-review", summary: "ask the brain for a prose project review (was /review)", section: "Agent Modes" },
   { name: "code-review", summary: "sweep: clean up + simplify", section: "Agent Modes" },
   { name: "writing-skills", summary: "author reusable skills", section: "Agent Modes" },
   { name: "writing-plans", args: "<topic>", summary: "write plan to .hermes/plans/", section: "Agent Modes" },
@@ -111,6 +111,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "bench", args: "<target>", summary: "profile & optimize code", section: "UVT Tools" },
   { name: "purge", summary: "flush transient context & temp files", section: "UVT Tools" },
   { name: "stage-diff", summary: "unified diff + commit message", section: "UVT Tools" },
+  { name: "review", args: "[stage|unstage|revert|commit|diff|verify]", summary: "review changes, pick files or hunks, commit", section: "UVT Tools" },
+  { name: "ship", args: "[--title t] [--base b]", summary: "publish the head branch and open a pull request", section: "UVT Tools" },
   { name: "revert", args: "<file>", summary: "discard uncommitted changes to one file", section: "UVT Tools" },
 
   // ── Media ──

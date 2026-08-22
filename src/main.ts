@@ -88,6 +88,24 @@ async function main(argv: string[]): Promise<number> {
       swarm: { type: "string" },
       resume: { type: "string" },
       out: { type: "string" },
+      // `aether review` / `aether ship` flags.
+      //
+      // These MUST be declared. parseArgs runs with `strict: false`, which
+      // swallows any undeclared flag into `values` and strips it from the
+      // positionals a command receives — so an undeclared `--files a,b` does
+      // not reach the command as an argument and does not reach it as a flag
+      // either. It simply vanishes, and the command reports success having done
+      // nothing. Every flag the review/ship layer reads is listed here for that
+      // reason, and test/review_flags.test.ts proves each one arrives.
+      files: { type: "string" },
+      hunks: { type: "string" },
+      message: { type: "string", short: "m" },
+      // `--approve <action>` is the declared authority boundary: `--yes` alone
+      // never approves a destructive or a publishing step.
+      approve: { type: "string" },
+      title: { type: "string" },
+      body: { type: "string" },
+      base: { type: "string" },
     },
   });
 
@@ -204,6 +222,31 @@ async function main(argv: string[]): Promise<number> {
       return cmdAgents(ctx);
     case "run":
       return cmdRun(ctx, rest[0] ?? "", rest.slice(1).join(" "));
+    case "review": {
+      const { cmdReview } = await import("./commands/review.js");
+      return cmdReview(ctx, rest, {
+        files: sf(values["files"]),
+        hunks: sf(values["hunks"]),
+        message: sf(values["message"]),
+        base: sf(values["base"]),
+        testCmd: sf(values["test-cmd"]),
+        approve: sf(values["approve"]),
+        all: Boolean(values["all"]),
+        yes: flags.yes,
+        json: flags.json,
+      });
+    }
+    case "ship": {
+      const { cmdShip } = await import("./commands/ship.js");
+      return cmdShip(ctx, rest, {
+        title: sf(values["title"]),
+        body: sf(values["body"]),
+        base: sf(values["base"]),
+        approve: sf(values["approve"]),
+        yes: flags.yes,
+        json: flags.json,
+      });
+    }
     case "receipt": {
       const { cmdReceipt } = await import("./commands/receipt.js");
       return cmdReceipt(ctx, rest[0] ?? "");
