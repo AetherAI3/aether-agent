@@ -9,7 +9,7 @@
 // mechanism is why `aether doctor --live` silently runs the fast report.
 //
 // These tests assert the PARSED ARGV — what parseArgs produces from the same
-// options literal main.ts uses — not any rendered output. A test that checked
+// options table main.ts parses with — not any rendered output. A test that checked
 // printed text would pass against a command that received nothing and printed
 // an optimistic line about it.
 
@@ -19,38 +19,27 @@ import { parseArgs } from "node:util";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CLI_PARSE_OPTIONS } from "../src/commands/cli_registry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const mainSource = readFileSync(join(here, "..", "..", "src", "main.ts"), "utf8");
 
-/** The options literal main.ts hands parseArgs, recovered from source. */
-function declaredOptions(): Record<string, { type: "string" | "boolean"; short?: string }> {
-  const start = mainSource.indexOf("options: {");
-  assert.ok(start > 0, "main.ts no longer has an options literal");
-  let depth = 0;
-  let end = start;
-  for (let index = mainSource.indexOf("{", start); index < mainSource.length; index += 1) {
-    const ch = mainSource[index];
-    if (ch === "{") depth += 1;
-    else if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        end = index + 1;
-        break;
-      }
-    }
-  }
-  const body = mainSource.slice(mainSource.indexOf("{", start), end);
-  const options: Record<string, { type: "string" | "boolean"; short?: string }> = {};
-  for (const match of body.matchAll(
-    /(?:"([a-z-]+)"|([a-z-]+)):\s*\{\s*type:\s*"(string|boolean)"(?:,\s*short:\s*"([a-zA-Z])")?/g,
-  )) {
-    const name = match[1] ?? match[2]!;
-    const spec: { type: "string" | "boolean"; short?: string } = { type: match[3] as "string" | "boolean" };
-    if (match[4]) spec.short = match[4];
-    options[name] = spec;
-  }
-  return options;
+/**
+ * The options main.ts hands parseArgs.
+ *
+ * #98 moved these declarations OUT of a literal in main.ts and into
+ * cli_registry.ts (GLOBAL_FLAGS, merged with every dispatch command's flags into
+ * CLI_PARSE_OPTIONS), so there is no literal left to recover from source. That
+ * is an improvement for this test rather than a loss: it now reads the very
+ * object the CLI parses with instead of a regex approximation of it, so a
+ * declaration that exists but is malformed can no longer read as present.
+ *
+ * A fresh copy per call — the trap test below deletes a key from what it gets,
+ * and must not mutate the table the whole process parses with.
+ */
+type ParseOption = { type: "string" | "boolean"; short?: string; multiple?: boolean; default?: string | boolean | string[] | boolean[] };
+function declaredOptions(): Record<string, ParseOption> {
+  return { ...(CLI_PARSE_OPTIONS as unknown as Record<string, ParseOption>) };
 }
 
 /** Every `values["x"]` main.ts actually reads. */
@@ -60,7 +49,7 @@ function readFlags(): string[] {
 
 const REVIEW_SHIP_FLAGS = ["files", "hunks", "message", "approve", "title", "body", "base", "all", "yes", "json"];
 
-test("every flag main.ts reads is a flag main.ts declares", () => {
+test("every flag main.ts reads is a flag the CLI declares", () => {
   const declared = new Set(Object.keys(declaredOptions()));
   const undeclared = readFlags().filter((name) => !declared.has(name));
   assert.deepEqual(
@@ -73,7 +62,7 @@ test("every flag main.ts reads is a flag main.ts declares", () => {
 test("the review/ship flags are declared, not left to strict:false", () => {
   const declared = declaredOptions();
   for (const name of REVIEW_SHIP_FLAGS) {
-    assert.ok(declared[name], `${name} is not declared in main.ts's parseArgs options`);
+    assert.ok(declared[name], `${name} is not declared in CLI_PARSE_OPTIONS`);
   }
 });
 
