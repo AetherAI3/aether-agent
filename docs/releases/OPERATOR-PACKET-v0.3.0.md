@@ -9,7 +9,7 @@ to npm are founder-owned and are listed at the end, unrun.
 |---|---|
 | Package | `aether-agents` |
 | Proposed tag | `v0.3.0` |
-| Branch base | `ed094dc8885945e69f66e166e854142005bf1d62` (`origin/main`) |
+| Branch base | `426b12464c2a19549f421adb43348f83d028628e` (`origin/main`, after #98) |
 | Release commit | the merge commit of this PR into `main` — **re-run the candidate on it before tagging** (§6.2) |
 | Evidence commit | `a63e1c6e590352dcf5bc2607218e9ca59e1cff33` |
 | Tarball | `aether-agents-0.3.0.tgz` |
@@ -38,17 +38,27 @@ artifacts answer to one name — the identity defect this release exists to clos
 
 ## 2. What the release covers
 
-Commit range `477f0fc..ed094dc` — 16 commits, 2026-08-19 08:39 EDT through
-2026-08-20 07:47 EDT — plus everything the unpublished v0.2.0 notes described.
+Commit range `477f0fc..426b124` — 17 commits, 2026-08-19 08:39 EDT through
+2026-08-22 11:12 EDT — plus everything the unpublished v0.2.0 notes described.
 
-- 1 feature commit: #72.
-- 9 user-visible fixes: #73, #74, #75, #77, #78, #83, #84, #88, #89, #91.
+- 2 feature commits: #72 (skills runtime and its three commands) and #98
+  (command-registration seam), the second of which also carries three
+  user-visible fixes.
+- 10 user-visible fix commits: #73, #74, #75, #77, #78, #83, #84, #88, #89, #91.
 - 3 test-only commits: #82, #85, #87.
 - 1 unwired module: #86 (ship rail; no command invokes it, so it changes no
   behaviour in this release).
 - 1 documentation/hygiene commit: #90.
 
 Per-PR detail: [`2026-08-22.md`](2026-08-22.md).
+
+**This range moved after the candidate was first cut.** #98 was squash-merged to
+`main` while PR #96 was open, and the notes were updated to cover it. Any lane
+that lands before the tag is created moves it again — which is why step 2 of §6
+re-runs the candidate on the merge commit rather than trusting this packet's
+digest. `test/release_coherence.test.ts` fails the build if a user-visible
+command reaches the registry without either a release note or a named exemption
+(§4), so the next lane to land cannot repeat this silently.
 
 ## 3. State of the world when this packet was written
 
@@ -168,6 +178,48 @@ unchanged by this release.
 
 No compiled tests, no `.env`, no `.tgz`, no `dist/scripts`. `verify-production`
 rejects each of those by name and the pack report above confirms their absence.
+
+### Commands that ship without a release note
+
+Gate B above runs notes → package: a claim with no code behind it fails. The
+inverse — a user-visible command that ships with **no claim anywhere in the
+notes** — is the direction that actually keeps happening, and it happened to this
+very release while its PR was open (#98). `release_coherence` now enforces both
+directions: every visible command in the CLI registry must be announced by some
+release note, or named here with a reason.
+
+These 15 commands ship in 0.3.0 without a release note. All predate the release
+log or were announced by capability rather than by command token in the June 2026
+entry. None of them is new in this release:
+
+`aether help`, `aether chat`, `aether run`, `aether agents`, `aether auth`,
+`aether github`, `aether vault`, `aether workflow`, `aether memory`,
+`aether image`, `aether video`, `aether audit`, `aether receipt`, `aether mcp`,
+`aether config`.
+
+`login` and `logout` are exempt by rule: the registry marks them `hidden`, so
+they are not surfaced in `aether --help` and there is no surface to announce.
+
+The list is enforced in both directions — a stale entry fails, and an entry that
+*is* announced fails — so it cannot rot into a permanent bypass that quietly
+absorbs the next unannounced command. **If a lane lands a new command before the
+tag is cut, the build fails until it is either announced or added here.**
+
+#### Mutation check on the inverse gate
+
+A command was added to the CLI registry and mentioned nowhere:
+
+```
+{ name: "teleport", args: "<dest>", summary: "beam the working tree somewhere",
+  section: "System" }
+
+release_coherence -> FAIL: no user-visible command ships without either a
+                     release note or a named exemption
+                     + [ 'teleport — beam the working tree somewhere' ]
+                     - []
+```
+
+`verify:production` reported `ok:true` throughout. Removed: 9/9 pass.
 
 ## 5. What is NOT proven
 

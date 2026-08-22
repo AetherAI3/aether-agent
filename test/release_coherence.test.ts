@@ -30,6 +30,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPackReport } from "../scripts/verify-production.js";
+import { ALL_CLI_COMMANDS } from "../src/commands/cli_registry.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (...parts: string[]): string => readFileSync(join(root, ...parts), "utf8");
@@ -157,12 +158,17 @@ const FEATURE_MANIFEST: Array<{ claim: string; command?: string; packaged: strin
 ];
 
 test("every CLI command the release notes promise is in the CLI registry", () => {
-  const registry = read("src", "commands", "cli_registry.ts");
+  // Read the registry STRUCTURALLY, by importing it, not by regex over its
+  // source. #98 replaced "reachability asserted by a regex over main.ts" with a
+  // real dispatch table for exactly this reason, and it immediately split the
+  // commands across two arrays — CLI_COMMANDS and DISPATCH_COMMANDS — which a
+  // source regex keyed on one of them would have silently stopped covering.
+  const registered = new Set(ALL_CLI_COMMANDS.map((command) => command.name));
   for (const feature of FEATURE_MANIFEST) {
     if (!feature.command) continue;
     assert.ok(
-      new RegExp(`name:\\s*"${feature.command}"`).test(registry),
-      `${feature.claim}: cli_registry.ts declares no "${feature.command}" command`,
+      registered.has(feature.command),
+      `${feature.claim}: the CLI registry declares no "${feature.command}" command`,
     );
   }
 });
@@ -198,6 +204,110 @@ test(
     assert.ok(paths.size > 50, `only ${paths.size} packed paths — the pack report is not what this gate assumes`);
   },
 );
+
+// ── Gate C: the package promises nothing the notes are silent about ─────────
+//
+// Gate B runs notes -> package: a claim with no code behind it fails. That is
+// only one direction, and it is not the direction that actually keeps happening.
+//
+// The other direction is a user-visible command that ships with NO claim
+// anywhere in the notes. It happened while this very lane's PR was open: #98
+// landed on main after the v0.3.0 notes were written, and the notes said nothing
+// about it. It will happen again for every lane that lands between the note
+// being written and the tag being cut. A release that silently ships a command
+// nobody announced is the same defect as a note that promises one nobody built,
+// arriving from the side nothing was watching.
+//
+// The rule: every user-visible command is either announced by SOME release note,
+// or named here with a reason. An explicit list is fine. Silence is not.
+
+/**
+ * Commands that ship without a release note, each with the reason it is
+ * acceptable. Entries are enforced in both directions — a stale entry fails,
+ * and an entry that IS announced fails — so this cannot rot into a permanent
+ * bypass that quietly absorbs the next unannounced command.
+ *
+ * Every entry must also be named in the operator packet, so the founder cutting
+ * the tag reads the full unannounced set before creating it.
+ */
+const SHIPPED_WITHOUT_A_NOTE: Record<string, string> = {
+  help: "predates the release log; the CLI has never shipped without it",
+  chat: "predates the release log",
+  run: "predates the release log",
+  agents: "predates the release log",
+  auth: "predates the release log",
+  github: "predates the release log",
+  vault: "the June 2026 entry announces the vault surface, not the command token",
+  workflow: "the June 2026 entry announces workflows, not the command token",
+  memory: "the June 2026 entry announces the memory bridge, not the command token",
+  image: "the June 2026 entry announces media generation, not the command token",
+  video: "the June 2026 entry announces media generation, not the command token",
+  audit: "the June 2026 entry announces the audit trail, not the command token",
+  receipt: "the June 2026 entry announces audit receipts, not the command token",
+  mcp: "the June 2026 entry announces the MCP manager, not the command token",
+  config: "predates the release log",
+};
+
+/** A command is announced if any release note names it as `aether <name>` or `<name>`. */
+function announcedInNotes(notes: string, name: string): boolean {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp("aether " + escaped + "\\b|`" + escaped + "\\b").test(notes);
+}
+
+test("no user-visible command ships without either a release note or a named exemption", () => {
+  const notes = read("RELEASE_NOTES.md");
+
+  // Hidden commands are exempt by rule: `login` and `logout` are legacy
+  // shortcuts deliberately kept out of `aether --help`, so there is no surface
+  // to announce. The exemption is narrow — it follows the registry's own
+  // `hidden` flag, not a list somebody maintains here.
+  const visible = ALL_CLI_COMMANDS.filter((command) => !command.hidden);
+  assert.ok(visible.length > 0, "the registry exposes no visible commands — this gate is not reading it");
+
+  const unannounced = visible
+    .filter((command) => !announcedInNotes(notes, command.name))
+    .filter((command) => !(command.name in SHIPPED_WITHOUT_A_NOTE))
+    .map((command) => `${command.name} — ${command.summary}`);
+
+  assert.deepEqual(
+    unannounced,
+    [],
+    "these commands ship to users with no claim in RELEASE_NOTES.md and no named exemption:\n  " +
+      `${unannounced.join("\n  ")}\n` +
+      "Announce them in the current release entry, or add them to SHIPPED_WITHOUT_A_NOTE with a reason.",
+  );
+});
+
+test("the unannounced-command list cannot rot into a permanent bypass", () => {
+  const notes = read("RELEASE_NOTES.md");
+  const registered = new Map(ALL_CLI_COMMANDS.map((command) => [command.name, command]));
+
+  for (const [name, reason] of Object.entries(SHIPPED_WITHOUT_A_NOTE)) {
+    // A stale entry is worse than no entry: it holds an exemption open for a
+    // command that no longer exists, and the next command to take that name
+    // inherits the silence.
+    assert.ok(registered.has(name), `SHIPPED_WITHOUT_A_NOTE names "${name}", which is not a registered command`);
+    assert.equal(registered.get(name)?.hidden ?? false, false, `"${name}" is hidden and needs no exemption`);
+    assert.ok(reason.trim().length > 10, `"${name}" is exempted without a real reason`);
+    assert.equal(
+      announcedInNotes(notes, name),
+      false,
+      `"${name}" IS announced in RELEASE_NOTES.md — remove it from SHIPPED_WITHOUT_A_NOTE ` +
+        "so the list keeps meaning what it says",
+    );
+  }
+});
+
+test("the operator packet names every command that ships unannounced", () => {
+  // The founder creating the tag is the person who needs to know what goes out
+  // without a note. Keeping the list only in a test file would tell the release
+  // engineer and nobody else.
+  const packet = read("docs", "releases", `OPERATOR-PACKET-v${VERSION}.md`);
+  const missing = Object.keys(SHIPPED_WITHOUT_A_NOTE).filter(
+    (name) => !new RegExp("`aether " + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "`").test(packet),
+  );
+  assert.deepEqual(missing, [], `the operator packet does not name these unannounced commands: ${missing.join(", ")}`);
+});
 
 test("release documents never state that this version is installable from npm", () => {
   // This lane cannot prove registry availability, and an unpublished version is

@@ -3,12 +3,13 @@
 **August 22, 2026**
 
 0.2.0 was never published. It was written up on August 19, and then `main` kept
-moving: a skills runtime, a capability contract, a redacted support bundle, and
-nine user-visible fixes landed on top of the version that was already spoken for.
-Rather than quietly widen 0.2.0 to mean two different things, this release takes
-the next number and describes everything actually on `main`.
+moving: a skills runtime, a capability contract, a redacted support bundle, a
+command-registration seam, and ten user-visible fixes landed on top of the
+version that was already spoken for. Rather than quietly widen 0.2.0 to mean two
+different things, this release takes the next number and describes everything
+actually on `main`.
 
-Covers `477f0fc..ed094dc` — every commit merged after the v0.2.0 notes were
+Covers `477f0fc..426b124` — every commit merged after the v0.2.0 notes were
 written, and everything the v0.2.0 notes described, which was never shipped
 either.
 
@@ -24,6 +25,13 @@ either.
   build does not have reads as absent, not as unchecked.
 - **`aether support-bundle`** — a redacted diagnostic bundle you can hand to
   someone without handing over your credentials or your file contents.
+- **A command-registration seam.** A command now carries its own help text, its
+  own flag table and its own loader in one entry, so adding one is a single edit
+  instead of three that have to agree. Flag collisions are load-time errors
+  rather than last-writer-wins, and reachability is structural rather than
+  asserted by a regex over the source. You feel this as the three `doctor` fixes
+  below — those flags were lost precisely because the old shape let a command's
+  flags and its dispatch drift apart.
 
 ## Carried forward from the unpublished 0.2.0
 
@@ -68,6 +76,21 @@ either.
   slow repository.
 - **The hosted dev-session protocol version the server answers is actually
   checked**, instead of the version the client hoped for.
+- **`aether doctor --live` now actually runs the live proof.** It never had. The
+  CLI's argv parse swallowed any flag a command had not declared, so `--live`
+  was stripped before `doctor` saw it: the command quietly ran the fast
+  configured-only report and **exited 0**, presenting a live end-to-end
+  verification that was never performed. `--deep`, `--dry-run`, `--no-ui` and
+  `--only <id>` were lost the same way.
+- **`aether doctor --fix` is reachable at all.** The whole repair path was
+  unreachable, and because the global `--yes` never arrived either,
+  `aether doctor --fix --yes` answered *"re-run with `--yes`"* to someone who had
+  just passed it. `--fix` still changes nothing without `--yes`, and still shows
+  its repair plan first.
+- **A mistyped command no longer costs you a model call.** Command lookup
+  lowercased the token while dispatch was case-sensitive, so `aether Vault` fell
+  past the typo guard into a chat turn and billed it. Wrong case now reaches the
+  "did you mean" guard, as it always should have.
 
 ## Availability — read this before upgrading
 
@@ -84,7 +107,7 @@ git clone https://github.com/AetherAI3/aether-agent
 cd aether-agent && npm ci && npm run build && npm link
 ```
 
-Publishing is founder-owned: it needs a `v0.3.0` tag on `ed094dc`, a published
+Publishing is founder-owned: it needs a `v0.3.0` tag on the release commit, a published
 GitHub release, the `npm-production` environment and an `NPM_TOKEN`. The exact
 sequence, with the packed tarball's digest and manifest, is in
 [`docs/releases/OPERATOR-PACKET-v0.3.0.md`](docs/releases/OPERATOR-PACKET-v0.3.0.md).
