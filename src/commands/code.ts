@@ -243,6 +243,12 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
           poolGb,
           brain: brainKind,
           cwd: ctx.flags.cwd,
+          // Where the run actually executed, when that is not where it was
+          // launched from (an auto-created worktree, or a redirect from the
+          // repo gate). Recorded so the library can say which checkout the work
+          // is in, and so the branch it reports is the branch the commits
+          // landed on rather than the launch directory's. (Lane AA-CONT-04.)
+          ...(cwd !== ctx.flags.cwd ? { worktree: cwd } : {}),
           ...(opts.testCmd ? { testCmd: opts.testCmd } : {}),
         },
         nowIso(),

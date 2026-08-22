@@ -13,6 +13,13 @@ export const CLI_COMMANDS: CommandSpec[] = [
   { name: "agent", aliases: ["code"], args: "[task]", summary: "run the coding agent or open its REPL", section: "Start" },
   { name: "chat", args: "[prompt]", summary: "start chat or send one prompt", section: "Start" },
   { name: "resume", args: "[session-id|export [id] --out <file>]", summary: "replay a local session, or export it as a portable handoff", section: "Start" },
+  // Lane AA-CONT-04. cli_registry.ts is shared and additive-only: this is the
+  // one line this lane adds. The spec is mirrored by SESSIONS_CLI_COMMAND in
+  // commands/sessions.ts and pinned equal by test/sessions_cmd.test.ts, so the
+  // help text and the implementation cannot drift. Not imported from there on
+  // purpose — this module is loaded on every cold start, and the sessions
+  // command is loaded lazily.
+  { name: "sessions", args: "[inspect|continue|export|archive|clean] [id]", summary: "browse, inspect and continue past project sessions", section: "Start" },
   { name: "run", args: "<neo|kronus> <task>", summary: "stream an orchestrator run", section: "Start" },
   { name: "review", args: "[stage|unstage|revert|commit|diff|verify]", summary: "review changes, pick files or hunks, commit", section: "Start" },
   { name: "ship", args: "[--title t] [--base b]", summary: "publish the head branch and open a pull request", section: "Start" },
@@ -55,6 +62,15 @@ export const GLOBAL_FLAGS: FlagTable = {
   audit: { type: "boolean", default: false },
   yes: { type: "boolean", short: "y", default: false },
   apply: { type: "boolean", default: false },
+  // `aether sessions` flags. Declared here for the reason this table exists:
+  // main.ts parses with strict:false, so an UNdeclared `--undo` was captured
+  // into `values` and stripped from the positionals sessions.ts re-parses —
+  // `aether sessions archive <id> --undo` un-archived nothing and said so, and
+  // `--no-select` (the documented escape hatch out of the picker) never
+  // reached the command at all. Neither flag was ever declared, on this lane
+  // or before it; the #98 declared-flag assertion is what surfaced them.
+  undo: { type: "boolean", default: false },
+  "no-select": { type: "boolean", default: false },
   // `aether skills` / `aether capabilities` flags:
   scope: { type: "string" },
   all: { type: "boolean", default: false },

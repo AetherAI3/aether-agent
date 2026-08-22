@@ -233,10 +233,28 @@ async function main(argv: string[]): Promise<number> {
       });
     }
     case "resume": {
-      const { cmdResume, cmdResumeExport } = await import("./commands/resume.js");
+      const { cmdResume, cmdResumeExport, cmdResumeList } = await import("./commands/resume.js");
+      // `aether resume list` is an alias for `aether sessions` — one listing,
+      // reachable from the command people already know. (Lane AA-CONT-04.)
+      if (rest[0] === "list") return cmdResumeList(ctx, Boolean(values["all"]));
       return rest[0] === "export"
         ? cmdResumeExport(ctx, rest[1] ?? "", sf(values["out"]))
         : cmdResume(ctx, rest[0] ?? "");
+    }
+    // Lane AA-CONT-04. main.ts is shared and additive-only: this case and the
+    // `resume list` line above are the whole wiring. Global parseArgs eats the
+    // flags before `rest` is built, so they are handed back to the command's
+    // own parser here rather than duplicating a second flag table.
+    case "sessions": {
+      const { cmdSessions } = await import("./commands/sessions.js");
+      const out = sf(values["out"]);
+      return cmdSessions(ctx, [
+        ...rest,
+        ...(values["all"] ? ["--all"] : []),
+        ...(values["undo"] ? ["--undo"] : []),
+        ...(values["no-select"] ? ["--no-select"] : []),
+        ...(out ? ["--out", out] : []),
+      ]);
     }
     case "chat":
       return cmdChat(ctx, rest.join(" "));

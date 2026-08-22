@@ -32,24 +32,19 @@ import type { BrainEvent } from "./brain_protocol.js";
 import { decodeEvent } from "./brain_protocol.js";
 import { atomicWriteFile, readJsonFile } from "./durable_store.js";
 import { loadSession, replayLines, type LoadedSession } from "./session_resume.js";
-import { logsRoot } from "./session_log.js";
+import { logsRoot, repoFrom, type RepoIdentity } from "./session_log.js";
 import { requireOpaqueId } from "./workspace_scope.js";
-import type { RunResult, Runner } from "./worktree.js";
+import type { SessionIndexEntry } from "./session_index.js";
 import { clipCodePoints } from "../ui/theme.js";
 import { sanitizeTerm } from "../ui/text.js";
 
 export const HANDOFF_SCHEMA_VERSION = 1;
 export const HANDOFF_KIND = "aether-agent-handoff";
 
-/** Where the work lives, expressed so it survives the trip to another machine. */
-export interface HandoffRepo {
-  /** `git remote get-url origin`, when there is one. */
-  remote?: string;
-  /** Branch the prior run ended on. */
-  branch?: string;
-  /** HEAD sha at export time — recorded for provenance; nothing reads it yet. */
-  head?: string;
-}
+/** Where the work lives, expressed so it survives the trip to another machine.
+ *  The same record the session manifest stores — one shape with one spelling,
+ *  so a handoff and a library row cannot describe a repository differently. */
+export type HandoffRepo = RepoIdentity;
 
 export interface Handoff {
   schemaVersion: number;
@@ -133,33 +128,11 @@ export function summarizeEvents(events: Array<Record<string, unknown>>): {
   return { highlights, filesTouched: [...files] };
 }
 
-/** Assemble a repo record, dropping empty fields. `undefined` when nothing is
- *  known — the shape is built in two places (probe and parse), so it is one
- *  rule here rather than two spellings that can drift. */
-function repoFrom(remote?: string, branch?: string, head?: string): HandoffRepo | undefined {
-  if (!remote && !branch && !head) return undefined;
-  return { ...(remote && { remote }), ...(branch && { branch }), ...(head && { head }) };
-}
-
-/** Read the repository identity of `cwd`. Every probe is best-effort — a plain
- *  directory with no git in it yields nothing, never an error. */
-export function readRepoIdentity(cwd: string, run: Runner): HandoffRepo | undefined {
-  const value = (args: string[]): string | undefined => {
-    let r: RunResult;
-    try {
-      r = run("git", args, cwd);
-    } catch {
-      return undefined;
-    }
-    const out = r.stdout.trim();
-    return r.status === 0 && out ? out : undefined;
-  };
-  return repoFrom(
-    value(["remote", "get-url", "origin"]),
-    value(["rev-parse", "--abbrev-ref", "HEAD"]),
-    value(["rev-parse", "HEAD"]),
-  );
-}
+// repoFrom / readRepoIdentity moved to session_log.ts, which is where the
+// identity is now STORED (it goes into the manifest at close, so the library
+// can say which branch a session belonged to). Re-exported here because a
+// handoff carries the same record and this is where callers look for it.
+export { readRepoIdentity } from "./session_log.js";
 
 export interface BuildHandoffOptions {
   repo?: HandoffRepo | undefined;
@@ -368,4 +341,35 @@ export function resumeReplayLines(resolved: ResolvedResume, ref: string): string
   if (resolved.session) return replayLines(resolved.session.events);
   const h = resolved.handoff;
   return [`⇄ continuing ${h.sessionId} (${h.finalStatus}) from ${ref}`, ...h.highlights.map((l) => "  " + l)];
+}
+
+/**
+ * Project a handoff onto a library row so the SAME Project Continuity header
+ * renders for an imported handoff as for a local session.
+ *
+ * The one field a handoff cannot supply is the workspace: it is deliberately
+ * not keyed to an absolute path — that is what makes it portable — so the row
+ * carries the empty string and callers render it with `kind: "handoff"` and no
+ * continuity state rather than inventing a checkout for it.
+ */
+export function handoffEntry(h: Handoff): SessionIndexEntry {
+  return {
+    sessionId: h.sessionId,
+    workspace: "",
+    workspaceFingerprint: "",
+    task: h.task,
+    model: h.model,
+    brain: h.brain,
+    started: h.started,
+    ended: h.ended,
+    finalStatus: h.finalStatus,
+    ...(h.remaining != null && h.remaining > 0 ? { remaining: h.remaining } : {}),
+    ...(h.testCmd ? { testCmd: h.testCmd } : {}),
+    ...(h.repo?.remote ? { repoRemote: h.repo.remote } : {}),
+    ...(h.repo?.branch ? { branch: h.repo.branch } : {}),
+    ...(h.repo?.head ? { headRev: h.repo.head } : {}),
+    // The handoff carries the actual paths, so this count is exact for what it
+    // measures — the files the prior run wrote — and is never a placeholder.
+    filesTouched: h.filesTouched.length,
+  };
 }
