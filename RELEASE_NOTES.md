@@ -1,3 +1,122 @@
+# Aether Agent v0.3.0 — skills, and a release that matches the repository
+
+**August 22, 2026**
+
+0.2.0 was never published. It was written up on August 19, and then `main` kept
+moving: a skills runtime, a capability contract, a redacted support bundle, a
+command-registration seam, and ten user-visible fixes landed on top of the
+version that was already spoken for. Rather than quietly widen 0.2.0 to mean two
+different things, this release takes the next number and describes everything
+actually on `main`.
+
+Covers `477f0fc..426b124` — every commit merged after the v0.2.0 notes were
+written, and everything the v0.2.0 notes described, which was never shipped
+either.
+
+## New
+
+- **Agent skills** — `aether skills` inspects, trusts and manages skills, and six
+  are built into the package: `review-pr`, `fix-ci`, `ship`, `doctor-project`,
+  `research-and-implement`, `frontend-from-screenshot`. Skills are discovered,
+  schema-validated, lazily loaded and trust-locked; an untrusted skill is not
+  silently run.
+- **`aether capabilities`** — the capability contract this build actually
+  implements, and, with `--available`, what is reachable right now. A surface the
+  build does not have reads as absent, not as unchecked.
+- **`aether support-bundle`** — a redacted diagnostic bundle you can hand to
+  someone without handing over your credentials or your file contents.
+- **A command-registration seam.** A command now carries its own help text, its
+  own flag table and its own loader in one entry, so adding one is a single edit
+  instead of three that have to agree. Flag collisions are load-time errors
+  rather than last-writer-wins, and reachability is structural rather than
+  asserted by a regex over the source. You feel this as the three `doctor` fixes
+  below — those flags were lost precisely because the old shape let a command's
+  flags and its dispatch drift apart.
+
+## Carried forward from the unpublished 0.2.0
+
+- **Handoffs** — `aether resume export` writes one portable file: the task, the
+  model that ran it, the verify gate's verdict, how many tests were still
+  failing, the files that changed, the verification command, and the repository
+  it belongs to. Continue anywhere with `aether agent --resume <file>`, on
+  whatever model you want. No absolute paths, no file contents, no shell
+  commands, no credential-shaped values ride along.
+- **`--resume` reaches the brain** — the prior session becomes a continuation
+  brief the model reads before its own instruction. With no new task, the run
+  continues the original one.
+- **`aether agent --local "<task>"` works after a plain npm install** — the
+  one-shot offline form used to die with `spawn python ENOENT`. It now drives the
+  Ollama brain that ships in the package. `AETHER_LOCAL_BRAIN=python` opts back in.
+- **Session logs stopped redacting your file paths** — the credential filter
+  matched `pat` inside `path`. Real credential keys are still redacted.
+- **`npm run demo:handoff`** — a deterministic end-to-end proof: two sessions,
+  two models, two checkouts, one verify gate, no account and no model download.
+  See [`docs/demo/handoff.md`](docs/demo/handoff.md).
+
+## Fixed
+
+- **Ctrl+C stops a local turn.** The abort signal now reaches local runs instead
+  of being dropped at the chat boundary.
+- **`/limit` is a real stop boundary**, and unknown spend is reported as unknown
+  rather than as zero — so a session nobody measured no longer looks like a
+  session that spent nothing.
+- **`/rollback` stopped lying about HEAD** and stopped accepting a count it never
+  used.
+- **`--repo` is validated and fetched** rather than reused blind, and the
+  worktree is pinned to the fetched revision; an unknown base is refused instead
+  of guessed.
+- **Tool execution is async with process-tree teardown** — cancelling a run kills
+  the whole tree, not just the shell that fronted it, so `npm test` or a compiler
+  no longer keeps running after you stopped it.
+- **Ollama's own `OLLAMA_HOST` format is accepted**, and the request timeout stays
+  armed through the body read instead of expiring at the headers.
+- **Ollama tool results are correlated by id**, schemas are generated, and steer
+  is no longer faked on the local path.
+- **CLI startup no longer blocks on an unbounded `git status`** in a large or
+  slow repository.
+- **The hosted dev-session protocol version the server answers is actually
+  checked**, instead of the version the client hoped for.
+- **`aether doctor --live` now actually runs the live proof.** It never had. The
+  CLI's argv parse swallowed any flag a command had not declared, so `--live`
+  was stripped before `doctor` saw it: the command quietly ran the fast
+  configured-only report and **exited 0**, presenting a live end-to-end
+  verification that was never performed. `--deep`, `--dry-run`, `--no-ui` and
+  `--only <id>` were lost the same way.
+- **`aether doctor --fix` is reachable at all.** The whole repair path was
+  unreachable, and because the global `--yes` never arrived either,
+  `aether doctor --fix --yes` answered *"re-run with `--yes`"* to someone who had
+  just passed it. `--fix` still changes nothing without `--yes`, and still shows
+  its repair plan first.
+- **A mistyped command no longer costs you a model call.** Command lookup
+  lowercased the token while dispatch was case-sensitive, so `aether Vault` fell
+  past the typo guard into a chat turn and billed it. Wrong case now reaches the
+  "did you mean" guard, as it always should have.
+
+## Availability — read this before upgrading
+
+**0.3.0 is not on npm.** At the time these notes were written the registry served
+exactly one version of `aether-agents`, `0.1.0`, and `latest` resolved to `0.1.0`.
+Neither 0.2.0 nor 0.3.0 has ever been published, and no GitHub release exists for
+either. So `npm i -g aether-agents --ignore-scripts` installs **0.1.0**, and none
+of the above is in it.
+
+Until a `v0.3.0` release is published, build from source:
+
+```bash
+git clone https://github.com/AetherAI3/aether-agent
+cd aether-agent && npm ci && npm run build && npm link
+```
+
+Publishing is founder-owned: it needs a `v0.3.0` tag on the release commit, a published
+GitHub release, the `npm-production` environment and an `NPM_TOKEN`. The exact
+sequence, with the packed tarball's digest and manifest, is in
+[`docs/releases/OPERATOR-PACKET-v0.3.0.md`](docs/releases/OPERATOR-PACKET-v0.3.0.md).
+
+When 0.3.0 is published it upgrades in place: no configuration changes, no
+migration, and 0.1.x session logs are read unchanged.
+
+---
+
 # Aether Agent v0.2.0 — the work outlives the session
 
 **August 19, 2026**
@@ -28,19 +147,12 @@ decide when it's done.
   two sessions, two models, two checkouts, one verify gate, no account and no
   model download. See [`docs/demo/handoff.md`](docs/demo/handoff.md).
 
-**Availability.** 0.2.0 is on `main`, but it is **not yet published to npm** —
-the registry’s `latest` dist-tag still resolves to 0.1.0, so a plain
-`npm i -g aether-agents` installs 0.1.0 and none of the above. Until the 0.2.0
-release is cut, build it from source:
-
-```bash
-git clone https://github.com/AetherAI3/aether-agent
-cd aether-agent && npm ci && npm run build && npm link
-```
-
-Once 0.2.0 is published, `npm i -g aether-agents --ignore-scripts` will upgrade in
-place: no configuration changes, no migration, and 0.1.x session logs are read
-unchanged.
+**Superseded — 0.2.0 was never released.** No `v0.2.0` tag, no GitHub release
+and no npm version ever existed for it. `main` kept moving after these notes
+were written, so the work above ships as part of **[v0.3.0](#aether-agent-v030--skills-and-a-release-that-matches-the-repository)**
+instead of widening 0.2.0 to mean two different things. This entry is kept as
+the record of what was written on August 19, not as an install instruction —
+see the v0.3.0 availability section above.
 
 ---
 

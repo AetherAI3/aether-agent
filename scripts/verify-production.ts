@@ -170,7 +170,14 @@ function readJson(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8")) as unknown;
 }
 
-function createPackReport(root: string): PackReport {
+/**
+ * What `npm pack` would actually ship from `root`, as a dry run.
+ *
+ * Exported because the source checkout's `dist/` is NOT the package — the files
+ * allowlist is `dist/src` plus four docs — so any gate reasoning about what a
+ * user receives has to ask npm rather than read the build directory.
+ */
+export function createPackReport(root: string): PackReport {
   const npmCli = process.env["npm_execpath"];
   const command = npmCli ? process.execPath : process.platform === "win32" ? "npm.cmd" : "npm";
   const args = npmCli
