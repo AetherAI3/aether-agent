@@ -13,6 +13,31 @@
 // (test/fixtures/bridge_conformance.json) pins both. Canonical: docs/CONTRACTS.md.
 export const PROTOCOL_VERSION = 3;
 
+// --- agent context packet (host -> brain, additive + OPTIONAL) -------------
+// The TYPED channel for skill and instruction context. Additive and optional,
+// so per docs/CONTRACTS.md's versioning rule it does NOT bump PROTOCOL_VERSION:
+// a brain that predates it ignores the key, and one that understands it reads
+// provenance (id, version, digest, invocation, source path) alongside content.
+//
+// This is DATA the brain reads, never host policy. Tool and permission
+// narrowing is enforced host-side in skills/skill_policy.refuseUndeclaredToolCall
+// immediately before execution — never by asking a model to respect a list.
+export const AGENT_CONTEXT_CONTRACT_VERSION = 1;
+
+export interface AgentContextPacket {
+  contract_version: number;
+  /** Loaded skills for this turn; null when none loaded or --no-skills. */
+  skills: SkillContextPacket | null;
+  /** AGENTS.md and friends resolved against the run root; null when none. */
+  instructions: InstructionContextPacket | null;
+}
+
+// Type-only imports: erased at compile time, so the wire seam keeps no runtime
+// dependency on the skills subsystem (and no import cycle with skill_policy,
+// which imports TOOLS from here).
+import type { SkillContextPacket } from "./skills/context_packet.js";
+import type { InstructionContextPacket } from "./instructions/instruction_resolver.js";
+
 // --- workflow swarm frame interfaces ---------------------------------------
 export interface WorkflowStartFrame {
   type: "workflow_start";
@@ -119,7 +144,17 @@ export type BrainEvent =
 
 // --- host -> brain commands ------------------------------------------------
 export type HostCommand =
-  | { type: "task"; text: string; cwd: string; poolGb: number; effort?: string; model?: string; testCmd?: string }
+  | {
+      type: "task";
+      text: string;
+      cwd: string;
+      poolGb: number;
+      effort?: string;
+      model?: string;
+      testCmd?: string;
+      /** Skill + instruction context for this turn (see AgentContextPacket). */
+      context?: AgentContextPacket;
+    }
   | { type: "tool_result"; id: string; output: string; exitCode: number }
   | { type: "control"; action: "pause" | "resume" | "steer"; note?: string };
 
@@ -294,6 +329,10 @@ export function encodeCommand(cmd: HostCommand): string {
         // "unverified", and made it grind pytest pointlessly in JS/Go/Rust
         // repos when the user simply forgot the flag.
         test_cmd: cmd.testCmd ?? "",
+        // Omitted entirely when absent rather than sent as null: a brain that
+        // predates the field must see no key at all, and "no context" must
+        // never decode as "an empty context was deliberately supplied".
+        ...(cmd.context ? { context: cmd.context } : {}),
       };
       break;
     case "tool_result":

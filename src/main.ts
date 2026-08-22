@@ -121,9 +121,14 @@ async function main(argv: string[]): Promise<number> {
     if (dispatched) return (await dispatched.load())(ctx, rest, commandFlags(dispatched, values));
   }
 
+  // Session-level skill selection, shared by every surface that drives a brain.
+  const skillOpts = {
+    ...(sf(values["skill"]) ? { explicitSkill: sf(values["skill"])! } : {}),
+    ...(values["no-skills"] ? { noSkills: true } : {}),
+  };
   switch (cmd) {
     case undefined:
-      return cmdChat(ctx, "");
+      return cmdChat(ctx, "", skillOpts);
     case "auth":
       return cmdAuth(ctx, rest, loginOpts);
     case "github":
@@ -219,7 +224,7 @@ async function main(argv: string[]): Promise<number> {
       const task = rest.join(" ");
       // No task and not resuming → open the persistent interactive agent REPL
       // (chat bar ready for the first question), Claude Code style.
-      if (!task && !sf(values["resume"])) return cmdChat(ctx, "");
+      if (!task && !sf(values["resume"])) return cmdChat(ctx, "", skillOpts);
       return cmdCode(ctx, task, {
         local: Boolean(values["local"]),
         pool: Number(sf(values["pool"]) ?? "5") || 5,
@@ -232,6 +237,8 @@ async function main(argv: string[]): Promise<number> {
         repo: sf(values["repo"]),
         swarm: Number(sf(values["swarm"]) ?? "1") || 1,
         resume: sf(values["resume"]),
+        skill: sf(values["skill"]),
+        noSkills: Boolean(values["no-skills"]),
       });
     }
     case "resume": {
@@ -244,7 +251,7 @@ async function main(argv: string[]): Promise<number> {
         : cmdResume(ctx, rest[0] ?? "");
     }
     case "chat":
-      return cmdChat(ctx, rest.join(" "));
+      return cmdChat(ctx, rest.join(" "), skillOpts);
     default: {
       // Typo guard (narrowed per LOOP-19 arena): fires ONLY on exactly one
       // bare command-shaped token a Damerau edit away from a real subcommand —
@@ -262,7 +269,7 @@ async function main(argv: string[]): Promise<number> {
         }
       }
       // Bare prompt: `aether "fix the bug"` — cmd is the first prompt word.
-      return cmdChat(ctx, [cmd, ...rest].join(" "));
+      return cmdChat(ctx, [cmd, ...rest].join(" "), skillOpts);
     }
   }
 }
