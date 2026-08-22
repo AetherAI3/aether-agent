@@ -219,7 +219,17 @@ test("the whole rail: edit → select → stage → commit → publish → PR", 
     assert.ok(create, "gh pr create was never invoked");
     assert.equal(create![create!.indexOf("--head") + 1], "feature/rail");
     assert.equal(create![create!.indexOf("--title") + 1], "fix: keep the kept one");
-    assert.match(shipped.text(), new RegExp(PR_URL.replace(/[/.]/g, "\\$&")));
+    // A plain substring check, not a RegExp built from the URL. Escaping a URL
+    // into a pattern is the wrong tool for "this exact text was printed": the
+    // escape set is easy to get wrong — this one missed backslashes, which is
+    // what CodeQL flagged as js/incomplete-sanitization — and a missed
+    // metacharacter silently WIDENS what the assertion accepts rather than
+    // narrowing it. There is no pattern to match here: PR_URL is a constant and
+    // the test wants it back verbatim.
+    assert.ok(
+      shipped.text().includes(PR_URL),
+      `the pull request URL was never reported: ${shipped.text()}`,
+    );
   } finally {
     fixture.cleanup();
   }
