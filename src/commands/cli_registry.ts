@@ -60,6 +60,15 @@ export const GLOBAL_FLAGS: FlagTable = {
   audit: { type: "boolean", default: false },
   yes: { type: "boolean", short: "y", default: false },
   apply: { type: "boolean", default: false },
+  // `aether sessions` flags. Declared here for the reason this table exists:
+  // main.ts parses with strict:false, so an UNdeclared `--undo` was captured
+  // into `values` and stripped from the positionals sessions.ts re-parses —
+  // `aether sessions archive <id> --undo` un-archived nothing and said so, and
+  // `--no-select` (the documented escape hatch out of the picker) never
+  // reached the command at all. Neither flag was ever declared, on this lane
+  // or before it; the #98 declared-flag assertion is what surfaced them.
+  undo: { type: "boolean", default: false },
+  "no-select": { type: "boolean", default: false },
   // `aether skills` / `aether capabilities` flags:
   scope: { type: "string" },
   all: { type: "boolean", default: false },

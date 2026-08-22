@@ -227,6 +227,7 @@ async function main(argv: string[]): Promise<number> {
         ...rest,
         ...(values["all"] ? ["--all"] : []),
         ...(values["undo"] ? ["--undo"] : []),
+        ...(values["no-select"] ? ["--no-select"] : []),
         ...(out ? ["--out", out] : []),
       ]);
     }
