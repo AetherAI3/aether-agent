@@ -139,9 +139,12 @@ aether sessions archive <id>           # hide it from the default list
 aether sessions archive <id> --undo    # bring it back
 aether sessions clean                  # drop index rows whose session is gone
 aether resume list                     # the same listing, from the older command
+aether resume <file.json>              # show an imported handoff, not a local session
 ```
 
-Piped output is tab-separated with a fixed field order
+On a terminal, `aether sessions` opens an arrow-key picker (`/` filters, Enter
+inspects, Esc/q leaves); `--no-select` gives the flat table instead, and a pipe
+or `--json` always does. Piped output is tab-separated with a fixed field order
 (`SESSION STARTED STATUS STATE BRAIN MODEL FILES_WRITTEN BRANCH TASK`); a TTY gets a
 padded table.
 

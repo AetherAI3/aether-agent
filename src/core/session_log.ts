@@ -329,7 +329,12 @@ export class SessionLog {
     // startup path — the one #89 had to clear — still spawns nothing. Failure
     // leaves it undefined, which the library renders as "unknown".
     try {
-      this.repo = this.probeRepo(this.meta.cwd);
+      // Probe where the work actually HAPPENED. When the run was redirected
+      // into a worktree, `cwd` is the directory the user launched from and its
+      // branch is not the branch the commits landed on — recording the launch
+      // directory's branch there would name the wrong branch with full
+      // confidence.
+      this.repo = this.probeRepo(this.meta.worktree || this.meta.cwd);
     } catch {
       this.repo = undefined;
     }
