@@ -80,11 +80,17 @@ function cell(value: string | undefined | null): string {
   return sanitizeTerm(value ?? "").replace(/\s+/g, " ").trim();
 }
 
-/** Shorten a remote to `owner/name` when it looks like one; otherwise leave it
- *  alone. Cosmetic only — an unrecognised remote is shown, never dropped. */
+/** Shorten a remote URL to `owner/name`. Cosmetic only, and deliberately
+ *  narrow: a value that is not an https or scp-style git URL — a local path, a
+ *  name this function does not recognise — is returned whole rather than being
+ *  trimmed into something that reads like a repository it is not. */
 export function shortRemote(remote: string): string {
-  const match = /[/:]([^/:]+\/[^/]+?)(?:\.git)?$/.exec(remote.replace(/\/+$/, ""));
-  return match?.[1] ?? remote;
+  const trimmed = remote.replace(/\/+$/, "");
+  const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed);
+  const isScp = /^[^/\\:]+@[^/\\:]+:/.test(trimmed);
+  if (!isUrl && !isScp) return trimmed;
+  const match = /([^/:]+\/[^/]+?)(?:\.git)?$/.exec(trimmed);
+  return match?.[1] ?? trimmed;
 }
 
 /** The exact usage facts {@link budgetLine} needs — the shape
