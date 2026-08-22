@@ -55,6 +55,14 @@ export const GLOBAL_FLAGS: FlagTable = {
   audit: { type: "boolean", default: false },
   yes: { type: "boolean", short: "y", default: false },
   apply: { type: "boolean", default: false },
+  // `--undo` and `--no-select` were undeclared until #98's assertion surfaced
+  // them, and the bug was real: `aether sessions archive <id> --undo` archived
+  // instead of un-archiving and reported success, and `--no-select` — the
+  // documented escape hatch out of the TTY picker — never reached the command,
+  // leaving a scripted caller on a TTY with no way out of it. They are declared
+  // as `sessions`' OWN flags in the dispatch table below rather than here:
+  // nothing else answers to either spelling, so making them global would hand
+  // every command a flag that means nothing to it.
   // `aether skills` / `aether capabilities` flags:
   scope: { type: "string" },
   all: { type: "boolean", default: false },
@@ -146,6 +154,47 @@ export const DISPATCH_COMMANDS: DispatchedCommand[] = [
             only: flags.list("only"),
           },
         });
+    },
+  },
+  {
+    // Lane AA-CONT-04. The session library was wired through main.ts's switch
+    // before this seam existed; it belongs here, where the name, the help text,
+    // the flags and the handler are one entry. `--all`, `--undo` and
+    // `--no-select` were exactly the "captured into values and stripped from
+    // the positionals" case this table was built to end: the command's own
+    // parser never saw them, so `aether sessions --all` silently listed one
+    // project.
+    name: "sessions",
+    args: "[inspect|continue|export|archive|clean] [id]",
+    summary: "browse, inspect and continue past project sessions",
+    section: "Start",
+    // `--all` and `--out` are GLOBAL: other commands already own those
+    // spellings, so the table cannot hand either to this one, and a command
+    // that shadowed a global would silently change what it means everywhere.
+    // They arrive on ctx.flags instead; only what is genuinely this command's
+    // is declared here.
+    flags: {
+      undo: { type: "boolean", default: false },
+      "no-select": { type: "boolean", default: false },
+    },
+    load: async () => {
+      const { cmdSessions } = await import("./sessions.js");
+      // Parsed values are handed over as DATA — never re-rendered into an argv
+      // for the command to parse a second time. `argv` here carries only the
+      // positionals the host already separated out, so nothing the user typed
+      // can be promoted into a flag by a second pass.
+      return (ctx, argv, flags) =>
+        cmdSessions(
+          ctx,
+          argv,
+          {},
+          {
+            all: Boolean(ctx.flags.all),
+            undo: flags.bool("undo"),
+            noSelect: flags.bool("no-select"),
+            ...(ctx.flags.out ? { out: ctx.flags.out } : {}),
+          },
+        );
     },
   },
 ];
