@@ -45,6 +45,7 @@ import {
   type ContinuityProbe,
   type SessionRow,
 } from "../ui/continuity.js";
+import { runSessionPicker } from "../ui/session_picker.js";
 import { theme } from "../ui/theme.js";
 import { sanitizeTerm } from "../ui/text.js";
 import { existsSync } from "node:fs";
@@ -189,6 +190,37 @@ export function cmdSessionsList(ctx: AppContext, all: boolean, deps: SessionsDep
     );
   }
   return 0;
+}
+
+/**
+ * `aether sessions` on a terminal: pick one with the arrow keys.
+ *
+ * The picker is a convenience over the same rows the table renders, so it can
+ * always decline: an empty library, a non-TTY stdin, or any failure inside it
+ * returns null and falls back to the flat listing. That fallback is why this is
+ * safe to make the default — the listing is never lost, only sometimes
+ * replaced by something better.
+ */
+export async function cmdSessionsSelect(
+  ctx: AppContext,
+  all: boolean,
+  deps: SessionsDeps = {},
+): Promise<number> {
+  const res = resolve(deps);
+  const read = syncSessionIndex(res.root);
+  reportRecovery(res, read);
+  const scoped = all ? read.entries : entriesForWorkspace(read.entries, ctx.flags.cwd);
+  const visible = scoped.filter((entry) => !entry.archived);
+  if (!visible.length) return cmdSessionsList(ctx, all, deps);
+  const base = probeFor(ctx.flags.cwd, res.run);
+  const rows = visible.map((entry) => rowFor(entry, base));
+  const chosen = await runSessionPicker(rows, {
+    width: res.width,
+    title: all ? "sessions · every project" : "sessions · this project",
+  });
+  // Cancelling is a real answer, not an error: the user looked and left.
+  if (!chosen) return 0;
+  return cmdSessionsInspect(ctx, chosen.entry.sessionId, deps);
 }
 
 function requireEntry(
@@ -453,7 +485,12 @@ export async function cmdSessions(ctx: AppContext, argv: readonly string[], deps
   switch (sub) {
     case "":
     case "list":
-      return cmdSessionsList(ctx, flag("--all"), deps);
+      // A terminal gets to pick; a pipe gets the table. `--json` is a pipe by
+      // intent even on a TTY, and `--no-select` is the escape hatch for anyone
+      // who wants the flat listing in front of them.
+      return resolve(deps).tty && !ctx.flags.json && !flag("--no-select")
+        ? cmdSessionsSelect(ctx, flag("--all"), deps)
+        : cmdSessionsList(ctx, flag("--all"), deps);
     case "inspect":
     case "show":
       return cmdSessionsInspect(ctx, id, deps);
