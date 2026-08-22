@@ -9,7 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -20,6 +20,7 @@ import {
   upsertSessionIndex,
 } from "../src/core/session_index.js";
 import { latestSession } from "../src/core/session_resume.js";
+import { SessionLog } from "../src/core/session_log.js";
 import { cmdSessions, SESSIONS_CLI_COMMAND } from "../src/commands/sessions.js";
 import { CLI_COMMANDS } from "../src/commands/cli_registry.js";
 import { budgetLine, continuityLines, shortRemote } from "../src/ui/splash.js";
@@ -316,6 +317,71 @@ test("an index write that cannot happen still returns the right answer", () => {
     // And the next read is just as correct, if just as expensive.
     assert.equal(syncSessionIndex(root).entries.length, 1);
   });
+});
+
+// ── what a real run records ─────────────────────────────────────────────────
+// The fields above are only worth having if something fills them. These drive
+// SessionLog itself and read the manifest back off disk.
+
+const TS = "2026-08-22T09:00:00.000Z";
+const meta = (cwd: string) => ({ task: "wire the library", model: "gpt56_sol", poolGb: 5, brain: "local" as const, cwd });
+
+test("a run records the branch it was on and the skills it used — probed once, at close", () => {
+  const root = mkdtempSync(join(tmpdir(), "aether-record-"));
+  try {
+    const probed: string[] = [];
+    const log = new SessionLog(meta(root), TS, root, (cwd) => {
+      probed.push(cwd);
+      return { remote: "git@github.com:AetherAI3/aether-agent.git", branch: "aether/ship-rail-k91d", head: "ed094dc8885945e69f66e166e854142005bf1d62" };
+    });
+    // Startup must spawn no git. #89 took an unbounded `git status` off this
+    // path and nothing may put one back.
+    assert.deepEqual(probed, [], "constructing a session log runs no git");
+
+    log.event({ type: "skill", name: "review-pr", reason: "trigger matched" }, TS);
+    log.event({ type: "skill", name: "review-pr", reason: "matched again" }, TS);
+    log.event({ type: "skill", name: "ship", reason: "trigger matched" }, TS);
+    log.event({ type: "tool_call", id: "1", name: "write_file", args: { path: "src/a.ts" } }, TS);
+    log.event({ type: "tool_call", id: "2", name: "write_file", args: { path: "src/a.ts" } }, TS);
+    log.close("ok", TS);
+
+    assert.deepEqual(probed, [root], "probed exactly once, after the run finished");
+    const manifest = JSON.parse(readFileSync(join(log.dir, "manifest.json"), "utf8"));
+    assert.equal(manifest.branch, "aether/ship-rail-k91d");
+    assert.equal(manifest.repoRemote, "git@github.com:AetherAI3/aether-agent.git");
+    assert.deepEqual(manifest.skills, ["review-pr", "ship"], "one entry per skill, not one per event");
+    assert.equal(manifest.filesTouched, 1, "the same file written twice is one file touched");
+
+    // And the library reads them back without opening the transcript.
+    const row = syncSessionIndex(root).entries.find((e) => e.sessionId === log.sessionId);
+    assert.equal(row?.branch, "aether/ship-rail-k91d");
+    assert.deepEqual(row?.skills, ["review-pr", "ship"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a probe that finds nothing, or throws, leaves the branch absent — never blank", () => {
+  const root = mkdtempSync(join(tmpdir(), "aether-record-"));
+  try {
+    const none = new SessionLog(meta(root), TS, root, () => undefined);
+    none.close("unverified", TS);
+    const a = JSON.parse(readFileSync(join(none.dir, "manifest.json"), "utf8"));
+    assert.equal("branch" in a, false, "a directory with no checkout has no branch to record");
+    assert.equal("repoRemote" in a, false);
+    assert.equal("skills" in a, false, "a run that used no skills records none, not an empty list");
+
+    // A probe that throws must not take the session's own record down with it.
+    const boom = new SessionLog(meta(root), TS + "1", root, () => {
+      throw new Error("git exploded");
+    });
+    boom.close("ok", TS);
+    const b = JSON.parse(readFileSync(join(boom.dir, "manifest.json"), "utf8"));
+    assert.equal(b.finalStatus, "ok", "the manifest is still written");
+    assert.equal("branch" in b, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("the CLI registry row and the command's own spec are the same row", () => {
