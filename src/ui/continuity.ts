@@ -206,9 +206,26 @@ export type ContinuationKind = "local" | "handoff";
 export interface ContinuityHeaderInput {
   kind: ContinuationKind;
   entry: SessionIndexEntry;
-  state: ContinuityState;
+  /** Where the work can be continued. Omitted for an imported handoff, which
+   *  has no state to compute: a handoff is deliberately NOT workspace-scoped,
+   *  so claiming "ready" or "elsewhere" for one would be inventing an answer
+   *  about a checkout it was never keyed to. */
+  state?: ContinuityState | undefined;
   /** Where a handoff was imported from, for the handoff kind. */
   source?: string | undefined;
+}
+
+/** The trailing line: how this session got here, and what that implies. The two
+ *  kinds are said differently because they behave differently — a local session
+ *  belongs to one absolute directory, an imported handoff belongs to none. */
+export function provenanceLine(input: ContinuityHeaderInput): string {
+  if (input.kind === "handoff") {
+    return (
+      `imported handoff${input.source ? ` from ${cell(input.source)}` : ""}` +
+      " · not workspace-scoped: it continues in whatever checkout you are in now"
+    );
+  }
+  return `local session${input.state ? ` · ${stateHint(input.state)}` : ""}`;
 }
 
 /**
@@ -220,7 +237,7 @@ export interface ContinuityHeaderInput {
  * upgrades an unverified run to a verified one.
  */
 export function continuityHeader(input: ContinuityHeaderInput): string[] {
-  const { entry, state, kind } = input;
+  const { entry } = input;
   const lines = [
     theme.cyan("▚ Project Continuity"),
     `  session   ${theme.bold(cell(entry.sessionId))}`,
@@ -237,10 +254,6 @@ export function continuityHeader(input: ContinuityHeaderInput): string[] {
   }
   lines.push(`  written   ${renderCount(entry.filesTouched)} file(s) via write_file`);
   if (entry.prUrl) lines.push(`  pr        ${cell(entry.prUrl)}`);
-  lines.push(
-    theme.dim(
-      `  ${kind === "handoff" ? `imported handoff${input.source ? ` from ${cell(input.source)}` : ""}` : "local session"} · ${stateHint(state)}`,
-    ),
-  );
+  lines.push(theme.dim(`  ${provenanceLine(input)}`));
   return lines;
 }

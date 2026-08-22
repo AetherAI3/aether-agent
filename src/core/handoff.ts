@@ -34,6 +34,7 @@ import { atomicWriteFile, readJsonFile } from "./durable_store.js";
 import { loadSession, replayLines, type LoadedSession } from "./session_resume.js";
 import { logsRoot, repoFrom, type RepoIdentity } from "./session_log.js";
 import { requireOpaqueId } from "./workspace_scope.js";
+import type { SessionIndexEntry } from "./session_index.js";
 import { clipCodePoints } from "../ui/theme.js";
 import { sanitizeTerm } from "../ui/text.js";
 
@@ -340,4 +341,35 @@ export function resumeReplayLines(resolved: ResolvedResume, ref: string): string
   if (resolved.session) return replayLines(resolved.session.events);
   const h = resolved.handoff;
   return [`⇄ continuing ${h.sessionId} (${h.finalStatus}) from ${ref}`, ...h.highlights.map((l) => "  " + l)];
+}
+
+/**
+ * Project a handoff onto a library row so the SAME Project Continuity header
+ * renders for an imported handoff as for a local session.
+ *
+ * The one field a handoff cannot supply is the workspace: it is deliberately
+ * not keyed to an absolute path — that is what makes it portable — so the row
+ * carries the empty string and callers render it with `kind: "handoff"` and no
+ * continuity state rather than inventing a checkout for it.
+ */
+export function handoffEntry(h: Handoff): SessionIndexEntry {
+  return {
+    sessionId: h.sessionId,
+    workspace: "",
+    workspaceFingerprint: "",
+    task: h.task,
+    model: h.model,
+    brain: h.brain,
+    started: h.started,
+    ended: h.ended,
+    finalStatus: h.finalStatus,
+    ...(h.remaining != null && h.remaining > 0 ? { remaining: h.remaining } : {}),
+    ...(h.testCmd ? { testCmd: h.testCmd } : {}),
+    ...(h.repo?.remote ? { repoRemote: h.repo.remote } : {}),
+    ...(h.repo?.branch ? { branch: h.repo.branch } : {}),
+    ...(h.repo?.head ? { headRev: h.repo.head } : {}),
+    // The handoff carries the actual paths, so this count is exact for what it
+    // measures — the files the prior run wrote — and is never a placeholder.
+    filesTouched: h.filesTouched.length,
+  };
 }
