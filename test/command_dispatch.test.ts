@@ -47,7 +47,27 @@ test("short letters collide independently of long names", () => {
     entry({ name: "one", flags: { force: { type: "boolean", short: "f", default: false } } }),
     entry({ name: "two", flags: { file: { type: "string", short: "f" } } }),
   ];
-  assert.deepEqual(validateDispatchTable(table, GLOBALS), ["two: -f conflicts with one"]);
+  assert.deepEqual(validateDispatchTable(table, GLOBALS), ["two: -f on --file conflicts with one's --force"]);
+});
+
+test("one command may not spend the same short letter twice", () => {
+  // A short belongs to a flag name, not to a command. Keyed on the owning
+  // command, this slipped through and parseArgs then silently resolved -x to
+  // whichever flag was declared first, leaving the other's short dead.
+  const table = [
+    entry({
+      flags: {
+        alpha: { type: "boolean", short: "x", default: false },
+        beta: { type: "boolean", short: "x", default: false },
+      },
+    }),
+  ];
+  assert.deepEqual(validateDispatchTable(table, GLOBALS), ["demo: -x on --beta conflicts with demo's --alpha"]);
+});
+
+test("a command may not spend a short letter a global already holds", () => {
+  const table = [entry({ flags: { force: { type: "boolean", short: "y", default: false } } })];
+  assert.deepEqual(validateDispatchTable(table, GLOBALS), ["demo: -y on --force conflicts with (global)'s --yes"]);
 });
 
 test("malformed entries are rejected, not tolerated", () => {
@@ -102,11 +122,16 @@ test("an absent value is absent, never a coerced stand-in", () => {
   assert.equal(commandFlags(command, { deep: "false" }).bool("deep"), false);
 });
 
-test("lookup is exact — aliases yes, near misses never", () => {
+test("lookup is exact — aliases yes, near misses and case variants never", () => {
   const table = [entry({ name: "sessions", aliases: ["session"] })];
   assert.equal(findDispatchedCommand(table, "sessions")?.name, "sessions");
-  assert.equal(findDispatchedCommand(table, "SESSIONS")?.name, "sessions");
   assert.equal(findDispatchedCommand(table, "session")?.name, "sessions");
   assert.equal(findDispatchedCommand(table, "sesions"), undefined);
   assert.equal(findDispatchedCommand(table, ""), undefined);
+  // Case-sensitive on purpose: main.ts's switch is, so lowercasing here would
+  // make a migrated command answer to SESSIONS while every command still in
+  // the switch does not — and a wrong-case token for those does not even reach
+  // the typo guard, it becomes a billed chat turn.
+  assert.equal(findDispatchedCommand(table, "SESSIONS"), undefined);
+  assert.equal(findDispatchedCommand(table, "Sessions"), undefined);
 });

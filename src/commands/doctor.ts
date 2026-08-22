@@ -25,6 +25,41 @@ export interface DoctorCommandOptions {
   repairContext?: RepairContext;
   liveOptions?: LiveOptions;
   deep?: boolean;
+  /**
+   * Flags the CLI already parsed, passed as data rather than re-rendered into
+   * argv for this command to parse a second time. The round trip is the whole
+   * problem: a `--only` value of "--fix" re-enters as an option rather than as
+   * data, and validating the value first cannot fix an ambiguity the rebuild
+   * itself creates. A value chosen upstream stays one element, start to end.
+   */
+  flags?: DoctorFlagOverrides;
+}
+
+export interface DoctorFlagOverrides {
+  live?: boolean;
+  fix?: boolean;
+  dryRun?: boolean;
+  yes?: boolean;
+  deep?: boolean;
+  noUi?: boolean;
+  only?: readonly string[];
+}
+
+/**
+ * Overrides are additive: a mode switched on by either source stays on, and
+ * `only` accumulates. Nothing here can switch a mode *off*, so a forwarded
+ * flag can never quietly cancel one the user typed.
+ */
+export function applyFlagOverrides(flags: DoctorFlags, overrides?: DoctorFlagOverrides): DoctorFlags {
+  if (!overrides) return flags;
+  if (overrides.live) flags.live = true;
+  if (overrides.fix) flags.fix = true;
+  if (overrides.dryRun) flags.dryRun = true;
+  if (overrides.yes) flags.yes = true;
+  if (overrides.deep) flags.deep = true;
+  if (overrides.noUi) flags.noUi = true;
+  if (overrides.only?.length) flags.only.push(...overrides.only);
+  return flags;
 }
 
 export interface DoctorFlags {
@@ -105,7 +140,7 @@ export async function cmdDoctor(
   options: DoctorCommandOptions = {},
 ): Promise<number> {
   const out = options.out ?? process.stdout;
-  const flags = parseDoctorArgs(argv);
+  const flags = applyFlagOverrides(parseDoctorArgs(argv), options.flags);
   if (options.deep === true) flags.deep = true;
 
   if (flags.unknown.length) {

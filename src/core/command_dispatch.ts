@@ -76,10 +76,10 @@ export function validateDispatchTable(
 ): string[] {
   const errors = validateCommandRegistry(commands, sections);
   const seenFlags = new Map<string, { spec: FlagSpec; owner: string }>();
-  const seenShorts = new Map<string, string>();
+  const seenShorts = new Map<string, { flag: string; owner: string }>();
   for (const [name, spec] of Object.entries(reserved)) {
     seenFlags.set(name, { spec, owner: "(global)" });
-    if (spec.short) seenShorts.set(spec.short, "(global)");
+    if (spec.short) seenShorts.set(spec.short, { flag: name, owner: "(global)" });
   }
   for (const command of commands) {
     if (typeof command.load !== "function") errors.push(`${command.name}: missing load()`);
@@ -96,14 +96,17 @@ export function validateDispatchTable(
         seenFlags.set(name, { spec, owner: command.name });
       }
       if (spec.short) {
+        // A short letter belongs to a flag NAME, not to a command. Keying this
+        // on the owning command let one command declare two different flags on
+        // the same letter: parseArgs then silently resolves -x to whichever was
+        // declared first and the other short is dead. Two commands sharing one
+        // identical flag is still fine — that is a single parseArgs entry.
         const priorShort = seenShorts.get(spec.short);
-        // Two commands may share an identical flag (`--force` on both is one
-        // parseArgs entry); they may not disagree, and they may not reuse a
-        // short letter that already means something else.
-        if (priorShort && priorShort !== command.name && !(prior && sameSpec(prior.spec, spec))) {
-          errors.push(`${command.name}: -${spec.short} conflicts with ${priorShort}`);
+        if (priorShort && priorShort.flag !== name) {
+          errors.push(`${command.name}: -${spec.short} on --${name} conflicts with ${priorShort.owner}'s --${priorShort.flag}`);
+        } else if (!priorShort) {
+          seenShorts.set(spec.short, { flag: name, owner: command.name });
         }
-        seenShorts.set(spec.short, command.name);
       }
     }
   }
@@ -153,11 +156,19 @@ export function commandFlags(command: DispatchedCommand, values: Record<string, 
   };
 }
 
-/** Exact name-or-alias lookup. Never fuzzy — suggestions are the typo guard's job. */
+/**
+ * Exact name-or-alias lookup. Never fuzzy — suggestions are the typo guard's
+ * job — and deliberately case-SENSITIVE, because the `switch` in main.ts is.
+ *
+ * Lowercasing here would make migrated commands answer to `DOCTOR` while every
+ * command still in the switch does not, and a wrong-case token for those never
+ * even reaches the typo guard (its pattern is lower-case only) — it falls
+ * through to cmdChat and bills a turn. One casing rule for the whole CLI is
+ * worth more than leniency for the commands that happen to have moved.
+ */
 export function findDispatchedCommand(
   commands: readonly DispatchedCommand[],
   name: string,
 ): DispatchedCommand | undefined {
-  const normalized = name.trim().toLowerCase();
-  return commands.find((command) => command.name === normalized || command.aliases?.includes(normalized));
+  return commands.find((command) => command.name === name || command.aliases?.includes(name));
 }

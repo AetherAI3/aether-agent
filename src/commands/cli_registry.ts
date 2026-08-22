@@ -107,16 +107,25 @@ export const DISPATCH_COMMANDS: DispatchedCommand[] = [
     },
     load: async () => {
       const { cmdDoctor } = await import("./doctor.js");
-      return (ctx, argv, flags) => {
-        // Rebuilt as an argv array, never a command string — nothing here is
-        // ever handed to a shell.
-        const forwarded = ["deep", "live", "fix", "dry-run", "no-ui"].filter((name) => flags.bool(name)).map((name) => `--${name}`);
-        // --yes is global, so doctor's own parse never saw it either: `--fix
-        // --yes` printed "re-run with --yes" for a user who had just passed it.
-        if (ctx.flags.yes) forwarded.push("--yes");
-        for (const only of flags.list("only")) forwarded.push("--only", only);
-        return cmdDoctor(ctx, [...argv, ...forwarded]);
-      };
+      // Parsed values are handed over as data. Nothing is re-rendered into an
+      // argv string for doctor to re-parse, so a `--only` value that looks
+      // like an option ("--fix") stays a value: there is no second parse for
+      // it to be promoted by, and no shell anywhere on the path.
+      return (ctx, argv, flags) =>
+        cmdDoctor(ctx, argv, {
+          flags: {
+            deep: flags.bool("deep"),
+            live: flags.bool("live"),
+            fix: flags.bool("fix"),
+            dryRun: flags.bool("dry-run"),
+            noUi: flags.bool("no-ui"),
+            // --yes is global, so doctor's own parse never saw it either:
+            // `--fix --yes` printed "re-run with --yes" to a user who had
+            // just passed it.
+            yes: ctx.flags.yes,
+            only: flags.list("only"),
+          },
+        });
     },
   },
 ];

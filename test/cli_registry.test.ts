@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { commandNames } from "../src/core/command_registry.js";
-import { ALL_CLI_COMMANDS, CLI_COMMANDS, CLI_PARSE_OPTIONS, CLI_SECTIONS, DISPATCH_COMMANDS, findCliCommand, renderCliHelp } from "../src/commands/cli_registry.js";
+import { ALL_CLI_COMMANDS, CLI_COMMANDS, CLI_PARSE_OPTIONS, CLI_SECTIONS, DISPATCH_COMMANDS, findCliCommand, findDispatchedCliCommand, renderCliHelp } from "../src/commands/cli_registry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -61,6 +61,15 @@ test("every flag main.ts reads is a flag the parser was told about", () => {
   assert.ok(read.size > 10, "flag-read scan found almost nothing — the pattern has drifted");
   const undeclared = [...read].filter((name) => !(name in CLI_PARSE_OPTIONS)).sort();
   assert.deepEqual(undeclared, []);
+});
+
+test("the table's casing rule is the switch's casing rule", () => {
+  // The one behaviour a migration must not change: `DOCTOR` was never a
+  // command and must not become one just because doctor moved into the table.
+  for (const command of DISPATCH_COMMANDS) {
+    assert.equal(findDispatchedCliCommand(command.name)?.name, command.name);
+    assert.equal(findDispatchedCliCommand(command.name.toUpperCase()), undefined, command.name);
+  }
 });
 
 test("every dispatch entry can actually be loaded and run", async () => {
