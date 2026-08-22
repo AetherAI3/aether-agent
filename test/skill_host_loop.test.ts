@@ -460,6 +460,31 @@ test("the operator permission gate still runs after the skill narrowing", async 
   assert.match(brain.results[0]?.result.output ?? "", /not approved by user/);
 });
 
+test("a call the skill forbids never reaches the operator gate", async () => {
+  const fixture = makeFixture();
+  const { id } = installSkill(fixture.root, { allowed: ["read_file", "repo_search"] });
+  const run = mustOpen(fixture, { skill: id });
+
+  const brain = new ScriptedBrain([{ name: "write_file", args: { path: "x.txt", content: "hi" } }]);
+  const spy = new SpyExecutor();
+  const asked: string[] = [];
+  const recordingGate = async ({ name }: { name: string; args: Record<string, unknown> }): Promise<boolean> => {
+    asked.push(name);
+    return true;
+  };
+  await hostLoop(brain, spy as unknown as ToolExecutor, noopEvent, task("t"), undefined, recordingGate, run.guard);
+
+  // ORDERING, not merely outcome. Swap the guard block and the gate call in
+  // hostLoop and every other test in this file still passes — the call is
+  // refused either way, so nothing downstream can tell. What changes is that
+  // the user is asked to approve something host policy had ALREADY refused,
+  // which trains people to click through a prompt that never meant anything.
+  // This assertion is the only thing that fails on that swap.
+  assert.deepEqual(asked, [], "the user was asked to approve a call host policy had already refused");
+  assert.deepEqual(spy.executed, [], "and nothing ran");
+});
+
+
 // ── 4. loop states ──────────────────────────────────────────────────────────
 
 test("--skill naming a skill that does not exist refuses the run", () => {
