@@ -99,3 +99,19 @@ still in it; the table is consulted first, and a name wired both ways is a test
 failure rather than a silent precedence question. Existing commands can move
 into the table one at a time, each move deleting its `case` and its entries
 from the global flag table in the same commit.
+
+## Two rules a registering lane must not break
+
+**Casing.** Lookup is exactly as case-sensitive as `main.ts`'s `switch`. Do not
+lowercase in the table: a migrated command answering to `DOCTOR` while every
+command still in the switch does not is a divergence, and a wrong-case token
+for those never reaches the typo guard — its pattern is lower-case only — so it
+falls through to `cmdChat` and bills a turn.
+
+**Hand over parsed values, not a rebuilt argv.** A loader that re-renders flags
+into an argv string for its command to parse a second time reintroduces the
+ambiguity the seam removes: a `--only` value of `--fix` re-enters as an option
+rather than as data, and validating the value beforehand cannot fix an
+ambiguity the rebuild itself creates. Pass a typed options object — `doctor`'s
+entry is the worked example, and `DoctorFlagOverrides` is additive only, so a
+forwarded flag can never switch off a mode the user typed.
