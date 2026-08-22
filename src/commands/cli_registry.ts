@@ -7,6 +7,8 @@ export const CLI_COMMANDS: CommandSpec[] = [
   { name: "chat", args: "[prompt]", summary: "start chat or send one prompt", section: "Start" },
   { name: "resume", args: "[session-id|export [id] --out <file>]", summary: "replay a local session, or export it as a portable handoff", section: "Start" },
   { name: "run", args: "<neo|kronus> <task>", summary: "stream an orchestrator run", section: "Start" },
+  { name: "review", args: "[stage|unstage|revert|commit|diff|verify]", summary: "review changes, pick files or hunks, commit", section: "Start" },
+  { name: "ship", args: "[--title t] [--base b]", summary: "publish the head branch and open a pull request", section: "Start" },
   { name: "models", args: "[use <id>]", summary: "list models or set the default", section: "Start" },
   { name: "agents", summary: "list available orchestrators", section: "Start" },
   { name: "auth", args: "<login|status|token|refresh|logout>", summary: "manage authentication", section: "Account" },
