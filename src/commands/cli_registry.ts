@@ -6,6 +6,13 @@ export const CLI_COMMANDS: CommandSpec[] = [
   { name: "agent", aliases: ["code"], args: "[task]", summary: "run the coding agent or open its REPL", section: "Start" },
   { name: "chat", args: "[prompt]", summary: "start chat or send one prompt", section: "Start" },
   { name: "resume", args: "[session-id|export [id] --out <file>]", summary: "replay a local session, or export it as a portable handoff", section: "Start" },
+  // Lane AA-CONT-04. cli_registry.ts is shared and additive-only: this is the
+  // one line this lane adds. The spec is mirrored by SESSIONS_CLI_COMMAND in
+  // commands/sessions.ts and pinned equal by test/sessions_cmd.test.ts, so the
+  // help text and the implementation cannot drift. Not imported from there on
+  // purpose — this module is loaded on every cold start, and the sessions
+  // command is loaded lazily.
+  { name: "sessions", args: "[inspect|continue|export|archive|clean] [id]", summary: "browse, inspect and continue past project sessions", section: "Start" },
   { name: "run", args: "<neo|kronus> <task>", summary: "stream an orchestrator run", section: "Start" },
   { name: "models", args: "[use <id>]", summary: "list models or set the default", section: "Start" },
   { name: "agents", summary: "list available orchestrators", section: "Start" },
