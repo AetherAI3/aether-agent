@@ -53,6 +53,12 @@ export const GLOBAL_FLAGS: FlagTable = {
   audit: { type: "boolean", default: false },
   yes: { type: "boolean", short: "y", default: false },
   apply: { type: "boolean", default: false },
+  // `aether skills` / `aether capabilities` flags:
+  scope: { type: "string" },
+  all: { type: "boolean", default: false },
+  ci: { type: "boolean", default: false },
+  available: { type: "boolean", default: false },
+  junit: { type: "string" },
   help: { type: "boolean", short: "h", default: false },
   version: { type: "boolean", short: "v", default: false },
   // `aether agent` flags:
@@ -67,6 +73,7 @@ export const GLOBAL_FLAGS: FlagTable = {
   repo: { type: "string" },
   swarm: { type: "string" },
   resume: { type: "string" },
+  out: { type: "string" },
 };
 
 /**

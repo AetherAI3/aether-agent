@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { commandNames } from "../src/core/command_registry.js";
-import { ALL_CLI_COMMANDS, CLI_COMMANDS, CLI_SECTIONS, DISPATCH_COMMANDS, findCliCommand, renderCliHelp } from "../src/commands/cli_registry.js";
+import { ALL_CLI_COMMANDS, CLI_COMMANDS, CLI_PARSE_OPTIONS, CLI_SECTIONS, DISPATCH_COMMANDS, findCliCommand, renderCliHelp } from "../src/commands/cli_registry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -48,6 +48,19 @@ test("every registered command is reachable, by exactly one mechanism", () => {
   // production traffic for any of the above to mean anything.
   assert.ok(DISPATCH_COMMANDS.length > 0, "dispatch table is empty");
   assert.ok(CLI_COMMANDS.length > 0, "switch registry is empty");
+});
+
+test("every flag main.ts reads is a flag the parser was told about", () => {
+  // main.ts parses with strict:false, so an undeclared flag is not an error —
+  // it is captured into `values` and stripped from the positionals the command
+  // receives. A dropped declaration therefore reads as "flag silently ignored",
+  // which is how `aether doctor --live` came to run the fast report and exit 0.
+  // Written against main.ts's source because `values` only exists inside main().
+  const source = readFileSync(join(here, "..", "..", "src", "main.ts"), "utf8");
+  const read = new Set([...source.matchAll(/values\["([a-z0-9-]+)"\]/g)].map((match) => match[1]!));
+  assert.ok(read.size > 10, "flag-read scan found almost nothing — the pattern has drifted");
+  const undeclared = [...read].filter((name) => !(name in CLI_PARSE_OPTIONS)).sort();
+  assert.deepEqual(undeclared, []);
 });
 
 test("every dispatch entry can actually be loaded and run", async () => {
