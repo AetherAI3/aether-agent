@@ -335,7 +335,7 @@ Each starts an agent loop in the REPL.
 | `/plan <topic>` | Write an implementation plan. |
 | `/writing-plans <topic>` | Write a plan to `.hermes/plans/`. |
 | `/research <topic>` | Research → gather → summarize. |
-| `/review` | Full project review + summary. |
+| `/project-review` | Full project review + summary. (Was `/review`; that name is now the change-review rail below.) |
 | `/code-review` | Sweep: clean up + simplify. |
 | `/writing-skills` | Author reusable skills. |
 
@@ -408,6 +408,8 @@ Requires an active orchestrator — switch with `/agent neo` or `/agent kronus` 
 | `/bench <target>` | Profile a function/endpoint and suggest optimizations (requires an active orchestrator). |
 | `/purge` | Flush pinned files, temp files, and the UVT cap back to a lean baseline. |
 | `/stage-diff` | Unified diff of uncommitted changes + a suggested commit message. |
+| `/review [stage|unstage|revert|commit|diff|verify]` | See what changed, pick files or hunks, stage, revert and commit. |
+| `/ship` | Publish the reviewed branch and open a pull request. |
 | `/revert <file\|step>` | Surgical rollback of a single file (git-backed). |
 
 ### Media
