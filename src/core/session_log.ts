@@ -9,16 +9,18 @@
 //   manifest.json  {sessionId, task, model, poolGb, brain, started, ended, finalStatus, ...}
 
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { BrainEvent } from "./brain_protocol.js";
 import type { ToolResult } from "./tool_executor.js";
 import { registerRestore } from "../ui/restore.js";
 import { normalizeWorkspace } from "./workspace_scope.js";
+import { logsRoot } from "./logs_root.js";
+import { entryFromManifest, upsertSessionIndex } from "./session_index.js";
 
-export function logsRoot(): string {
-  return process.env["AETHER_LOG_DIR"] ?? join(homedir(), ".aether-agent", "logs");
-}
+// The definition moved to logs_root.ts so this module and session_index.ts do
+// not import each other; re-exported here because every existing caller — and
+// every test — imports `logsRoot` from this file.
+export { logsRoot } from "./logs_root.js";
 
 
 
@@ -110,16 +112,43 @@ export interface SessionMeta {
   /** The command the verify gate runs for this session. Recorded so a handoff
    *  can tell the next machine how this work is checked. */
   testCmd?: string;
+  // ── continuity fields ─────────────────────────────────────────────────────
+  // All optional, and absent when unknown. A session library that renders an
+  // unrecorded branch as "main" or an unmeasured file count as 0 is worse than
+  // one that says it does not know, so nothing here is defaulted.
+  /** `git remote get-url origin` for the workspace, when there is one. */
+  repoRemote?: string;
+  /** Branch the run started on. */
+  branch?: string;
+  /** Revision the work is based on (merge-base with the base branch). */
+  baseRev?: string;
+  /** HEAD at the moment the session started. */
+  headRev?: string;
+  /** Worktree path, when it differs from `cwd`. */
+  worktree?: string;
+  /** Human label for the session, when one was given. */
+  label?: string;
+  /** Skill ids (with versions) applied to the run, for provenance. */
+  skills?: string[];
+  /** Digest of the instruction graph in force. */
+  instructionsDigest?: string;
 }
 
 export class SessionLog {
   readonly dir: string;
   readonly sessionId: string;
+  /** Logs root this session lives under — kept so the index update writes to
+   *  the same root the session did, not to whatever the environment says now. */
+  private readonly root: string;
   private readonly eventsPath: string;
   private readonly monologuePath: string;
   private readonly manifestPath: string;
   private events = 0;
   private toolCalls = 0;
+  /** Distinct paths this run wrote. A Set, not a counter: the same file
+   *  rewritten four times is one file touched, which is what a person reading
+   *  the library means by the number. */
+  private readonly written = new Set<string>();
   private readonly started: string;
 
   /** `now` is injected (ISO string) so the caller owns the clock — testable,
@@ -129,6 +158,7 @@ export class SessionLog {
     now: string,
     root: string = logsRoot(),
   ) {
+    this.root = root;
     this.started = now;
     // process.pid makes the session dir collision-proof: two `aether code`
     // invocations with the same brain starting in the same millisecond would
@@ -153,7 +183,17 @@ export class SessionLog {
   /** Record one brain event (and mirror human-readable lines to monologue.txt). */
   event(ev: BrainEvent, ts: string): void {
     this.events += 1;
-    if (ev.type === "tool_call") this.toolCalls += 1;
+    if (ev.type === "tool_call") {
+      this.toolCalls += 1;
+      // Counted from the RAW event: `loggedEvent` below is the redacted copy,
+      // and the blast radius of a run must not depend on what redaction kept.
+      // Case-folded on Windows, where `Foo.ts` and `foo.ts` are one file and
+      // counting them twice would inflate the number the library shows.
+      const path = ev.name === "write_file" ? ev.args["path"] : undefined;
+      if (typeof path === "string" && path && this.written.size < 5_000) {
+        this.written.add(process.platform === "win32" ? path.toLowerCase() : path);
+      }
+    }
     const safe = loggedEvent(ev);
     this.buffer(this.eventsPath, JSON.stringify({ ts, ...safe }) + "\n");
     const line = monologueLine(safe);
@@ -220,30 +260,65 @@ export class SessionLog {
     this.writeManifest({ ended, finalStatus, remaining });
   }
 
+  /** The manifest body — the authoritative record of this session, and the only
+   *  thing the session index is ever built from. */
+  private manifestBody(
+    end: { ended: string; finalStatus: string; remaining?: number } | null,
+  ): Record<string, unknown> {
+    const m = this.meta;
+    return {
+      sessionId: this.sessionId,
+      task: redactInline(m.task),
+      model: m.model,
+      poolGb: m.poolGb,
+      brain: m.brain,
+      cwd: normalizeWorkspace(m.cwd),
+      ...(m.testCmd ? { testCmd: redactInline(m.testCmd) } : {}),
+      ...(m.repoRemote ? { repoRemote: redactInline(m.repoRemote) } : {}),
+      ...(m.branch ? { branch: redactInline(m.branch) } : {}),
+      ...(m.baseRev ? { baseRev: redactInline(m.baseRev) } : {}),
+      ...(m.headRev ? { headRev: redactInline(m.headRev) } : {}),
+      ...(m.worktree ? { worktree: redactInline(m.worktree) } : {}),
+      ...(m.label ? { label: redactInline(m.label) } : {}),
+      ...(m.skills?.length ? { skills: m.skills.map((s) => redactInline(s)) } : {}),
+      ...(m.instructionsDigest ? { instructionsDigest: redactInline(m.instructionsDigest) } : {}),
+      started: this.started,
+      ended: end?.ended ?? null,
+      finalStatus: end?.finalStatus ?? "running",
+      events: this.events,
+      toolCalls: this.toolCalls,
+      filesTouched: this.written.size,
+      ...(end?.remaining != null && end.remaining > 0 && { remaining: end.remaining }),
+    };
+  }
+
   private writeManifest(end: { ended: string; finalStatus: string; remaining?: number } | null): void {
-    writeFileSync(
-      this.manifestPath,
-      JSON.stringify(
-        {
-          sessionId: this.sessionId,
-          task: redactInline(this.meta.task),
-          model: this.meta.model,
-          poolGb: this.meta.poolGb,
-          brain: this.meta.brain,
-          cwd: normalizeWorkspace(this.meta.cwd),
-          ...(this.meta.testCmd ? { testCmd: redactInline(this.meta.testCmd) } : {}),
-          started: this.started,
-          ended: end?.ended ?? null,
-          finalStatus: end?.finalStatus ?? "running",
-          events: this.events,
-          toolCalls: this.toolCalls,
-          ...(end?.remaining != null && end.remaining > 0 && { remaining: end.remaining }),
-        },
-        null,
-        2,
-      ) + "\n",
-      { encoding: "utf8", mode: 0o600 },
-    );
+    const body = this.manifestBody(end);
+    writeFileSync(this.manifestPath, JSON.stringify(body, null, 2) + "\n", {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    this.indexSelf(body);
+  }
+
+  /**
+   * Mirror the manifest into the session index.
+   *
+   * Best-effort by design: the manifest is the record, the index is a cache of
+   * it, and a locked or unwritable index must never take a run down or lose the
+   * session's own log. A skipped update self-heals on the next read, which
+   * rebuilds from the manifests.
+   *
+   * Called twice per session (open and close), never per event — each call
+   * takes the index lock.
+   */
+  private indexSelf(body: Record<string, unknown>): void {
+    try {
+      const entry = entryFromManifest(this.sessionId, body);
+      if (entry) upsertSessionIndex(entry, this.root);
+    } catch {
+      /* the manifest is written; the index rebuilds from it on read */
+    }
   }
 }
 

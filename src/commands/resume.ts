@@ -5,8 +5,13 @@
 // portable handoff (core/handoff.ts): the file you copy to another machine so
 // `aether agent --resume <file>` can carry the project context across.
 
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { AppContext } from "../core/context.js";
+import { entryFromManifest } from "../core/session_index.js";
+import { isCurrentWorkspace } from "../core/workspace_scope.js";
+import { classifySession, continuityHeader } from "../ui/continuity.js";
+import { cmdSessionsList } from "./sessions.js";
 import { loadSession, latestSession, replayLines, type LoadedSession } from "../core/session_resume.js";
 import { logsRoot } from "../core/session_log.js";
 import { buildHandoff, readRepoIdentity, writeHandoff } from "../core/handoff.js";
@@ -60,10 +65,32 @@ export function cmdResumeExport(ctx: AppContext, id: string, out?: string): numb
   return 0;
 }
 
+/** `aether resume list` — the session library, same screen as `aether sessions`.
+ *  An alias, not a second implementation: one listing, one set of rules. */
+export function cmdResumeList(ctx: AppContext, all: boolean): number {
+  return cmdSessionsList(ctx, all);
+}
+
+/** The Project Continuity header for a loaded session, when the manifest holds
+ *  enough to build one. Absent rather than guessed: a session recorded before
+ *  the library existed still replays, just without the header. */
+function continuityLines(session: LoadedSession, cwd: string): string[] {
+  const entry = entryFromManifest(session.manifest.sessionId, session.manifest);
+  if (!entry) return [];
+  const sameWorkspace = isCurrentWorkspace(session.manifest.cwd, cwd);
+  const state = classifySession(entry, {
+    cwd,
+    sameWorkspace,
+    workspaceExists: sameWorkspace || existsSync(entry.workspace),
+  });
+  return continuityHeader({ kind: "local", entry, state });
+}
+
 export function cmdResume(ctx: AppContext, id: string): number {
   const session = pick(ctx, id);
   if (!session) return 1;
-  process.stdout.write(theme.dim(`▸ ${session.manifest.sessionId} · ${session.manifest.task}\n\n`));
+  for (const line of continuityLines(session, ctx.flags.cwd)) process.stdout.write(line + "\n");
+  process.stdout.write(theme.dim(`\n▸ ${session.manifest.sessionId} · ${session.manifest.task}\n\n`));
   for (const line of replayLines(session.events)) process.stdout.write(line + "\n");
   process.stdout.write(
     "\n" +
