@@ -139,7 +139,12 @@ export async function runTurn(
   // prompt), so reprinting an identical five-line header on every turn would
   // bury the answers it sits above. A change — a skill matched, a rules file
   // was edited mid-session — still prints, which is the case worth seeing.
-  if (run.contextTokens > 0) {
+  // A notice is the whole point of this header: an untrusted skill, a manifest
+  // that would not index, a rules file dropped for an unparsable scope. Those
+  // can all occur with NOTHING composed — no rules, no skill body, zero context
+  // tokens — so gating the header on composed size alone silently swallowed
+  // exactly the cases the header exists to report.
+  if (run.contextTokens > 0 || run.session.notices.length > 0 || run.hasWarnings) {
     const header = run.headerLines.join("\n");
     if (header !== lastTurnHeader) {
       lastTurnHeader = header;

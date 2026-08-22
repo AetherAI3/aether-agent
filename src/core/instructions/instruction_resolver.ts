@@ -2,6 +2,7 @@
 // Pure over discovered sources; no filesystem access here.
 
 import { INSTRUCTION_PRECEDENCE, type InstructionConflict, type InstructionGraph, type InstructionSource } from "./instruction_types.js";
+import { sanitizeForTransport } from "../skills/context_packet.js";
 import { discoverInstructionSources } from "./instruction_discovery.js";
 
 /** Cursor-subset glob → RegExp ( ** , * , ? only — discovery rejected the rest). */
@@ -25,6 +26,10 @@ function globToRegExp(glob: string): RegExp {
 }
 
 /** Does one source apply to a project-relative file path (posix separators)? */
+// One sanitizer for every channel content can leave on: the composed brief
+// goes through it via fenceSafe, and the typed packet goes through it here.
+// Two channels carrying the same bytes must not disagree about what is safe.
+
 export function sourceAppliesTo(source: InstructionSource, relativePath: string | null): boolean {
   if (source.parseStatus === "unsupported-syntax") return false;
   if (relativePath == null) {
@@ -146,7 +151,21 @@ export function runScopedSources(sources: readonly InstructionSource[]): Instruc
 /** Build the full graph for a project: discovery + run-scope conflict pass. */
 export function resolveInstructionGraph(projectRoot: string): InstructionGraph {
   const { sources, skipped } = discoverInstructionSources(projectRoot);
-  return { sources, conflicts: detectConflicts(runScopedSources(sources)), skipped };
+  // runScopedSources drops a source whose glob frontmatter would not parse: its
+  // scope is unknown, so applying it to the whole run would be a guess about
+  // which files it governs. Dropping it is right; dropping it SILENTLY is not —
+  // discovery found the file, read it, and the user believes it is in force.
+  const unparsable = sources
+    .filter((source) => source.parseStatus === "unsupported-syntax")
+    .map((source) => ({
+      path: source.displayPath,
+      reason: "its scope could not be parsed, so it governs no known files and was NOT sent",
+    }));
+  return {
+    sources,
+    conflicts: detectConflicts(runScopedSources(sources)),
+    skipped: [...skipped, ...unparsable],
+  };
 }
 
 export const INSTRUCTION_CONTEXT_CONTRACT_VERSION = 1;
@@ -200,7 +219,11 @@ function packetOf(ordered: readonly InstructionSource[]): InstructionContextPack
       path: source.displayPath,
       scope: source.scopeDir === "" ? "project" : source.scopeDir,
       digest: "sha256:" + source.sha256,
-      content: source.content,
+      // Same treatment the skill packet gives skill bodies. An instruction file
+      // is attacker-influenced content too (any repo you clone carries one), and
+      // it must not reach a transport — or a consumer that reads this packet
+      // instead of the composed brief — carrying raw control bytes.
+      content: sanitizeForTransport(source.content),
       ...(source.globs ? { globs: source.globs } : {}),
     })),
   };

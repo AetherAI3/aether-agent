@@ -70,6 +70,12 @@ export interface RunSession {
   /** Measured tokens of the context block (rules + skills + policy), task excluded. */
   contextTokens: number;
   /**
+   * True when the header carries something that was dropped, truncated, or
+   * withheld. A surface may throttle a routine header; it may never throttle
+   * this one away.
+   */
+  hasWarnings: boolean;
+  /**
    * The TYPED context for a brain that speaks the NDJSON command channel
    * (encodeCommand puts it on the task frame). It is the same content the brief
    * renders, with provenance kept structured. Null when there is nothing to
@@ -92,17 +98,37 @@ export type OpenRunSession =
 
 /** Header label column, so every surface aligns identically. */
 const LABEL = 10;
-const row = (label: string, value: string): string => label.padEnd(LABEL) + value;
+// Header values include manifest-authored text (a trigger phrase, a skill
+// description) and repo-authored paths. None of it may carry a raw escape
+// sequence onto the user's terminal, so every row is sanitized on the way out
+// with the same function the transport channels use, applied at the last step
+// before a write. The ESC byte already falls inside that sanitizer's character
+// class, so an ANSI sequence loses its introducer and can neither move the
+// cursor nor repaint the screen.
+const row = (label: string, value: string): string => sanitizeForTransport(label.padEnd(LABEL) + value);
 
 /**
- * Closing tags this file emits. Instruction and skill CONTENT is data, not
- * markup: a rules file that contains "</task>" must not be able to end the
- * section it sits in and speak as the host. Escaped deterministically so the
- * brief stays byte-stable across runs (the payload assertions depend on it).
+ * Tags this file emits, OPENING and closing alike. Instruction and skill
+ * CONTENT is data, not markup: a rules file containing "</source>" must not be
+ * able to end the section it sits in and speak as the host, and one containing
+ * a forged "<source path=... digest=...>" must not be able to open a second
+ * element inside a real one and claim provenance it does not have. Escaping
+ * only the closing half left that second case open — the real close was
+ * neutralized, so nothing terminated early, but the model was still shown what
+ * looked like an independently sourced, host-attributed block.
+ *
+ * Escaped deterministically so the brief stays byte-stable across runs (the
+ * payload assertions depend on it).
  */
-const FENCE = /<\/(project_rules|source|conflict|skills|skill|resource|host_policy|task)>/gi;
+const FENCE = /<\/?(?:project_rules|source|conflict|skills|skill|resource|host_policy|task|note)\b[^>]*>/gi;
 function fenceSafe(text: string): string {
-  return sanitizeForTransport(text).replace(FENCE, "&lt;/$1&gt;");
+  // Escape the WHOLE matched tag, attributes included. The previous form kept
+  // only a capture group and re-emitted it as a closing tag, which silently
+  // rewrote any opening tag it matched into a closing one and dropped its
+  // attributes - a lossy transform of the user's own file.
+  return sanitizeForTransport(text).replace(FENCE, (match) =>
+    match.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"),
+  );
 }
 
 /** Attribute values are host-authored or digests, but never trust that blindly. */
@@ -425,6 +451,11 @@ export function openRunSession(options: RunSessionOptions): OpenRunSession {
     headerLines: buildHeader(session, rules.warnings, effective, contextTokens, options, policies, automaticOnly, unmet),
     effectiveTools: effective,
     contextTokens,
+    hasWarnings:
+      rules.warnings.length > 0 ||
+      session.notices.length > 0 ||
+      unmet.length > 0 ||
+      session.instructionGraph.skipped.length > 0,
     contextPacket,
     brief(task: string): string {
       // No rules, no skills, no narrowing → the brain reads exactly what the
