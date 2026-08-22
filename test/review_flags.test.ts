@@ -19,37 +19,29 @@ import { parseArgs } from "node:util";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CLI_PARSE_OPTIONS } from "../src/commands/cli_registry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const mainSource = readFileSync(join(here, "..", "..", "src", "main.ts"), "utf8");
 
-/** The options literal main.ts hands parseArgs, recovered from source. */
+/**
+ * The options main.ts hands parseArgs.
+ *
+ * Read from the registry, not scraped out of main.ts source. The command
+ * registration seam (#98) replaced the inline `options: { … }` literal with
+ * `options: CLI_PARSE_OPTIONS`, so the old source scrape recovered {} and every
+ * assertion below — including the trap test that proves the declarations are
+ * load-bearing — passed vacuously against an empty table.
+ *
+ * A FRESH COPY per call: the trap test deletes a key from what it gets back,
+ * and the registry table is a module singleton shared with the running CLI.
+ */
 function declaredOptions(): Record<string, { type: "string" | "boolean"; short?: string }> {
-  const start = mainSource.indexOf("options: {");
-  assert.ok(start > 0, "main.ts no longer has an options literal");
-  let depth = 0;
-  let end = start;
-  for (let index = mainSource.indexOf("{", start); index < mainSource.length; index += 1) {
-    const ch = mainSource[index];
-    if (ch === "{") depth += 1;
-    else if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        end = index + 1;
-        break;
-      }
-    }
-  }
-  const body = mainSource.slice(mainSource.indexOf("{", start), end);
   const options: Record<string, { type: "string" | "boolean"; short?: string }> = {};
-  for (const match of body.matchAll(
-    /(?:"([a-z-]+)"|([a-z-]+)):\s*\{\s*type:\s*"(string|boolean)"(?:,\s*short:\s*"([a-zA-Z])")?/g,
-  )) {
-    const name = match[1] ?? match[2]!;
-    const spec: { type: "string" | "boolean"; short?: string } = { type: match[3] as "string" | "boolean" };
-    if (match[4]) spec.short = match[4];
-    options[name] = spec;
+  for (const [name, spec] of Object.entries(CLI_PARSE_OPTIONS)) {
+    options[name] = { ...(spec as { type: "string" | "boolean"; short?: string }) };
   }
+  assert.ok(Object.keys(options).length > 0, "CLI_PARSE_OPTIONS is empty — the declarations are not load-bearing");
   return options;
 }
 
