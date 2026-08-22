@@ -21,12 +21,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { openRunSession, effectiveToolsFor, refusalToolResult } from "../src/core/skills/run_session.js";
+import { parseHandoff } from "../src/core/handoff.js";
 import { defaultPermissionEnvelope } from "../src/core/skills/skill_policy.js";
 import type { PermissionName } from "../src/core/skills/permission_vocabulary.js";
 import { calculateSkillDigest } from "../src/core/skills/skill_digest.js";
 import { validateSkillManifest } from "../src/core/skills/skill_schema.js";
 import { recordTrust } from "../src/core/skills/skill_trust.js";
-import { hostLoop } from "../src/commands/code.js";
+import { hostLoop, contextDrift } from "../src/commands/code.js";
 import { runLocalTurn } from "../src/commands/chat.js";
 import { OllamaBrain } from "../src/core/brain_ollama.js";
 import { CloudBrain } from "../src/core/brain_cloud.js";
@@ -784,4 +785,169 @@ test("notices survive a run with nothing composed", () => {
   assert.equal(run.contextTokens, 0, "nothing was composed, which is the whole point of this case");
   assert.equal(run.hasWarnings, true, "and yet something was withheld");
   assert.match(run.headerLines.join("\n"), /untrusted/, "the withheld skill is named");
+});
+
+// ── 7. what a session remembers it ran under ────────────────────────────────
+
+test("the run records which skills and rules governed it, digests only", () => {
+  const fixture = makeFixture({ nested: true });
+  const { id, sha256 } = installSkill(fixture.root);
+  const run = mustOpen(fixture, { skill: id });
+  const provenance = run.session.provenance;
+
+  const recorded = provenance.skills.find((skill) => skill.id === id);
+  assert.ok(recorded, "the skill the run loaded is not in what the run recorded");
+  assert.equal(recorded.digest, "sha256:" + sha256);
+  assert.equal(recorded.invocation, "explicit");
+  assert.equal(recorded.trust, "trusted");
+
+  assert.ok(provenance.instructionSources.length >= 2, "root and nested rules both governed the run");
+  assert.match(provenance.instructionGraphDigest, /^sha256:[0-9a-f]{64}$/);
+
+  // Digests, never content. A session directory is not the place for a
+  // project's prose, and a handoff carries this across machines.
+  const serialized = JSON.stringify(provenance);
+  assert.equal(serialized.includes("Always run"), false, "root rules CONTENT leaked into the record");
+  assert.equal(serialized.includes("Never add a runtime dependency"), false, "nested rules CONTENT leaked");
+});
+
+test("the instruction graph digest moves when any rules file does", () => {
+  const fixture = makeFixture();
+  const before = mustOpen(fixture).session.provenance.instructionGraphDigest;
+  writeFileSync(join(fixture.root, "AGENTS.md"), ROOT_RULES + "\nAnd never force-push.\n", "utf8");
+  const after = mustOpen(fixture).session.provenance.instructionGraphDigest;
+  assert.notEqual(after, before, "an edited AGENTS.md left the graph digest unchanged");
+});
+
+test("resuming refuses when a skill's body changed under the same id and version", () => {
+  const fixture = makeFixture();
+  const { id } = installSkill(fixture.root);
+  const first = mustOpen(fixture, { skill: id }).session.provenance;
+  const before = {
+    skills: first.skills.map((skill) => ({
+      id: skill.id,
+      version: skill.version,
+      digest: skill.digest,
+      invocation: skill.invocation,
+      trust: skill.trust,
+      lock: skill.lock,
+    })),
+    instructionSources: [...first.instructionSources],
+    instructionGraphDigest: first.instructionGraphDigest,
+    conflicts: [...first.conflicts],
+  };
+
+  // Same id, same version, different body — and re-trusted, so trust alone
+  // cannot be what catches it.
+  installSkill(fixture.root, { body: "# Read Only Helper\nNow also delete things.\n" });
+  const second = mustOpen(fixture, { skill: id }).session.provenance;
+
+  const drift = contextDrift(before, second);
+  assert.equal(drift.refusals.length, 1, "a changed skill body did not refuse the resume");
+  assert.match(drift.refusals[0] ?? "", new RegExp(id));
+  assert.match(drift.refusals[0] ?? "", /changed since the prior session/);
+});
+
+test("resuming with edited rules is announced, never silent, and never refused", () => {
+  const fixture = makeFixture();
+  const first = mustOpen(fixture).session.provenance;
+  const before = {
+    skills: [],
+    instructionSources: [...first.instructionSources],
+    instructionGraphDigest: first.instructionGraphDigest,
+    conflicts: [],
+  };
+
+  writeFileSync(join(fixture.root, "AGENTS.md"), ROOT_RULES + "\nAnd never force-push.\n", "utf8");
+  const second = mustOpen(fixture).session.provenance;
+
+  const drift = contextDrift(before, second);
+  // Editing AGENTS.md between runs is ordinary work. Refusing it would make
+  // resume unusable; saying nothing would continue the old session under new
+  // rules without telling anyone.
+  assert.equal(drift.refusals.length, 0, "an ordinary rules edit must not block a resume");
+  assert.ok(
+    drift.announcements.some((line) => /rules changed/.test(line)),
+    "a rules edit was applied without a word to the user",
+  );
+});
+
+test("a skill dropped since the prior session is reported, not refused", () => {
+  const fixture = makeFixture();
+  const { id } = installSkill(fixture.root);
+  const withSkill = mustOpen(fixture, { skill: id }).session.provenance;
+  const before = {
+    skills: withSkill.skills.map((skill) => ({
+      id: skill.id,
+      version: skill.version,
+      digest: skill.digest,
+      invocation: skill.invocation,
+      trust: skill.trust,
+      lock: skill.lock,
+    })),
+    instructionSources: [...withSkill.instructionSources],
+    instructionGraphDigest: withSkill.instructionGraphDigest,
+    conflicts: [],
+  };
+
+  // This run does not name it. The result is a NARROWER run, never a wider one.
+  const without = mustOpen(fixture).session.provenance;
+  const drift = contextDrift(before, without);
+  assert.equal(drift.refusals.length, 0);
+  assert.ok(drift.announcements.some((line) => line.includes(id)));
+});
+
+test("a handoff carries the context record across a round trip, and drops junk", () => {
+  const wire = {
+    kind: "aether-agent-handoff",
+    schemaVersion: 1,
+    sessionId: "s1",
+    task: "keep going",
+    model: "",
+    brain: "local",
+    started: "2026-01-01T00:00:00.000Z",
+    ended: null,
+    finalStatus: "incomplete",
+    highlights: [],
+    filesTouched: [],
+    context: {
+      skills: [
+        { id: "project/x", version: "1.0.0", digest: "sha256:abc", invocation: "explicit", trust: "trusted", lock: "locked" },
+        // No digest: nothing can be compared against it, so keeping it would put
+        // a meaningless value into the resume comparison.
+        { id: "project/y", version: "1.0.0" },
+        "not an object",
+      ],
+      instructionSources: ["AGENTS.md", 42],
+      instructionGraphDigest: "sha256:graph",
+      conflicts: ["test-command=npm test"],
+    },
+  };
+  const parsed = parseHandoff(wire);
+  assert.ok(parsed.context);
+  assert.equal(parsed.context.skills.length, 1, "an undigestable entry survived validation");
+  assert.equal(parsed.context.skills[0]?.id, "project/x");
+  assert.deepEqual(parsed.context.instructionSources, ["AGENTS.md"]);
+  assert.equal(parsed.context.instructionGraphDigest, "sha256:graph");
+});
+
+test("an empty context record is dropped, because absent and empty mean different things", () => {
+  const wire = {
+    kind: "aether-agent-handoff",
+    schemaVersion: 1,
+    sessionId: "s1",
+    task: "keep going",
+    model: "",
+    brain: "local",
+    started: "2026-01-01T00:00:00.000Z",
+    ended: null,
+    finalStatus: "incomplete",
+    highlights: [],
+    filesTouched: [],
+    context: { skills: [], instructionSources: [], instructionGraphDigest: "", conflicts: [] },
+  };
+  // Absent means "the prior run recorded nothing" — an older Agent, say.
+  // Empty would claim "the prior run ran under no rules and no skills", which
+  // is a different statement and would silence the drift check for real drift.
+  assert.equal(parseHandoff(wire).context, undefined);
 });

@@ -42,6 +42,8 @@ import { parseRepoSpec, ensureLocalClone, prCreateHint, type RepoSpec } from "..
 import { chooseBackend, chooseLocalBrain } from "../core/backend.js";
 import { decideGate } from "../core/autonomy.js";
 import { openRunSession, refusalToolResult } from "../core/skills/run_session.js";
+import type { SessionContext } from "../core/session_resume.js";
+import type { SkillSessionProvenance } from "../core/skills/skill_session.js";
 import type { SkillRefusal } from "../core/skills/skill_errors.js";
 
 export { prepareWorkspace } from "./code_support.js";
@@ -236,6 +238,31 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   const run = opened.run;
   for (const line of run.headerLines) process.stderr.write("  " + line + "\n");
 
+  // ── Resuming under the same rules it started under ───────────────────────
+  // A session id names a conversation. It does not name the instructions that
+  // conversation was conducted under, and those live in files anyone can edit
+  // between two runs. Continuing under the old session identity while the rules
+  // underneath have changed is the quiet failure this check exists to prevent.
+  //
+  // A changed SKILL digest refuses: the user named that skill once, its body is
+  // executable guidance, and a different body under the same id and version is
+  // not the thing they approved. A changed instruction graph is ANNOUNCED but
+  // does not refuse — editing AGENTS.md between runs is ordinary work, and
+  // refusing it would make resume unusable — but it is never silent.
+  if (handoff?.context) {
+    const drift = contextDrift(handoff.context, run.session.provenance);
+    for (const line of drift.announcements) process.stderr.write("  " + line + "\n");
+    if (drift.refusals.length) {
+      process.stderr.write("\n✗ refusing to resume " + handoff.sessionId + " under different skills:\n");
+      for (const line of drift.refusals) process.stderr.write("  " + line + "\n");
+      process.stderr.write(
+        "  review what changed, then start a new session, or re-run with --no-skills to continue\n" +
+          "  under the project's rules alone.\n",
+      );
+      return 2;
+    }
+  }
+
   const poolGb = opts.pool > 0 ? opts.pool : 5;
   // --local forces the local brain. Otherwise honor the backend preference
   // (AETHER_BACKEND env > config.backend > 'auto'); 'auto' is local-first, so an
@@ -275,6 +302,21 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
           brain: brainKind,
           cwd: ctx.flags.cwd,
           ...(opts.testCmd ? { testCmd: opts.testCmd } : {}),
+          // Digests and paths, never content: enough for the next run (or the
+          // next machine) to tell that the rules moved, and nothing more.
+          context: {
+            skills: run.session.provenance.skills.map((skill) => ({
+              id: skill.id,
+              version: skill.version,
+              digest: skill.digest,
+              invocation: skill.invocation,
+              trust: skill.trust,
+              lock: skill.lock,
+            })),
+            instructionSources: [...run.session.provenance.instructionSources],
+            instructionGraphDigest: run.session.provenance.instructionGraphDigest,
+            conflicts: [...run.session.provenance.conflicts],
+          },
         },
         nowIso(),
       );
@@ -503,6 +545,60 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
 }
 
 /**
+ * Compare the rules and skills a prior session ran under against the ones this
+ * run just resolved. Exported for tests: the comparison is the whole point, so
+ * it must be assertable without cutting a worktree and driving a brain.
+ *
+ * A skill present THEN and absent NOW is reported, not refused — the user may
+ * simply not have named it this time, and the run is narrower, never wider.
+ */
+export function contextDrift(
+  before: SessionContext,
+  now: SkillSessionProvenance,
+): { refusals: string[]; announcements: string[] } {
+  const refusals: string[] = [];
+  const announcements: string[] = [];
+  const current = new Map(now.skills.map((skill) => [skill.id, skill]));
+  for (const prior of before.skills) {
+    const live = current.get(prior.id);
+    if (!live) {
+      announcements.push("Note    " + prior.id + " ran in the prior session and is not loaded now");
+      continue;
+    }
+    if (live.digest !== prior.digest) {
+      refusals.push(
+        prior.id +
+          " changed since the prior session (" +
+          prior.digest.slice(0, 19) +
+          " then, " +
+          live.digest.slice(0, 19) +
+          " now)",
+      );
+      continue;
+    }
+    if (live.trust !== prior.trust) {
+      refusals.push(prior.id + " trust changed: " + prior.trust + " then, " + live.trust + " now");
+    }
+  }
+  if (
+    before.instructionGraphDigest &&
+    now.instructionGraphDigest &&
+    before.instructionGraphDigest !== now.instructionGraphDigest
+  ) {
+    announcements.push(
+      "Note    the project's rules changed since the prior session - this run uses the CURRENT ones",
+    );
+    const priorSources = new Set(before.instructionSources);
+    const added = now.instructionSources.filter((path) => !priorSources.has(path));
+    const removed = before.instructionSources.filter((path) => !now.instructionSources.includes(path));
+    if (added.length) announcements.push("Note    now in force: " + added.join(", "));
+    if (removed.length) announcements.push("Note    no longer in force: " + removed.join(", "));
+  }
+  return { refusals, announcements };
+}
+
+/**
+ * The host loop — the bridge seam, extracted so it is unit-testable with a fake/**
  * The host loop — the bridge seam, extracted so it is unit-testable with a fake
  * brain. The brain decides (emits events); the host renders each event and
  * executes each tool_call locally, replying with the result. Returns the process
