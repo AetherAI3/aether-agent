@@ -14,6 +14,8 @@ export const CLI_COMMANDS: CommandSpec[] = [
   { name: "chat", args: "[prompt]", summary: "start chat or send one prompt", section: "Start" },
   { name: "resume", args: "[session-id|export [id] --out <file>]", summary: "replay a local session, or export it as a portable handoff", section: "Start" },
   { name: "run", args: "<neo|kronus> <task>", summary: "stream an orchestrator run", section: "Start" },
+  { name: "review", args: "[stage|unstage|revert|commit|diff|verify]", summary: "review changes, pick files or hunks, commit", section: "Start" },
+  { name: "ship", args: "[--title t] [--base b]", summary: "publish the head branch and open a pull request", section: "Start" },
   { name: "models", args: "[use <id>]", summary: "list models or set the default", section: "Start" },
   { name: "agents", summary: "list available orchestrators", section: "Start" },
   { name: "auth", args: "<login|status|token|refresh|logout>", summary: "manage authentication", section: "Account" },
@@ -74,6 +76,24 @@ export const GLOBAL_FLAGS: FlagTable = {
   swarm: { type: "string" },
   resume: { type: "string" },
   out: { type: "string" },
+  // `aether review` / `aether ship` flags.
+  //
+  // These MUST be declared. parseArgs runs with `strict: false`, which swallows
+  // any undeclared flag into `values` and strips it from the positionals a
+  // command receives — so an undeclared `--files a,b` does not reach the command
+  // as an argument and does not reach it as a flag either. It simply vanishes,
+  // and the command reports success having done nothing. Every flag the
+  // review/ship layer reads is listed here for that reason, and
+  // test/review_flags.test.ts proves each one arrives.
+  files: { type: "string" },
+  hunks: { type: "string" },
+  message: { type: "string", short: "m" },
+  // `--approve <action>` is the declared authority boundary: `--yes` alone
+  // never approves a destructive or a publishing step.
+  approve: { type: "string" },
+  title: { type: "string" },
+  body: { type: "string" },
+  base: { type: "string" },
 };
 
 /**

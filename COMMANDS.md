@@ -14,14 +14,14 @@ aether                                  # no args = interactive REPL
 <!-- Registry markers are checked against the declarative command registries. -->
 
 <!-- CLI-COMMANDS:START -->
-`help`, `agent`, `chat`, `resume`, `run`, `models`, `agents`, `auth`,
+`help`, `agent`, `chat`, `resume`, `run`, `review`, `ship`, `models`, `agents`, `auth`,
 `github`, `vault`, `workflow`, `memory`, `skills`, `capabilities`, `image`,
 `video`, `output`, `audit`, `receipt`, `doctor`, `support-bundle`, `mcp`,
 `config`
 <!-- CLI-COMMANDS:END -->
 
 <!-- SLASH-COMMANDS:START -->
-`help`, `models`, `model`, `agent`, `agents`, `tier`, `audit`, `effort`, `doctor`, `clear`, `exit`, `mcp`, `autonomous-execution`, `subagent-driven-execution`, `self-review`, `recon`, `plan`, `research`, `review`, `code-review`, `writing-skills`, `writing-plans`, `queue`, `steer`, `btw`, `pin`, `drop`, `snapshot`, `limit`, `audit-receipt`, `rollback`, `logs-view`, `goal`, `goals`, `memory`, `workflow`, `workflow-templates`, `workflow-template`, `vault`, `vault-context`, `vault-search`, `vault-recent`, `vault-project`, `vault-tag`, `vault-tree`, `delegate`, `tree`, `broadcast`, `gather`, `scaffold`, `port`, `test-drive`, `bench`, `purge`, `stage-diff`, `revert`, `photogen`, `frame`, `re-frame`, `videogen`, `sequence`, `animate`, `re-cut`, `output`, `storyboard`, `add`, `hud`
+`help`, `models`, `model`, `agent`, `agents`, `tier`, `audit`, `effort`, `doctor`, `clear`, `exit`, `mcp`, `autonomous-execution`, `subagent-driven-execution`, `self-review`, `recon`, `plan`, `research`, `project-review`, `code-review`, `writing-skills`, `writing-plans`, `queue`, `steer`, `btw`, `pin`, `drop`, `snapshot`, `limit`, `audit-receipt`, `rollback`, `logs-view`, `goal`, `goals`, `memory`, `workflow`, `workflow-templates`, `workflow-template`, `vault`, `vault-context`, `vault-search`, `vault-recent`, `vault-project`, `vault-tag`, `vault-tree`, `delegate`, `tree`, `broadcast`, `gather`, `scaffold`, `port`, `test-drive`, `bench`, `purge`, `stage-diff`, `review`, `ship`, `revert`, `photogen`, `frame`, `re-frame`, `videogen`, `sequence`, `animate`, `re-cut`, `output`, `storyboard`, `add`, `hud`
 <!-- SLASH-COMMANDS:END -->
 
 
@@ -335,7 +335,7 @@ Each starts an agent loop in the REPL.
 | `/plan <topic>` | Write an implementation plan. |
 | `/writing-plans <topic>` | Write a plan to `.hermes/plans/`. |
 | `/research <topic>` | Research → gather → summarize. |
-| `/review` | Full project review + summary. |
+| `/project-review` | Full project review + summary. (Was `/review`; that name is now the change-review rail below.) |
 | `/code-review` | Sweep: clean up + simplify. |
 | `/writing-skills` | Author reusable skills. |
 
@@ -408,6 +408,8 @@ Requires an active orchestrator — switch with `/agent neo` or `/agent kronus` 
 | `/bench <target>` | Profile a function/endpoint and suggest optimizations (requires an active orchestrator). |
 | `/purge` | Flush pinned files, temp files, and the UVT cap back to a lean baseline. |
 | `/stage-diff` | Unified diff of uncommitted changes + a suggested commit message. |
+| `/review [stage|unstage|revert|commit|diff|verify]` | See what changed, pick files or hunks, stage, revert and commit. |
+| `/ship` | Publish the reviewed branch and open a pull request. |
 | `/revert <file\|step>` | Surgical rollback of a single file (git-backed). |
 
 ### Media

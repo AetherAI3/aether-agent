@@ -38,7 +38,7 @@ import {
 import { continuationTask, resolveResume, resumeReplayLines, wroteFile, type ResolvedResume } from "../core/handoff.js";
 import { resumeHint } from "./resume.js";
 import { createWorktree, mergeHint, type Worktree } from "../core/worktree.js";
-import { parseRepoSpec, ensureLocalClone, prCreateHint, type RepoSpec } from "../core/repo.js";
+import { parseRepoSpec, ensureLocalClone, type RepoSpec } from "../core/repo.js";
 import { chooseBackend, chooseLocalBrain } from "../core/backend.js";
 import { decideGate } from "../core/autonomy.js";
 
@@ -450,7 +450,17 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   }
   if (log) process.stderr.write(`  ⤷ log: ${log.dir}\n`);
   if (worktree) process.stderr.write(mergeHint(worktree));
-  if (repoSpec && worktree) process.stderr.write(prCreateHint(repoSpec, worktree.branch));
+  if (repoSpec && worktree) {
+    // This used to be `process.stderr.write(prCreateHint(...))` — a printed gh
+    // incantation the user had to retype, and the reason nothing in this
+    // repository ever exercised PR creation. It is an offer now: on a terminal
+    // it asks, and on a yes it runs the same rail `aether ship` runs (publish
+    // the head branch, then open the pull request behind a confirmation screen
+    // that shows every argv element in full). A pipe/CI run still gets a line
+    // it can act on, but the command it names now exists.
+    const { offerShip } = await import("./ship.js");
+    await offerShip(ctx, process.stderr, repoSpec, worktree.dir, worktree.branch);
+  }
   // Process exit follows the HOST: 0 only on a verified-green run. With no gate
   // ("unverified") there is no ground truth, so the loop's own code stands.
   // Any other status (incomplete, a breaker reason, or a brain crash) always
