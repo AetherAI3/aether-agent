@@ -6,79 +6,67 @@
 // positionals the command receives. So a command reading an undeclared
 // `--files a,b` sees no flag AND no argument — it runs on an empty selection
 // and reports success having done nothing. That is not hypothetical: the same
-// mechanism is why `aether doctor --live` silently runs the fast report.
+// mechanism is why `aether doctor --live` silently ran the fast report.
 //
-// These tests assert the PARSED ARGV — what parseArgs produces from the same
-// options literal main.ts uses — not any rendered output. A test that checked
-// printed text would pass against a command that received nothing and printed
-// an optimistic line about it.
+// These tests assert the PARSED ARGV — what parseArgs produces from the very
+// options object main.ts hands it — not any rendered output. A test that
+// checked printed text would pass against a command that received nothing and
+// printed an optimistic line about it.
+//
+// The options object is IMPORTED, not scraped out of main.ts's source. Since
+// the command-registration seam there is no options literal in main.ts to
+// scrape: `CLI_PARSE_OPTIONS` is assembled in cli_registry.ts from the globals
+// plus each dispatch-table command's own `flags`. Importing it means this test
+// exercises the same table production parses with, so it cannot pass against a
+// table that was never wired up.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseArgs } from "node:util";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import {
+  CLI_PARSE_OPTIONS,
+  DISPATCH_COMMANDS,
+  GLOBAL_FLAGS,
+  findDispatchedCliCommand,
+} from "../src/commands/cli_registry.js";
+import { commandFlags } from "../src/core/command_dispatch.js";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const mainSource = readFileSync(join(here, "..", "..", "src", "main.ts"), "utf8");
+/** Flags review/ship own, and the globals they read off the context. */
+const REVIEW_SHIP_OWNED = ["files", "hunks", "message", "approve", "title", "body", "base"];
+const REVIEW_SHIP_GLOBALS = ["all", "yes", "json", "test-cmd"];
 
-/** The options literal main.ts hands parseArgs, recovered from source. */
-function declaredOptions(): Record<string, { type: "string" | "boolean"; short?: string }> {
-  const start = mainSource.indexOf("options: {");
-  assert.ok(start > 0, "main.ts no longer has an options literal");
-  let depth = 0;
-  let end = start;
-  for (let index = mainSource.indexOf("{", start); index < mainSource.length; index += 1) {
-    const ch = mainSource[index];
-    if (ch === "{") depth += 1;
-    else if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        end = index + 1;
-        break;
-      }
-    }
+test("review and ship dispatch from the registry table, not from main.ts's switch", () => {
+  for (const name of ["review", "ship"]) {
+    const command = findDispatchedCliCommand(name);
+    assert.ok(command, `${name} is not in DISPATCH_COMMANDS`);
+    assert.equal(typeof command.load, "function", `${name} has no loader`);
   }
-  const body = mainSource.slice(mainSource.indexOf("{", start), end);
-  const options: Record<string, { type: "string" | "boolean"; short?: string }> = {};
-  for (const match of body.matchAll(
-    /(?:"([a-z-]+)"|([a-z-]+)):\s*\{\s*type:\s*"(string|boolean)"(?:,\s*short:\s*"([a-zA-Z])")?/g,
-  )) {
-    const name = match[1] ?? match[2]!;
-    const spec: { type: "string" | "boolean"; short?: string } = { type: match[3] as "string" | "boolean" };
-    if (match[4]) spec.short = match[4];
-    options[name] = spec;
-  }
-  return options;
-}
-
-/** Every `values["x"]` main.ts actually reads. */
-function readFlags(): string[] {
-  return [...new Set([...mainSource.matchAll(/values\["([a-z-]+)"\]/g)].map((match) => match[1]!))].sort();
-}
-
-const REVIEW_SHIP_FLAGS = ["files", "hunks", "message", "approve", "title", "body", "base", "all", "yes", "json"];
-
-test("every flag main.ts reads is a flag main.ts declares", () => {
-  const declared = new Set(Object.keys(declaredOptions()));
-  const undeclared = readFlags().filter((name) => !declared.has(name));
-  assert.deepEqual(
-    undeclared,
-    [],
-    `strict:false swallows these before the command sees them: ${undeclared.join(", ")}`,
-  );
 });
 
-test("the review/ship flags are declared, not left to strict:false", () => {
-  const declared = declaredOptions();
-  for (const name of REVIEW_SHIP_FLAGS) {
-    assert.ok(declared[name], `${name} is not declared in main.ts's parseArgs options`);
+test("every review/ship flag is declared on its command, and reaches the one parse table", () => {
+  for (const name of ["review", "ship"]) {
+    const command = findDispatchedCliCommand(name)!;
+    for (const flag of REVIEW_SHIP_OWNED) {
+      assert.ok(command.flags?.[flag], `${name} does not declare --${flag}`);
+      assert.ok(CLI_PARSE_OPTIONS[flag], `--${flag} never reached the merged parseArgs table`);
+    }
+  }
+});
+
+test("the globals review/ship read stay globals — a command may not shadow one", () => {
+  for (const flag of REVIEW_SHIP_GLOBALS) {
+    assert.ok(GLOBAL_FLAGS[flag], `--${flag} is expected to be a global`);
+    for (const command of DISPATCH_COMMANDS) {
+      assert.equal(
+        command.flags?.[flag],
+        undefined,
+        `${command.name} shadows the global --${flag}; that is a registry load error`,
+      );
+    }
   }
 });
 
 test("each declared review flag survives parseArgs with its value intact", () => {
-  const options = declaredOptions();
   const argv = [
     "review",
     "stage",
@@ -92,16 +80,24 @@ test("each declared review flag survives parseArgs with its value intact", () =>
     "destructive",
     "--base",
     "main",
+    "--test-cmd",
+    "npm test",
     "--all",
     "--yes",
   ];
-  const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: false, options });
+  const { values, positionals } = parseArgs({
+    args: argv,
+    allowPositionals: true,
+    strict: false,
+    options: CLI_PARSE_OPTIONS,
+  });
 
   assert.equal(values["files"], "src/a.ts,src/b.ts");
   assert.equal(values["hunks"], "1,3");
   assert.equal(values["message"], "fix: a thing");
   assert.equal(values["approve"], "destructive");
   assert.equal(values["base"], "main");
+  assert.equal(values["test-cmd"], "npm test");
   assert.equal(values["all"], true);
   assert.equal(values["yes"], true);
   // The subcommand must still be a positional. A flag that eats its value from
@@ -110,13 +106,12 @@ test("each declared review flag survives parseArgs with its value intact", () =>
 });
 
 test("each declared ship flag survives parseArgs with its value intact", () => {
-  const options = declaredOptions();
   const body = "line one\nline two";
   const { values, positionals } = parseArgs({
     args: ["ship", "--title", "feat: the rail", "--body", body, "--base", "main", "--approve", "publish"],
     allowPositionals: true,
     strict: false,
-    options,
+    options: CLI_PARSE_OPTIONS,
   });
   assert.equal(values["title"], "feat: the rail");
   assert.equal(values["body"], body, "a multi-line body arrives whole");
@@ -126,21 +121,40 @@ test("each declared ship flag survives parseArgs with its value intact", () => {
 });
 
 test("-m is the short form of --message and carries its value", () => {
-  const options = declaredOptions();
   const { values } = parseArgs({
     args: ["review", "commit", "-m", "fix: short form"],
     allowPositionals: true,
     strict: false,
-    options,
+    options: CLI_PARSE_OPTIONS,
   });
   assert.equal(values["message"], "fix: short form");
+});
+
+test("the parsed values reach the command through its own flags accessor", () => {
+  // The accessor is bound to what the command DECLARED, so this is the same
+  // read path production takes — and reading a flag the command does not own
+  // throws rather than returning undefined, which is what keeps a silent
+  // mis-wiring from looking like a legitimately-absent flag.
+  const review = findDispatchedCliCommand("review")!;
+  const { values } = parseArgs({
+    args: ["review", "stage", "--files", "src/a.ts", "--message", "fix: a thing"],
+    allowPositionals: true,
+    strict: false,
+    options: CLI_PARSE_OPTIONS,
+  });
+  const flags = commandFlags(review, values as Record<string, unknown>);
+  assert.equal(flags.str("files"), "src/a.ts");
+  assert.equal(flags.str("message"), "fix: a thing");
+  // A global is deliberately NOT readable through the command accessor — it
+  // arrives on ctx.flags instead. Reading it here must be a loud failure.
+  assert.throws(() => flags.str("test-cmd"), /did not declare flag --test-cmd/);
 });
 
 test("the trap itself: an UNDECLARED flag loses its value and its position", () => {
   // The proof that the declarations above are load-bearing rather than
   // decorative. Remove `files` from the options and the same argv silently
   // stops carrying a selection.
-  const options = declaredOptions();
+  const options = { ...CLI_PARSE_OPTIONS };
   delete (options as Record<string, unknown>)["files"];
   const { values, positionals } = parseArgs({
     args: ["review", "stage", "--files", "src/a.ts"],
@@ -156,61 +170,13 @@ test("the trap itself: an UNDECLARED flag loses its value and its position", () 
   );
 });
 
-test("review and ship dispatch from main.ts's switch, so the registry test can see them", () => {
+test("dispatch stays case-sensitive — `aether SHIP` is not a command", () => {
+  // A case-insensitive lookup is not a kindness here: the typo guard only fires
+  // on /^[a-z][a-z-]*$/, so an uppercase word that matched no case-folded
+  // command falls through to cmdChat and BILLS A TURN. Half the uppercase
+  // spellings would run the command and half would charge for a model call.
   for (const name of ["review", "ship"]) {
-    assert.match(mainSource, new RegExp(`^    case "${name}":`, "m"), `main.ts has no case for ${name}`);
-  }
-});
-
-/** The body of one `case "<name>": { … }` in main.ts's dispatch switch. */
-function caseBody(name: string): string {
-  const start = mainSource.indexOf(`    case "${name}": {`);
-  assert.ok(start > 0, `no case block for ${name}`);
-  let depth = 0;
-  for (let index = mainSource.indexOf("{", start); index < mainSource.length; index += 1) {
-    const ch = mainSource[index];
-    if (ch === "{") depth += 1;
-    else if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) return mainSource.slice(start, index + 1);
-    }
-  }
-  throw new Error(`unterminated case block for ${name}`);
-}
-
-test("dispatch stays case-sensitive — nothing lowercases the subcommand", () => {
-  // `aether SHIP` must not be a command. A case-insensitive lookup is not a
-  // kindness here: the typo guard only fires on `/^[a-z][a-z-]*$/`, so an
-  // uppercase word that matched no case-folded command falls through to
-  // cmdChat and BILLS A TURN. Half the uppercase spellings would run the
-  // command and half would charge for a model call, which is worse than both.
-  const switchStart = mainSource.indexOf("  switch (cmd) {");
-  assert.ok(switchStart > 0);
-  const before = mainSource.slice(0, switchStart);
-  assert.equal(
-    /\bcmd\s*=\s*[^;]*toLowerCase/.test(before),
-    false,
-    "the dispatched token must reach the switch exactly as the user typed it",
-  );
-  assert.equal(/switch \(cmd\.toLowerCase\(\)\)/.test(mainSource), false);
-  for (const name of ["review", "ship"]) {
-    assert.equal(
-      mainSource.includes(`case "${name.toUpperCase()}"`),
-      false,
-      `${name} must not also be registered in another casing`,
-    );
-  }
-});
-
-test("flags reach the commands as a typed object, never re-rendered into an argv", () => {
-  // A second parse is where a value like `--title=--fix` gets promoted into a
-  // flag nobody typed. These case bodies read named values and pass named
-  // properties; they never rebuild a command line.
-  for (const name of ["review", "ship"]) {
-    const body = caseBody(name);
-    assert.match(body, /\{[\s\S]*\bjson: flags\.json,[\s\S]*\}/, `${name} passes an options object`);
-    for (const forbidden of [".join(", "argv", "split("]) {
-      assert.equal(body.includes(forbidden), false, `${name}'s case body must not rebuild a command line (${forbidden})`);
-    }
+    assert.ok(findDispatchedCliCommand(name), `${name} must dispatch as typed`);
+    assert.equal(findDispatchedCliCommand(name.toUpperCase()), undefined, `${name} must not answer in another casing`);
   }
 });

@@ -1,4 +1,11 @@
 import { commandNames, findRegisteredCommand, renderRegistryHelp, suggestRegisteredCommand, validateCommandRegistry, type CommandSpec } from "../core/command_registry.js";
+import {
+  findDispatchedCommand,
+  mergeFlagTables,
+  validateDispatchTable,
+  type DispatchedCommand,
+  type FlagTable,
+} from "../core/command_dispatch.js";
 
 export const CLI_SECTIONS = ["Start", "Account", "Knowledge", "Media", "System"] as const;
 export const CLI_COMMANDS: CommandSpec[] = [
@@ -7,8 +14,6 @@ export const CLI_COMMANDS: CommandSpec[] = [
   { name: "chat", args: "[prompt]", summary: "start chat or send one prompt", section: "Start" },
   { name: "resume", args: "[session-id|export [id] --out <file>]", summary: "replay a local session, or export it as a portable handoff", section: "Start" },
   { name: "run", args: "<neo|kronus> <task>", summary: "stream an orchestrator run", section: "Start" },
-  { name: "review", args: "[stage|unstage|revert|commit|diff|verify]", summary: "review changes, pick files or hunks, commit", section: "Start" },
-  { name: "ship", args: "[--title t] [--base b]", summary: "publish the head branch and open a pull request", section: "Start" },
   { name: "models", args: "[use <id>]", summary: "list models or set the default", section: "Start" },
   { name: "agents", summary: "list available orchestrators", section: "Start" },
   { name: "auth", args: "<login|status|token|refresh|logout>", summary: "manage authentication", section: "Account" },
@@ -25,16 +30,200 @@ export const CLI_COMMANDS: CommandSpec[] = [
   { name: "output", aliases: ["out"], args: "[open <n>]", summary: "manage generated media", section: "Media" },
   { name: "audit", args: "[limit]", summary: "show chain-of-custody events", section: "System" },
   { name: "receipt", args: "<order-id>", summary: "export an audit proof package", section: "System" },
-  { name: "doctor", args: "[--deep]", summary: "run structured runtime diagnostics", section: "System" },
   { name: "support-bundle", summary: "export a redacted diagnostic support bundle", section: "System" },
   { name: "mcp", args: "[list|doctor|repair]", summary: "manage and diagnose MCP servers", section: "System" },
   { name: "config", args: "[show|get|set]", summary: "inspect or change configuration", section: "System" },
 ];
-const registryErrors = validateCommandRegistry(CLI_COMMANDS, CLI_SECTIONS);
+/**
+ * Global flags — owned by main.ts's argv parse, readable by every command.
+ * Declared here so the dispatch table can be validated against them at load
+ * time: a command that shadows a global is a startup error, not a surprise.
+ */
+export const GLOBAL_FLAGS: FlagTable = {
+  model: { type: "string" },
+  agent: { type: "string" },
+  cwd: { type: "string" },
+  token: { type: "string" },
+  username: { type: "string" },
+  password: { type: "string" },
+  "license-key": { type: "string" },
+  "with-token": { type: "boolean", default: false },
+  "no-browser": { type: "boolean", default: false },
+  json: { type: "boolean", default: false },
+  audit: { type: "boolean", default: false },
+  yes: { type: "boolean", short: "y", default: false },
+  apply: { type: "boolean", default: false },
+  // `aether skills` / `aether capabilities` flags:
+  scope: { type: "string" },
+  all: { type: "boolean", default: false },
+  ci: { type: "boolean", default: false },
+  available: { type: "boolean", default: false },
+  junit: { type: "string" },
+  help: { type: "boolean", short: "h", default: false },
+  version: { type: "boolean", short: "v", default: false },
+  // `aether agent` flags:
+  local: { type: "boolean", default: false },
+  pool: { type: "string" },
+  effort: { type: "string" },
+  "test-cmd": { type: "string" },
+  quiet: { type: "boolean", default: false },
+  interactive: { type: "boolean", default: false },
+  "no-log": { type: "boolean", default: false },
+  worktree: { type: "boolean", default: false },
+  repo: { type: "string" },
+  swarm: { type: "string" },
+  resume: { type: "string" },
+  out: { type: "string" },
+};
+
+/**
+ * Self-dispatching commands. Each entry carries its own help metadata, its own
+ * flags, and its own loader, so adding a command is one entry in one file — no
+ * `switch` case in main.ts and no edit to the global flag table.
+ *
+ * `doctor` lives here rather than in the switch because the seam has to be
+ * load-bearing in production to be trustworthy: an empty table would make the
+ * reachability tests vacuously true.
+ */
+export const DISPATCH_COMMANDS: DispatchedCommand[] = [
+  {
+    name: "doctor",
+    args: "[--live|--fix] [--deep] [--only <id>]",
+    summary: "run structured runtime diagnostics",
+    section: "System",
+    // doctor parses its own argv (parseDoctorArgs). It never saw these flags:
+    // main.ts's parse is strict:false, so an undeclared `--live` was captured
+    // into `values` and stripped from the positionals doctor was handed — the
+    // live end-to-end proof silently ran as the fast configured-only report,
+    // and `--only <id>` arrived as a bare positional and failed as unknown.
+    // Declaring them here is what makes them reach the command at all.
+    flags: {
+      deep: { type: "boolean", default: false },
+      live: { type: "boolean", default: false },
+      fix: { type: "boolean", default: false },
+      "dry-run": { type: "boolean", default: false },
+      "no-ui": { type: "boolean", default: false },
+      only: { type: "string", multiple: true },
+    },
+    load: async () => {
+      const { cmdDoctor } = await import("./doctor.js");
+      // Parsed values are handed over as data. Nothing is re-rendered into an
+      // argv string for doctor to re-parse, so a `--only` value that looks
+      // like an option ("--fix") stays a value: there is no second parse for
+      // it to be promoted by, and no shell anywhere on the path.
+      return (ctx, argv, flags) =>
+        cmdDoctor(ctx, argv, {
+          flags: {
+            deep: flags.bool("deep"),
+            live: flags.bool("live"),
+            fix: flags.bool("fix"),
+            dryRun: flags.bool("dry-run"),
+            noUi: flags.bool("no-ui"),
+            // --yes is global, so doctor's own parse never saw it either:
+            // `--fix --yes` printed "re-run with --yes" to a user who had
+            // just passed it.
+            yes: ctx.flags.yes,
+            only: flags.list("only"),
+          },
+        });
+    },
+  },
+  // `aether review` / `aether ship`.
+  //
+  // These flags MUST be declared. main.ts parses with `strict: false`, which
+  // swallows any undeclared flag into `values` and strips it from the
+  // positionals a command receives — so an undeclared `--files a,b` does not
+  // reach the command as an argument and does not reach it as a flag either.
+  // It simply vanishes, and the command reports success having done nothing.
+  // Every flag the review/ship layer reads is declared below for that reason,
+  // and test/review_flags.test.ts proves each one arrives.
+  //
+  // `--test-cmd`, `--all`, `--yes` and `--json` are globals, so they are NOT
+  // redeclared here (a command that shadows a global is a registry load error)
+  // and are read off ctx.flags instead, the way doctor reads `--yes`.
+  {
+    name: "review",
+    args: "[stage|unstage|revert|commit|diff|verify]",
+    summary: "review changes, pick files or hunks, commit",
+    section: "Start",
+    flags: {
+      files: { type: "string" },
+      hunks: { type: "string" },
+      message: { type: "string", short: "m" },
+      // `--approve <action>` is the declared authority boundary: `--yes` alone
+      // never approves a destructive or a publishing step.
+      approve: { type: "string" },
+      title: { type: "string" },
+      body: { type: "string" },
+      base: { type: "string" },
+    },
+    load: async () => {
+      const { cmdReview } = await import("./review.js");
+      // Parsed values are handed over as data — named properties, never
+      // re-rendered into an argv string for a second parse to promote a value
+      // like `--title=--fix` into a flag nobody typed.
+      return (ctx, argv, flags) =>
+        cmdReview(ctx, argv, {
+          files: flags.str("files"),
+          hunks: flags.str("hunks"),
+          message: flags.str("message"),
+          base: flags.str("base"),
+          testCmd: ctx.flags.testCmd,
+          approve: flags.str("approve"),
+          all: Boolean(ctx.flags.all),
+          yes: ctx.flags.yes,
+          json: ctx.flags.json,
+        });
+    },
+  },
+  {
+    name: "ship",
+    args: "[--title t] [--base b]",
+    summary: "publish the head branch and open a pull request",
+    section: "Start",
+    // `review` already declares this identical table; two commands sharing one
+    // identical flag is a single parseArgs entry, not a collision.
+    flags: {
+      files: { type: "string" },
+      hunks: { type: "string" },
+      message: { type: "string", short: "m" },
+      approve: { type: "string" },
+      title: { type: "string" },
+      body: { type: "string" },
+      base: { type: "string" },
+    },
+    load: async () => {
+      const { cmdShip } = await import("./ship.js");
+      return (ctx, argv, flags) =>
+        cmdShip(ctx, argv, {
+          title: flags.str("title"),
+          body: flags.str("body"),
+          base: flags.str("base"),
+          approve: flags.str("approve"),
+          yes: ctx.flags.yes,
+          json: ctx.flags.json,
+        });
+    },
+  },
+];
+
+/** Everything the CLI answers to, however it is dispatched. */
+export const ALL_CLI_COMMANDS: readonly CommandSpec[] = [...CLI_COMMANDS, ...DISPATCH_COMMANDS];
+
+const registryErrors = [
+  ...validateCommandRegistry(ALL_CLI_COMMANDS, CLI_SECTIONS),
+  ...validateDispatchTable(DISPATCH_COMMANDS, GLOBAL_FLAGS, CLI_SECTIONS),
+];
 if (registryErrors.length) throw new Error(`Invalid CLI registry: ${registryErrors.join("; ")}`);
 
-export const findCliCommand = (name: string): CommandSpec | undefined => findRegisteredCommand(CLI_COMMANDS, name);
-export const suggestCliCommand = (name: string): string | null => suggestRegisteredCommand(name, commandNames(CLI_COMMANDS));
+/** The single `parseArgs` options object: globals plus every command's flags. */
+export const CLI_PARSE_OPTIONS = mergeFlagTables(GLOBAL_FLAGS, DISPATCH_COMMANDS);
+
+export const findDispatchedCliCommand = (name: string): DispatchedCommand | undefined =>
+  findDispatchedCommand(DISPATCH_COMMANDS, name);
+
+export const findCliCommand = (name: string): CommandSpec | undefined => findRegisteredCommand(ALL_CLI_COMMANDS, name);
+export const suggestCliCommand = (name: string): string | null => suggestRegisteredCommand(name, commandNames(ALL_CLI_COMMANDS));
 
 export function renderCliHelp(target?: string): string {
   return renderRegistryHelp({
@@ -42,7 +231,7 @@ export function renderCliHelp(target?: string): string {
     intro: "Authenticated turns use the Aether cloud brain; signed-out turns use local Ollama.",
     usage: ["aether", 'aether "<prompt>"', "aether help [command]", "aether <command> --help"],
     prefix: "aether ",
-    commands: CLI_COMMANDS,
+    commands: ALL_CLI_COMMANDS,
     sections: CLI_SECTIONS,
     target,
     footer: [
