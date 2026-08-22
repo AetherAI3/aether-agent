@@ -41,6 +41,10 @@ import { createWorktree, mergeHint, type Worktree } from "../core/worktree.js";
 import { parseRepoSpec, ensureLocalClone, type RepoSpec } from "../core/repo.js";
 import { chooseBackend, chooseLocalBrain } from "../core/backend.js";
 import { decideGate } from "../core/autonomy.js";
+import { openRunSession, refusalToolResult } from "../core/skills/run_session.js";
+import type { SessionContext } from "../core/session_resume.js";
+import type { SkillSessionProvenance } from "../core/skills/skill_session.js";
+import type { SkillRefusal } from "../core/skills/skill_errors.js";
 
 export { prepareWorkspace } from "./code_support.js";
 
@@ -72,6 +76,10 @@ export interface CodeOpts {
   worktree?: boolean;
   /** Work on a GitHub repo (owner/name): clone via gh/git, then worktree it. */
   repo?: string;
+  /** `--skill <id>`: load this skill explicitly (id, short name, or command alias). */
+  skill?: string;
+  /** `--no-skills`: load no skill. The project's own AGENTS.md still applies. */
+  noSkills?: boolean;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -205,6 +213,56 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     if (!ws.proceed) return 0;
     cwd = ws.cwd;
   }
+
+  // ── Rules and skills enter the run here ─────────────────────────────────
+  // Opened against `cwd` — the tree the run actually works in, which is the
+  // worktree when there is one, not the directory the user typed the command
+  // in. A run must be governed by the AGENTS.md of the code it is editing.
+  //
+  // This is the ONE seam: the brief composed below is what the cloud
+  // dev-session POSTs as `task` and what the local Ollama brain puts in its
+  // chat messages, byte for byte, and the policy printed in the header is the
+  // policy hostLoop enforces a moment later. A refusal here ends the run — a
+  // named skill that cannot be trusted or loaded never degrades into a quiet
+  // skill-free run that looks like it worked.
+  const opened = openRunSession({
+    projectRoot: cwd,
+    prompt: task || label,
+    ...(opts.skill ? { explicitSkill: opts.skill } : {}),
+    ...(opts.noSkills ? { noSkills: true } : {}),
+  });
+  if (!opened.ok) {
+    for (const line of opened.lines) process.stderr.write(line + "\n");
+    return 2;
+  }
+  const run = opened.run;
+  for (const line of run.headerLines) process.stderr.write("  " + line + "\n");
+
+  // ── Resuming under the same rules it started under ───────────────────────
+  // A session id names a conversation. It does not name the instructions that
+  // conversation was conducted under, and those live in files anyone can edit
+  // between two runs. Continuing under the old session identity while the rules
+  // underneath have changed is the quiet failure this check exists to prevent.
+  //
+  // A changed SKILL digest refuses: the user named that skill once, its body is
+  // executable guidance, and a different body under the same id and version is
+  // not the thing they approved. A changed instruction graph is ANNOUNCED but
+  // does not refuse — editing AGENTS.md between runs is ordinary work, and
+  // refusing it would make resume unusable — but it is never silent.
+  if (handoff?.context) {
+    const drift = contextDrift(handoff.context, run.session.provenance);
+    for (const line of drift.announcements) process.stderr.write("  " + line + "\n");
+    if (drift.refusals.length) {
+      process.stderr.write("\n✗ refusing to resume " + handoff.sessionId + " under different skills:\n");
+      for (const line of drift.refusals) process.stderr.write("  " + line + "\n");
+      process.stderr.write(
+        "  review what changed, then start a new session, or re-run with --no-skills to continue\n" +
+          "  under the project's rules alone.\n",
+      );
+      return 2;
+    }
+  }
+
   const poolGb = opts.pool > 0 ? opts.pool : 5;
   // --local forces the local brain. Otherwise honor the backend preference
   // (AETHER_BACKEND env > config.backend > 'auto'); 'auto' is local-first, so an
@@ -250,6 +308,21 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
           // landed on rather than the launch directory's. (Lane AA-CONT-04.)
           ...(cwd !== ctx.flags.cwd ? { worktree: cwd } : {}),
           ...(opts.testCmd ? { testCmd: opts.testCmd } : {}),
+          // Digests and paths, never content: enough for the next run (or the
+          // next machine) to tell that the rules moved, and nothing more.
+          context: {
+            skills: run.session.provenance.skills.map((skill) => ({
+              id: skill.id,
+              version: skill.version,
+              digest: skill.digest,
+              invocation: skill.invocation,
+              trust: skill.trust,
+              lock: skill.lock,
+            })),
+            instructionSources: [...run.session.provenance.instructionSources],
+            instructionGraphDigest: run.session.provenance.instructionGraphDigest,
+            conflicts: [...run.session.provenance.conflicts],
+          },
         },
         nowIso(),
       );
@@ -268,7 +341,17 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     // On a resume the brain reads the prior session's continuation brief FIRST,
     // then the new instruction — that, and not the on-screen replay, is what
     // lets a different model (or a different machine) pick the thread up.
-    text: handoff ? continuationTask(handoff, task) : task,
+    //
+    // run.brief() wraps that with the project's rules, the loaded skill bodies,
+    // and the effective host policy. With no rules and no skills it returns the
+    // task unchanged, so an unskilled run is byte-identical to one without this
+    // seam at all.
+    text: run.brief(handoff ? continuationTask(handoff, task) : task),
+    // The typed channel, for a brain that reads the NDJSON command frame.
+    // Additive and optional (brain_protocol.AgentContextPacket): a brain that
+    // predates it sees no key. The brief above is what reaches the Ollama and
+    // cloud brains, which never touch encodeCommand.
+    ...(run.contextPacket ? { context: run.contextPacket } : {}),
     cwd,
     poolGb,
     // --effort wins; otherwise the /effort dial saved in the Aether config
@@ -425,7 +508,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   const startedAt = Date.now();
   let code: number;
   try {
-    code = await hostLoop(brain, exec, onEvent, taskCmd, onToolResult, gate);
+    code = await hostLoop(brain, exec, onEvent, taskCmd, onToolResult, gate, run.guard);
   } finally {
     // A brain that throws mid-run must still clear the pinned status line and
     // print the ledger recap — otherwise stale animation sits over the error.
@@ -478,10 +561,71 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
 }
 
 /**
+ * Compare the rules and skills a prior session ran under against the ones this
+ * run just resolved. Exported for tests: the comparison is the whole point, so
+ * it must be assertable without cutting a worktree and driving a brain.
+ *
+ * A skill present THEN and absent NOW is reported, not refused — the user may
+ * simply not have named it this time, and the run is narrower, never wider.
+ */
+export function contextDrift(
+  before: SessionContext,
+  now: SkillSessionProvenance,
+): { refusals: string[]; announcements: string[] } {
+  const refusals: string[] = [];
+  const announcements: string[] = [];
+  const current = new Map(now.skills.map((skill) => [skill.id, skill]));
+  for (const prior of before.skills) {
+    const live = current.get(prior.id);
+    if (!live) {
+      announcements.push("Note    " + prior.id + " ran in the prior session and is not loaded now");
+      continue;
+    }
+    if (live.digest !== prior.digest) {
+      refusals.push(
+        prior.id +
+          " changed since the prior session (" +
+          prior.digest.slice(0, 19) +
+          " then, " +
+          live.digest.slice(0, 19) +
+          " now)",
+      );
+      continue;
+    }
+    if (live.trust !== prior.trust) {
+      refusals.push(prior.id + " trust changed: " + prior.trust + " then, " + live.trust + " now");
+    }
+  }
+  if (
+    before.instructionGraphDigest &&
+    now.instructionGraphDigest &&
+    before.instructionGraphDigest !== now.instructionGraphDigest
+  ) {
+    announcements.push(
+      "Note    the project's rules changed since the prior session - this run uses the CURRENT ones",
+    );
+    const priorSources = new Set(before.instructionSources);
+    const added = now.instructionSources.filter((path) => !priorSources.has(path));
+    const removed = before.instructionSources.filter((path) => !now.instructionSources.includes(path));
+    if (added.length) announcements.push("Note    now in force: " + added.join(", "));
+    if (removed.length) announcements.push("Note    no longer in force: " + removed.join(", "));
+  }
+  return { refusals, announcements };
+}
+
+/**
+ * The host loop — the bridge seam, extracted so it is unit-testable with a fake/**
  * The host loop — the bridge seam, extracted so it is unit-testable with a fake
  * brain. The brain decides (emits events); the host renders each event and
  * executes each tool_call locally, replying with the result. Returns the process
  * exit code (0 = the run finished green). Always tears the brain down.
+ *
+ * `skillGuard` is where a loaded skill's narrowing becomes real. It runs BEFORE
+ * the operator permission gate, never instead of it: the skill subtracts from
+ * the tool surface, then the operator gate decides about what is left. That
+ * ordering is the whole never-widen invariant — there is no path by which a
+ * manifest can add a tool, add a permission, or skip a confirmation, because
+ * nothing a manifest says is ever consulted after this point.
  */
 export async function hostLoop(
   brain: Brain,
@@ -490,6 +634,7 @@ export async function hostLoop(
   task: TaskCommand,
   onToolResult?: (id: string, result: ToolResult) => void,
   gate?: ToolGate,
+  skillGuard?: (tool: string) => SkillRefusal | null,
 ): Promise<number> {
   let code = 0;
   try {
@@ -503,6 +648,19 @@ export async function hostLoop(
           // executeAsync delegates the 6 sync tools to execute() unchanged and
           // awaits the 2 async web tools (web_search/web_fetch) so they run on
           // this path too — otherwise execute() returns "[tool … is async]".
+          // Skill policy first. A tool no active skill declares — or one whose
+          // permission a skill forbids, or one outside the operator envelope —
+          // is refused HERE, before the user is ever asked to approve it and
+          // before a byte of it runs. The brain gets a structured refusal as a
+          // normal failed tool result, so the loop continues and the model
+          // learns why instead of silently retrying.
+          const refusal = skillGuard ? skillGuard(ev.name) : null;
+          if (refusal) {
+            const denied: ToolResult = refusalToolResult(refusal);
+            onToolResult?.(ev.id, denied);
+            brain.sendToolResult(ev.id, denied);
+            break;
+          }
           const approved = gate ? await gate({ name: ev.name, args: ev.args }) : true;
           const result: ToolResult = approved
             ? await exec.executeAsync(ev.name, ev.args)

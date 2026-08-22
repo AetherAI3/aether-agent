@@ -110,6 +110,11 @@ export const GLOBAL_FLAGS: FlagTable = {
   title: { type: "string" },
   body: { type: "string" },
   base: { type: "string" },
+  // Skills in a run — `aether agent`, `aether chat`, and the REPL all open the
+  // same run session (core/skills/run_session.ts), so these are global rather
+  // than owned by one command.
+  skill: { type: "string" },
+  "no-skills": { type: "boolean", default: false },
 };
 
 /**

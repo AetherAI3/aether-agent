@@ -9,6 +9,7 @@
 //   manifest.json  {sessionId, task, model, poolGb, brain, started, ended, finalStatus, ...}
 
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import type { SessionContext } from "./session_resume.js";
 import { join } from "node:path";
 import type { BrainEvent } from "./brain_protocol.js";
 import type { ToolResult } from "./tool_executor.js";
@@ -179,6 +180,8 @@ export interface SessionMeta {
   skills?: string[];
   /** Digest of the instruction graph in force. */
   instructionsDigest?: string;
+  /** The rules and skills this run was conducted under (digests, never content). */
+  context?: SessionContext;
 }
 
 export class SessionLog {
@@ -364,6 +367,9 @@ export class SessionLog {
       brain: m.brain,
       cwd: normalizeWorkspace(m.cwd),
       ...(m.testCmd ? { testCmd: redactInline(m.testCmd) } : {}),
+      // Digests and paths only. Instruction and skill bodies are the
+      // project's prose and never belong in a session directory.
+      ...(m.context ? { context: m.context } : {}),
       ...(remote ? { repoRemote: redactInline(remote) } : {}),
       ...(branch ? { branch: redactInline(branch) } : {}),
       ...(m.baseRev ? { baseRev: redactInline(m.baseRev) } : {}),
