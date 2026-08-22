@@ -9,15 +9,64 @@
 //   manifest.json  {sessionId, task, model, poolGb, brain, started, ended, finalStatus, ...}
 
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { BrainEvent } from "./brain_protocol.js";
 import type { ToolResult } from "./tool_executor.js";
 import { registerRestore } from "../ui/restore.js";
 import { normalizeWorkspace } from "./workspace_scope.js";
+import { logsRoot } from "./logs_root.js";
+import { defaultRunner, type RunResult, type Runner } from "./worktree.js";
+import { entryFromManifest, upsertSessionIndex } from "./session_index.js";
 
-export function logsRoot(): string {
-  return process.env["AETHER_LOG_DIR"] ?? join(homedir(), ".aether-agent", "logs");
+// The definition moved to logs_root.ts so this module and session_index.ts do
+// not import each other; re-exported here because every existing caller — and
+// every test — imports `logsRoot` from this file.
+export { logsRoot } from "./logs_root.js";
+
+// ── repository identity ─────────────────────────────────────────────────────
+// Which checkout, which branch, which commit a run belonged to. It lives beside
+// the rest of the session record because the manifest is where it is stored.
+// handoff.ts re-exports it for its own callers and already depends on this
+// module, so putting it the other way round would make an import cycle.
+
+/** Where the work lived, expressed so it survives the trip to another machine. */
+export interface RepoIdentity {
+  /** `git remote get-url origin`, when there is one. */
+  remote?: string;
+  /** Branch the run was on. */
+  branch?: string;
+  /** HEAD sha, recorded for provenance. */
+  head?: string;
+}
+
+/** Assemble a repo record, dropping empty fields. `undefined` when nothing is
+ *  known — the shape is built in several places, so it is one rule here rather
+ *  than several spellings that can drift. */
+export function repoFrom(remote?: string, branch?: string, head?: string): RepoIdentity | undefined {
+  if (!remote && !branch && !head) return undefined;
+  return { ...(remote && { remote }), ...(branch && { branch }), ...(head && { head }) };
+}
+
+/** Read the repository identity of `cwd`. Every probe is best-effort — a plain
+ *  directory with no git in it yields nothing, never an error. Argument arrays
+ *  only: nothing user- or model-controlled is concatenated into a command line
+ *  here, and `cwd` is passed as the child's working directory, not as text. */
+export function readRepoIdentity(cwd: string, run: Runner): RepoIdentity | undefined {
+  const value = (args: string[]): string | undefined => {
+    let r: RunResult;
+    try {
+      r = run("git", args, cwd);
+    } catch {
+      return undefined;
+    }
+    const out = r.stdout.trim();
+    return r.status === 0 && out ? out : undefined;
+  };
+  return repoFrom(
+    value(["remote", "get-url", "origin"]),
+    value(["rev-parse", "--abbrev-ref", "HEAD"]),
+    value(["rev-parse", "HEAD"]),
+  );
 }
 
 
@@ -110,16 +159,50 @@ export interface SessionMeta {
   /** The command the verify gate runs for this session. Recorded so a handoff
    *  can tell the next machine how this work is checked. */
   testCmd?: string;
+  // ── continuity fields ─────────────────────────────────────────────────────
+  // All optional, and absent when unknown. A session library that renders an
+  // unrecorded branch as "main" or an unmeasured file count as 0 is worse than
+  // one that says it does not know, so nothing here is defaulted.
+  /** `git remote get-url origin` for the workspace, when there is one. */
+  repoRemote?: string;
+  /** Branch the run started on. */
+  branch?: string;
+  /** Revision the work is based on (merge-base with the base branch). */
+  baseRev?: string;
+  /** HEAD at the moment the session started. */
+  headRev?: string;
+  /** Worktree path, when it differs from `cwd`. */
+  worktree?: string;
+  /** Human label for the session, when one was given. */
+  label?: string;
+  /** Skill ids (with versions) applied to the run, for provenance. */
+  skills?: string[];
+  /** Digest of the instruction graph in force. */
+  instructionsDigest?: string;
 }
 
 export class SessionLog {
   readonly dir: string;
   readonly sessionId: string;
+  /** Logs root this session lives under — kept so the index update writes to
+   *  the same root the session did, not to whatever the environment says now. */
+  private readonly root: string;
   private readonly eventsPath: string;
   private readonly monologuePath: string;
   private readonly manifestPath: string;
   private events = 0;
   private toolCalls = 0;
+  /** Distinct paths this run wrote. A Set, not a counter: the same file
+   *  rewritten four times is one file touched, which is what a person reading
+   *  the library means by the number. */
+  private readonly written = new Set<string>();
+  /** Skills the brain reported applying, in the order first seen. */
+  private readonly skillsSeen = new Set<string>();
+  /** Repository identity of the workspace when the session ENDED. Probed once,
+   *  at close, and never at construction: `aether agent` startup runs no git,
+   *  and #89 is the reason. Undefined means the probe found nothing (no
+   *  checkout, no git binary), which is not the same as "no branch". */
+  private repo: RepoIdentity | undefined;
   private readonly started: string;
 
   /** `now` is injected (ISO string) so the caller owns the clock — testable,
@@ -128,7 +211,13 @@ export class SessionLog {
     private readonly meta: SessionMeta,
     now: string,
     root: string = logsRoot(),
+    /** How the repository identity is read at close. Injected so a test can
+     *  drive every branch of it without a checkout, and so a caller that
+     *  already knows the answer can supply it instead of spawning git. */
+    private readonly probeRepo: (cwd: string) => RepoIdentity | undefined = (cwd) =>
+      readRepoIdentity(cwd, defaultRunner()),
   ) {
+    this.root = root;
     this.started = now;
     // process.pid makes the session dir collision-proof: two `aether code`
     // invocations with the same brain starting in the same millisecond would
@@ -153,7 +242,25 @@ export class SessionLog {
   /** Record one brain event (and mirror human-readable lines to monologue.txt). */
   event(ev: BrainEvent, ts: string): void {
     this.events += 1;
-    if (ev.type === "tool_call") this.toolCalls += 1;
+    if (ev.type === "tool_call") {
+      this.toolCalls += 1;
+      // Counted from the RAW event: `loggedEvent` below is the redacted copy,
+      // and the blast radius of a run must not depend on what redaction kept.
+      // Case-folded on Windows, where `Foo.ts` and `foo.ts` are one file and
+      // counting them twice would inflate the number the library shows.
+      const path = ev.name === "write_file" ? ev.args["path"] : undefined;
+      if (typeof path === "string" && path && this.written.size < 5_000) {
+        this.written.add(process.platform === "win32" ? path.toLowerCase() : path);
+      }
+    }
+    // Which skills a run actually applied is a question the library is asked and
+    // could not answer: the events carry it, so the count is free here and the
+    // alternative — re-reading the transcript at listing time — is the cost the
+    // index exists to avoid. Bounded, because a hostile or looping brain must
+    // not be able to grow the manifest without limit.
+    if (ev.type === "skill" && ev.name && this.skillsSeen.size < 32) {
+      this.skillsSeen.add(redactInline(ev.name));
+    }
     const safe = loggedEvent(ev);
     this.buffer(this.eventsPath, JSON.stringify({ ts, ...safe }) + "\n");
     const line = monologueLine(safe);
@@ -217,33 +324,91 @@ export class SessionLog {
   close(finalStatus: FinalStatus, ended: string, remaining = 0): void {
     this.flush();
     this.unregisterFlush();
+    // Read the repository identity HERE and nowhere else. The run is over, so
+    // three `git rev-parse`-class calls cost nothing a user waits on, and the
+    // startup path — the one #89 had to clear — still spawns nothing. Failure
+    // leaves it undefined, which the library renders as "unknown".
+    try {
+      // Probe where the work actually HAPPENED. When the run was redirected
+      // into a worktree, `cwd` is the directory the user launched from and its
+      // branch is not the branch the commits landed on — recording the launch
+      // directory's branch there would name the wrong branch with full
+      // confidence.
+      this.repo = this.probeRepo(this.meta.worktree || this.meta.cwd);
+    } catch {
+      this.repo = undefined;
+    }
     this.writeManifest({ ended, finalStatus, remaining });
   }
 
+  /** The manifest body — the authoritative record of this session, and the only
+   *  thing the session index is ever built from. */
+  private manifestBody(
+    end: { ended: string; finalStatus: string; remaining?: number } | null,
+  ): Record<string, unknown> {
+    const m = this.meta;
+    // What the CALLER said wins over what was probed: a caller that knows the
+    // branch (because it made one) knows better than a probe of the launch
+    // directory. The probe only ever fills a gap.
+    const remote = m.repoRemote ?? this.repo?.remote;
+    const branch = m.branch ?? this.repo?.branch;
+    const head = m.headRev ?? this.repo?.head;
+    // Union, deduplicated: skills the caller declared plus skills the run
+    // actually reported using.
+    const skills = [...new Set([...(m.skills ?? []), ...this.skillsSeen])];
+    return {
+      sessionId: this.sessionId,
+      task: redactInline(m.task),
+      model: m.model,
+      poolGb: m.poolGb,
+      brain: m.brain,
+      cwd: normalizeWorkspace(m.cwd),
+      ...(m.testCmd ? { testCmd: redactInline(m.testCmd) } : {}),
+      ...(remote ? { repoRemote: redactInline(remote) } : {}),
+      ...(branch ? { branch: redactInline(branch) } : {}),
+      ...(m.baseRev ? { baseRev: redactInline(m.baseRev) } : {}),
+      ...(head ? { headRev: redactInline(head) } : {}),
+      ...(m.worktree ? { worktree: redactInline(m.worktree) } : {}),
+      ...(m.label ? { label: redactInline(m.label) } : {}),
+      ...(skills.length ? { skills: skills.map((s) => redactInline(s)) } : {}),
+      ...(m.instructionsDigest ? { instructionsDigest: redactInline(m.instructionsDigest) } : {}),
+      started: this.started,
+      ended: end?.ended ?? null,
+      finalStatus: end?.finalStatus ?? "running",
+      events: this.events,
+      toolCalls: this.toolCalls,
+      filesTouched: this.written.size,
+      ...(end?.remaining != null && end.remaining > 0 && { remaining: end.remaining }),
+    };
+  }
+
   private writeManifest(end: { ended: string; finalStatus: string; remaining?: number } | null): void {
-    writeFileSync(
-      this.manifestPath,
-      JSON.stringify(
-        {
-          sessionId: this.sessionId,
-          task: redactInline(this.meta.task),
-          model: this.meta.model,
-          poolGb: this.meta.poolGb,
-          brain: this.meta.brain,
-          cwd: normalizeWorkspace(this.meta.cwd),
-          ...(this.meta.testCmd ? { testCmd: redactInline(this.meta.testCmd) } : {}),
-          started: this.started,
-          ended: end?.ended ?? null,
-          finalStatus: end?.finalStatus ?? "running",
-          events: this.events,
-          toolCalls: this.toolCalls,
-          ...(end?.remaining != null && end.remaining > 0 && { remaining: end.remaining }),
-        },
-        null,
-        2,
-      ) + "\n",
-      { encoding: "utf8", mode: 0o600 },
-    );
+    const body = this.manifestBody(end);
+    writeFileSync(this.manifestPath, JSON.stringify(body, null, 2) + "\n", {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    this.indexSelf(body);
+  }
+
+  /**
+   * Mirror the manifest into the session index.
+   *
+   * Best-effort by design: the manifest is the record, the index is a cache of
+   * it, and a locked or unwritable index must never take a run down or lose the
+   * session's own log. A skipped update self-heals on the next read, which
+   * rebuilds from the manifests.
+   *
+   * Called twice per session (open and close), never per event — each call
+   * takes the index lock.
+   */
+  private indexSelf(body: Record<string, unknown>): void {
+    try {
+      const entry = entryFromManifest(this.sessionId, body);
+      if (entry) upsertSessionIndex(entry, this.root);
+    } catch {
+      /* the manifest is written; the index rebuilds from it on read */
+    }
   }
 }
 
