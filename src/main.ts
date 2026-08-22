@@ -179,6 +179,31 @@ async function main(argv: string[]): Promise<number> {
       return cmdAgents(ctx);
     case "run":
       return cmdRun(ctx, rest[0] ?? "", rest.slice(1).join(" "));
+    case "review": {
+      const { cmdReview } = await import("./commands/review.js");
+      return cmdReview(ctx, rest, {
+        files: sf(values["files"]),
+        hunks: sf(values["hunks"]),
+        message: sf(values["message"]),
+        base: sf(values["base"]),
+        testCmd: sf(values["test-cmd"]),
+        approve: sf(values["approve"]),
+        all: Boolean(values["all"]),
+        yes: flags.yes,
+        json: flags.json,
+      });
+    }
+    case "ship": {
+      const { cmdShip } = await import("./commands/ship.js");
+      return cmdShip(ctx, rest, {
+        title: sf(values["title"]),
+        body: sf(values["body"]),
+        base: sf(values["base"]),
+        approve: sf(values["approve"]),
+        yes: flags.yes,
+        json: flags.json,
+      });
+    }
     case "receipt": {
       const { cmdReceipt } = await import("./commands/receipt.js");
       return cmdReceipt(ctx, rest[0] ?? "");
