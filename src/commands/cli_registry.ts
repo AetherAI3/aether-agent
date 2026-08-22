@@ -53,6 +53,14 @@ export const GLOBAL_FLAGS: FlagTable = {
   audit: { type: "boolean", default: false },
   yes: { type: "boolean", short: "y", default: false },
   apply: { type: "boolean", default: false },
+  // `--undo` and `--no-select` were undeclared until #98's assertion surfaced
+  // them, and the bug was real: `aether sessions archive <id> --undo` archived
+  // instead of un-archiving and reported success, and `--no-select` — the
+  // documented escape hatch out of the TTY picker — never reached the command,
+  // leaving a scripted caller on a TTY with no way out of it. They are declared
+  // as `sessions`' OWN flags in the dispatch table below rather than here:
+  // nothing else answers to either spelling, so making them global would hand
+  // every command a flag that means nothing to it.
   // `aether skills` / `aether capabilities` flags:
   scope: { type: "string" },
   all: { type: "boolean", default: false },
