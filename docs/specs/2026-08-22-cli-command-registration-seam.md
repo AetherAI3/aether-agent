@@ -102,7 +102,8 @@ from the global flag table in the same commit.
 
 ## Two rules a registering lane must not break
 
-**Casing.** Lookup is exactly as case-sensitive as `main.ts`'s `switch`. Do not
+**Casing. A migration must not change which strings are commands.** Lookup is
+exactly as case-sensitive as `main.ts`'s `switch`. Do not
 lowercase in the table: a migrated command answering to `DOCTOR` while every
 command still in the switch does not is a divergence, and a wrong-case token
 for those never reaches the typo guard — its pattern is lower-case only — so it
