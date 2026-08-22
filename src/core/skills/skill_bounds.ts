@@ -20,6 +20,16 @@ export const SKILL_BOUNDS = {
   maxLoadedSkillTokens: 16000,
   /** Instruction sources merged into one turn. */
   maxInstructionSources: 12,
+  /**
+   * Approximate token budget for all instruction (AGENTS.md &co) context put in
+   * front of the model in one turn. Twelve 64 KB sources would otherwise be
+   * ~192k tokens — bounding skill bodies is pointless if the rules beside them
+   * are unbounded. Overflow DROPS the lowest-precedence sources whole and says
+   * so out loud; it never clips a source mid-sentence and calls it complete.
+   */
+  maxInstructionContextTokens: 24000,
+  /** Serialized size ceiling for the whole agent context packet on the wire. */
+  maxContextPacketBytes: 512 * 1024,
   /** Nested AGENTS.md depth below the project root. */
   maxNestedInstructionDepth: 6,
   /** One instruction file. */

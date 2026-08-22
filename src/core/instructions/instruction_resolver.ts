@@ -119,11 +119,34 @@ export function sourceLabel(source: InstructionSource): string {
   }
 }
 
-/** Build the full graph for a project: discovery + global-scope conflict pass. */
+/**
+ * Sources that govern a whole-repo RUN, precedence-ordered.
+ *
+ * applicableSources(sources, null) answers a different question — "which
+ * sources apply with no file open" — and correctly excludes anything scoped to
+ * a subtree or a glob. An agent run has no single open file but may touch every
+ * file, so a nested src/AGENTS.md unquestionably governs it. Using the
+ * no-file-open set for a run silently dropped every nested source: its rules
+ * never reached the model, and a root-vs-nested conflict could never be
+ * detected because only one side was ever in the comparison.
+ *
+ * Scope and globs are not discarded — they ride with each source so the reader
+ * can see which subtree or file pattern a rule speaks for.
+ */
+export function runScopedSources(sources: readonly InstructionSource[]): InstructionSource[] {
+  return sources
+    .filter((source) => source.parseStatus !== "unsupported-syntax")
+    .sort((a, b) => {
+      const rank = INSTRUCTION_PRECEDENCE[b.kind] - INSTRUCTION_PRECEDENCE[a.kind];
+      if (rank !== 0) return rank;
+      return b.scopeDir.length - a.scopeDir.length;
+    });
+}
+
+/** Build the full graph for a project: discovery + run-scope conflict pass. */
 export function resolveInstructionGraph(projectRoot: string): InstructionGraph {
   const { sources, skipped } = discoverInstructionSources(projectRoot);
-  const ordered = applicableSources(sources, null);
-  return { sources, conflicts: detectConflicts(ordered), skipped };
+  return { sources, conflicts: detectConflicts(runScopedSources(sources)), skipped };
 }
 
 export const INSTRUCTION_CONTEXT_CONTRACT_VERSION = 1;
@@ -134,6 +157,13 @@ export interface InstructionContextSource {
   scope: string;
   digest: string;
   content: string;
+  /**
+   * File patterns this source is limited to (Cursor rules), or null for "the
+   * whole scope". Additive and optional: a source whose applicability is
+   * narrower than its directory must say so, or the reader treats a rule for
+   * `*.tsx` as a rule for everything.
+   */
+  globs?: readonly string[];
 }
 
 export interface InstructionContextPacket {
@@ -149,14 +179,29 @@ export function buildInstructionContextPacket(
   sources: readonly InstructionSource[],
   relativePath: string | null,
 ): InstructionContextPacket {
+  return packetOf(applicableSources(sources, relativePath));
+}
+
+/**
+ * The packet for a whole-repo run: every source that can govern it, each
+ * carrying the subtree and file patterns it speaks for. See runScopedSources.
+ */
+export function buildRunInstructionContextPacket(
+  sources: readonly InstructionSource[],
+): InstructionContextPacket {
+  return packetOf(runScopedSources(sources));
+}
+
+function packetOf(ordered: readonly InstructionSource[]): InstructionContextPacket {
   return {
     contract_version: INSTRUCTION_CONTEXT_CONTRACT_VERSION,
-    sources: applicableSources(sources, relativePath).map((source) => ({
+    sources: ordered.map((source) => ({
       kind: source.kind,
       path: source.displayPath,
       scope: source.scopeDir === "" ? "project" : source.scopeDir,
       digest: "sha256:" + source.sha256,
       content: source.content,
+      ...(source.globs ? { globs: source.globs } : {}),
     })),
   };
 }
