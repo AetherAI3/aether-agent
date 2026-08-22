@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CLI_COMMANDS } from "../src/commands/cli_registry.js";
+import { ALL_CLI_COMMANDS } from "../src/commands/cli_registry.js";
 import { SLASH_COMMANDS } from "../src/commands/slash_registry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -19,7 +19,7 @@ function markerNames(start: string, end: string): string[] {
 }
 
 test("COMMANDS.md canonical indexes exactly match live registries", () => {
-  const cli = CLI_COMMANDS.filter((command) => !command.hidden).map((command) => command.name).sort();
+  const cli = ALL_CLI_COMMANDS.filter((command) => !command.hidden).map((command) => command.name).sort();
   const slash = SLASH_COMMANDS.filter((command) => !command.hidden).map((command) => command.name).sort();
   assert.deepEqual(markerNames("<!-- CLI-COMMANDS:START -->", "<!-- CLI-COMMANDS:END -->"), cli);
   assert.deepEqual(markerNames("<!-- SLASH-COMMANDS:START -->", "<!-- SLASH-COMMANDS:END -->"), slash);
