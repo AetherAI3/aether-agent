@@ -24,16 +24,18 @@ import { cmdVault } from "./commands/vault.js";
 import { cmdWorkflow } from "./commands/workflow.js";
 import { cmdImage, cmdVideo } from "./commands/media.js";
 import { cmdOutput } from "./commands/output.js";
-import { CLI_COMMANDS, renderCliHelp } from "./commands/cli_registry.js";
+import { ALL_CLI_COMMANDS, CLI_PARSE_OPTIONS, findDispatchedCliCommand, renderCliHelp } from "./commands/cli_registry.js";
+import { commandFlags } from "./core/command_dispatch.js";
 import { commandNames, suggestRegisteredCommand } from "./core/command_registry.js";
 
 /** Coerce a parsed flag value to string | undefined. */
 const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
-// Real top-level subcommand names, sourced from CLI_COMMANDS (cli_registry.ts)
-// — the same registry the switch below is cross-checked against — so this can
-// never drift from the actual dispatched subcommands.
-const TOP_LEVEL_COMMAND_NAMES = commandNames(CLI_COMMANDS);
+// Real top-level subcommand names, sourced from the union of the switch's
+// registry and the dispatch table (cli_registry.ts) — the same registries the
+// dispatch is cross-checked against — so this can never drift from the actual
+// dispatched subcommands.
+const TOP_LEVEL_COMMAND_NAMES = commandNames(ALL_CLI_COMMANDS);
 
 /**
  * Suggestion for a lone bare token at the top level (`aether auht`). Exact
@@ -52,46 +54,9 @@ async function main(argv: string[]): Promise<number> {
     args: argv,
     allowPositionals: true,
     strict: false,
-    options: {
-      model: { type: "string" },
-      agent: { type: "string" },
-      cwd: { type: "string" },
-      token: { type: "string" },
-      username: { type: "string" },
-      password: { type: "string" },
-      "license-key": { type: "string" },
-      "with-token": { type: "boolean", default: false },
-      "no-browser": { type: "boolean", default: false },
-      json: { type: "boolean", default: false },
-      audit: { type: "boolean", default: false },
-      yes: { type: "boolean", short: "y", default: false },
-      apply: { type: "boolean", default: false },
-      deep: { type: "boolean", default: false },
-      // `aether skills` / `aether capabilities` flags:
-      scope: { type: "string" },
-      all: { type: "boolean", default: false },
-      ci: { type: "boolean", default: false },
-      available: { type: "boolean", default: false },
-      junit: { type: "string" },
-      help: { type: "boolean", short: "h", default: false },
-      version: { type: "boolean", short: "v", default: false },
-      // `aether agent` flags:
-      local: { type: "boolean", default: false },
-      pool: { type: "string" },
-      effort: { type: "string" },
-      "test-cmd": { type: "string" },
-      quiet: { type: "boolean", default: false },
-      interactive: { type: "boolean", default: false },
-      "no-log": { type: "boolean", default: false },
-      worktree: { type: "boolean", default: false },
-      repo: { type: "string" },
-      swarm: { type: "string" },
-      resume: { type: "string" },
-      out: { type: "string" },
-      // Skills in a run (`aether agent`, `aether chat`, the REPL):
-      skill: { type: "string" },
-      "no-skills": { type: "boolean", default: false },
-    },
+    // Globals plus every dispatch-table command's flags — one flat namespace,
+    // validated for collisions at registry load (cli_registry.ts).
+    options: CLI_PARSE_OPTIONS,
   });
 
   if (values["version"]) {
@@ -143,6 +108,17 @@ async function main(argv: string[]): Promise<number> {
   };
 
   const rest = positionals.slice(1);
+
+  // Dispatch table first (cli_registry.ts DISPATCH_COMMANDS). A table entry is
+  // reachable because it *is* the dispatch — not because a switch case below
+  // happens to mention the same string. That matters most in the failure
+  // direction: an unmatched name falls through to cmdChat, so a missed wiring
+  // would quietly bill a chat turn for the command word.
+  if (typeof cmd === "string") {
+    const dispatched = findDispatchedCliCommand(cmd);
+    if (dispatched) return (await dispatched.load())(ctx, rest, commandFlags(dispatched, values));
+  }
+
   // Session-level skill selection, shared by every surface that drives a brain.
   const skillOpts = {
     ...(sf(values["skill"]) ? { explicitSkill: sf(values["skill"])! } : {}),
@@ -193,10 +169,6 @@ async function main(argv: string[]): Promise<number> {
     case "audit": {
       const { cmdAudit } = await import("./commands/audit.js");
       return cmdAudit(ctx, rest);
-    }
-    case "doctor": {
-      const { cmdDoctor } = await import("./commands/doctor.js");
-      return cmdDoctor(ctx, rest, { deep: Boolean(values["deep"]) });
     }
     case "support-bundle": {
       const { cmdSupportBundle } = await import("./commands/support_bundle.js");
