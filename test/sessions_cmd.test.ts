@@ -382,3 +382,44 @@ test("classification separates the five ways a session can be elsewhere", () => 
   assert.equal(renderCount(undefined), UNKNOWN);
   assert.equal(renderCount(0), "0");
 });
+
+test("parsed flags arrive as data, and a typed value is never re-parsed from argv", () =>
+  withRoot(async (root, workspace) => {
+    const elsewhere = join(root, "other-project");
+    mkdirSync(elsewhere, { recursive: true });
+    seed(root, "s-here", { cwd: workspace });
+    seed(root, "s-there", { cwd: elsewhere });
+
+    // No "--all" token anywhere in argv: the flag arrives as data.
+    const typed = capture();
+    await cmdSessions(
+      ctxFor(workspace),
+      [],
+      { root, tty: false, out: typed.stream.out, err: typed.stream.err },
+      { all: true },
+    );
+    assert.ok(typed.out.includes("s-there"), "the typed flag reached the command");
+
+    // And an argv token that looks like a flag is not promoted when the typed
+    // form says otherwise — the data is the authority.
+    const overridden = capture();
+    await cmdSessions(
+      ctxFor(workspace),
+      ["--all"],
+      { root, tty: false, out: overridden.stream.out, err: overridden.stream.err },
+      { all: false },
+    );
+    assert.ok(!overridden.out.includes("s-there"), "the parsed value wins over the token");
+  }));
+
+test("a hostile session id stays one argument and reaches no shell", () =>
+  withRoot(async (root, workspace) => {
+    const cap = capture();
+    const code = await cmdSessions(
+      ctxFor(workspace),
+      ["inspect", "s1; rm -rf /"],
+      { root, tty: false, out: cap.stream.out, err: cap.stream.err },
+    );
+    assert.equal(code, 1);
+    assert.match(cap.err, /invalid session id/);
+  }));

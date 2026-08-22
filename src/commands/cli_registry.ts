@@ -159,17 +159,22 @@ export const DISPATCH_COMMANDS: DispatchedCommand[] = [
     },
     load: async () => {
       const { cmdSessions } = await import("./sessions.js");
-      // Parsed flags are handed back as argv tokens because the command's own
-      // parser is what `aether resume list` and the tests drive it through —
-      // one parser, not two spellings of the same flags.
+      // Parsed values are handed over as DATA — never re-rendered into an argv
+      // for the command to parse a second time. `argv` here carries only the
+      // positionals the host already separated out, so nothing the user typed
+      // can be promoted into a flag by a second pass.
       return (ctx, argv, flags) =>
-        cmdSessions(ctx, [
-          ...argv,
-          ...(ctx.flags.all ? ["--all"] : []),
-          ...(flags.bool("undo") ? ["--undo"] : []),
-          ...(flags.bool("no-select") ? ["--no-select"] : []),
-          ...(ctx.flags.out ? ["--out", ctx.flags.out] : []),
-        ]);
+        cmdSessions(
+          ctx,
+          argv,
+          {},
+          {
+            all: Boolean(ctx.flags.all),
+            undo: flags.bool("undo"),
+            noSelect: flags.bool("no-select"),
+            ...(ctx.flags.out ? { out: ctx.flags.out } : {}),
+          },
+        );
     },
   },
 ];

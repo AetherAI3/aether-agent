@@ -64,6 +64,32 @@ export const SESSIONS_CLI_COMMAND = {
   section: "Start",
 } as const;
 
+/**
+ * The flags this command answers to, as DATA.
+ *
+ * The dispatch entry (cli_registry.ts) hands these over already parsed rather
+ * than re-rendering them into an argv for this module to parse a second time.
+ * A second parse is where a value can be promoted into a flag nobody typed, and
+ * the registration seam exists partly to remove that shape.
+ */
+export interface SessionsFlags {
+  /** `--all`: cross workspaces (global flag). */
+  all?: boolean;
+  /** `--undo`: reverse an archive. */
+  undo?: boolean;
+  /** `--no-select`: force the flat table on a TTY. */
+  noSelect?: boolean;
+  /** `--out <file>`: where `export` writes (global flag). */
+  out?: string;
+}
+
+/** argv spelling -> field, so the two forms cannot drift apart. */
+const FLAG_FIELD: Readonly<Record<string, keyof SessionsFlags>> = {
+  "--all": "all",
+  "--undo": "undo",
+  "--no-select": "noSelect",
+};
+
 /** Injected so every command below is testable without a checkout or a clock. */
 export interface SessionsDeps {
   root?: string;
@@ -472,10 +498,24 @@ export async function cmdSessionsClean(ctx: AppContext, deps: SessionsDeps = {})
  *
  *  Exported as the single entry point so wiring it up is one `case` in main.ts
  *  and nothing else. */
-export async function cmdSessions(ctx: AppContext, argv: readonly string[], deps: SessionsDeps = {}): Promise<number> {
+export async function cmdSessions(
+  ctx: AppContext,
+  argv: readonly string[],
+  deps: SessionsDeps = {},
+  parsed: SessionsFlags = {},
+): Promise<number> {
   const args = argv.map((a) => String(a));
-  const flag = (name: string): boolean => args.includes(name);
+  // Typed flags win. The argv fallback exists for direct callers that never
+  // went through the CLI parse at all (tests, and `aether resume list`), NOT as
+  // a second parse of what the host already parsed: the dispatch entry hands
+  // values over as data, so no token the user typed is ever re-interpreted.
+  const flag = (name: string): boolean => {
+    const key = FLAG_FIELD[name];
+    if (key && parsed[key] !== undefined) return Boolean(parsed[key]);
+    return args.includes(name);
+  };
   const valueOf = (name: string): string | undefined => {
+    if (name === "--out" && parsed.out !== undefined) return parsed.out;
     const at = args.indexOf(name);
     return at >= 0 ? args[at + 1] : undefined;
   };
