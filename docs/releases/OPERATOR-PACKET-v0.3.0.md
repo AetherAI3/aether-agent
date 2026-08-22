@@ -10,11 +10,12 @@ to npm are founder-owned and are listed at the end, unrun.
 | Package | `aether-agents` |
 | Proposed tag | `v0.3.0` |
 | Branch base | `ed094dc8885945e69f66e166e854142005bf1d62` (`origin/main`) |
-| Release commit | PENDING — the merge commit of this PR into `main` |
-| Evidence commit | PENDING |
-| Tarball | PENDING |
-| Tarball sha256 | PENDING |
-| Packed entries | PENDING |
+| Release commit | the merge commit of this PR into `main` — **re-run the candidate on it before tagging** (§6.2) |
+| Evidence commit | `a63e1c6e590352dcf5bc2607218e9ca59e1cff33` |
+| Tarball | `aether-agents-0.3.0.tgz` |
+| Tarball sha256 | `25f33524bd866275674eccbf8cfe5706f14e925cb0ba35861dc6bc21a9245a2d` |
+| Tarball size | 589,829 bytes packed / 2,435,029 unpacked |
+| Packed entries | 524 |
 
 ## 1. Semantic version decision
 
@@ -89,11 +90,84 @@ That runs `.github/workflows/release.yml`'s sequence against a detached
 --tag v0.3.0` → `npm pack` → global install of **that tarball** into a clean
 prefix → CLI proofs run from the installed package.
 
-PENDING — evidence table filled from the recorded run.
+Recorded run — commit `a63e1c6e590352dcf5bc2607218e9ca59e1cff33`, `commitBound:
+true`, `ok: true`, process exit 0:
+
+```
+PASS     commit-identity — a63e1c6e590352dcf5bc2607218e9ca59e1cff33
+PASS     stage-commit — detached worktree of that commit
+PASS     npm-ci-ignore-scripts — found 0 vulnerabilities
+PASS     npm-audit-high — found 0 vulnerabilities
+PASS     typecheck — tsc --noEmit exit 0
+PASS     build — copied 18 built-in skill assets → dist/src/skills/builtin
+PASS     release-tests — 4 release test files, exit 0
+NOT-RUN  npm-test — NOT RUN here — the full suite is release.yml's gate.
+                    This report says nothing about it.
+PASS     verify-production — {"ok":true,"package":"aether-agents","version":"0.3.0",
+                             "packedFiles":524,"packedBytes":2435029,"workflows":3}
+PASS     pack — aether-agents-0.3.0.tgz
+                sha256:25f33524bd866275674eccbf8cfe5706f14e925cb0ba35861dc6bc21a9245a2d
+PASS     install-tarball — <prefix>/node_modules/aether-agents
+PASS     installed --version — 0.3.0
+PASS     installed --help — 46 lines, lists skills, capabilities, resume, agent, doctor
+PASS     installed skills list — aether/frontend-from-screenshot@1.0.0 builtin enabled …
+PASS     installed capabilities — instructions        supported
+PASS     installed demo:handoff — independent test run in machine-b/slugify: green
+
+RELEASE CANDIDATE OK
+```
+
+The last five lines all ran the CLI that `npm install --global` placed on disk
+from that exact tarball, in a clean prefix — not `dist/` in a source checkout.
+
+The digest was produced twice: once from an uncommitted working tree and once
+from the detached worktree of `a63e1c6e`, and both runs produced
+`25f33524bd866275674eccbf8cfe5706f14e925cb0ba35861dc6bc21a9245a2d`. That is
+evidence the packed content is stable across the docs-only commit, not a claim of
+cross-machine reproducibility (see §5).
+
+Independently, `npm run typecheck` exits 0 and the release-owned test files —
+`version`, `release_coherence`, `release_canaries`, `production_hardening` —
+report 21 pass / 0 fail.
+
+### Mutation check on the load-bearing gate
+
+`test/release_coherence.test.ts` asserts that every feature the release notes
+promise has its code inside the file list `npm pack` would ship. To show that
+gate is real, `"!dist/src/commands/skills.js"` was added to the `files`
+allowlist, which silently drops `aether skills` from the tarball:
+
+```
+verify:production  ->  {"ok":true, ... "packedFiles":523}          MISSED IT
+release_coherence  ->  FAIL: dist/src/commands/skills.js
+                             (agent skills runtime — `aether skills`)
+```
+
+Restored: 524 packed files, 7/7 pass. The pre-existing production gate does not
+catch a dropped feature, because it does not know what the notes promised.
 
 ### Packaged file manifest
 
-PENDING
+524 entries, 2,435,029 bytes unpacked. Five files at the package root, everything
+else under `dist/src/` — the allowlist is `dist/src` plus four documents, and
+nothing else reaches a user.
+
+| Path | Entries | Size |
+|---|---:|---:|
+| `COMMANDS.md`, `LICENSE`, `NOTICE.md`, `README.md`, `package.json` | 5 | — |
+| `dist/src/core/**` | 270 | 1290.8 KiB |
+| `dist/src/ui/**` | 111 | 331.2 KiB |
+| `dist/src/commands/**` | 105 | 637.1 KiB |
+| `dist/src/skills/**` (six built-in skills) | 18 | 21.7 KiB |
+| `dist/src/generated/**` | 3 | 15.0 KiB |
+| `dist/src/{index,main,types,version}.*` | 12 | 28.1 KiB |
+
+By extension: 167 `.js`, 167 `.d.ts`, 167 `.js.map`, 13 `.json`, 9 `.md`, 1
+extensionless. Source maps ship, as they did in 0.1.0; that is existing policy,
+unchanged by this release.
+
+No compiled tests, no `.env`, no `.tgz`, no `dist/scripts`. `verify-production`
+rejects each of those by name and the pack report above confirms their absence.
 
 ## 5. What is NOT proven
 
