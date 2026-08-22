@@ -275,13 +275,20 @@ test("set() refuses a group/world-writable config dir", { skip: IS_WIN }, async 
   });
 });
 
-test("set() refuses a symlinked config dir", { skip: IS_WIN }, async () => {
+// Runs on BOTH platforms, unlike the uid/mode test above: a directory junction
+// needs no privilege on Windows, which makes a redirected config dir the most
+// reachable form of this attack there — the token would land in a directory the
+// attacker controls while login still reported success.
+test("set() refuses a config dir that is itself a link", async () => {
   await withConfigDir("linked-dir", async (base, configDir) => {
     const real = join(base, "elsewhere");
     mkdirSync(real, { recursive: true, mode: 0o700 });
-    symlinkSync(real, configDir, "dir");
+    symlinkSync(real, configDir, IS_WIN ? "junction" : "dir");
+    assert.equal(lstatSync(configDir).isSymbolicLink(), true, "precondition: the config dir is a link");
+
     const store = await newStore();
     await assert.rejects(() => store.set("aek_nope"), /symlink or reparse point/);
     assert.equal(existsSync(join(real, ".token")), false, "nothing was written through the linked dir");
+    assert.deepEqual(readdirSync(real), [], "not even a temp file reached the redirected directory");
   });
 });
