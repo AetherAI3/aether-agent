@@ -231,11 +231,17 @@ export function cmdSessionsInspect(ctx: AppContext, id: string, deps: SessionsDe
   res.out.write(theme.cyan(`▚ ${entry.sessionId}\n`));
   res.out.write(line("task", entry.task || UNKNOWN));
   res.out.write(line("started", entry.started || UNKNOWN));
-  res.out.write(line("ended", entry.ended ?? "still running"));
+  // "still running" would be a claim nobody can back. A manifest with no `ended`
+  // is a manifest that was never closed, and a run that was killed leaves
+  // exactly the same record as one that is still going.
+  res.out.write(
+    line("ended", entry.ended ?? "never — this run may still be live, or may have been interrupted"),
+  );
   res.out.write(
     line(
       "status",
-      (entry.finalStatus || "unknown") + (entry.remaining ? ` · ${entry.remaining} test(s) failing` : ""),
+      (isUnclosed(entry) ? `${entry.finalStatus || "unknown"} (never verified — the run did not finish)` : entry.finalStatus || "unknown") +
+        (entry.remaining ? ` · ${entry.remaining} test(s) failing` : ""),
     ),
   );
   res.out.write(line("brain", `${entry.brain}${entry.model ? ` · ${entry.model}` : ""}`));
@@ -252,7 +258,11 @@ export function cmdSessionsInspect(ctx: AppContext, id: string, deps: SessionsDe
   res.out.write(line("tools", renderCount(entry.toolCalls)));
   if (entry.skills?.length) res.out.write(line("skills", entry.skills.join(", ")));
   if (entry.instructionsDigest) res.out.write(line("rules", entry.instructionsDigest));
-  if (entry.prUrl) res.out.write(line("pr", entry.prUrl));
+  // Always printed, because silence here would read as "no pull request was
+  // opened" — a different fact from "nothing in the record says either way".
+  // No path in this build records a pull request against a session yet, so this
+  // is unknown by construction rather than by accident.
+  res.out.write(line("pr", entry.prUrl ?? `${UNKNOWN} — this build does not record pull requests`));
   res.out.write(line("where", `${stateLabel(row.state)} — ${stateHint(row.state)}`));
   res.out.write(
     theme.dim(`  logs      ${join(res.root, entry.sessionId)}\n`) +
@@ -366,7 +376,7 @@ export async function cmdSessionsArchive(
   const verb = undo ? "restore" : "archive";
   const caveat = !undo && isUnclosed(found.entry) ? ` — this session ${UNCLOSED_WARNING}` : "";
   if (caveat) res.out.write(theme.yellow(`⚠ ${found.entry.sessionId} ${UNCLOSED_WARNING}\n`));
-  if (!(await ctx.confirm(`${verb} session ${found.entry.sessionId}${caveat}?`))) {
+  if (!(await ctx.confirm(`${verb} session ${found.entry.sessionId}${caveat}? [y/N] `))) {
     res.err.write("cancelled\n");
     return 1;
   }
@@ -410,7 +420,7 @@ export async function cmdSessionsClean(ctx: AppContext, deps: SessionsDeps = {})
   res.out.write(`${stale.length} index row(s) point at sessions that are no longer on disk:\n`);
   for (const entry of stale.slice(0, 20)) res.out.write(`  ${entry.sessionId}  ${entry.task}\n`);
   if (stale.length > 20) res.out.write(theme.dim(`  … and ${stale.length - 20} more\n`));
-  if (!(await ctx.confirm(`remove ${stale.length} index row(s)? (no session data is deleted)`))) {
+  if (!(await ctx.confirm(`remove ${stale.length} index row(s)? (no session data is deleted) [y/N] `))) {
     res.err.write("cancelled\n");
     return 1;
   }

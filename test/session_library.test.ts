@@ -20,6 +20,8 @@ import {
   upsertSessionIndex,
 } from "../src/core/session_index.js";
 import { latestSession } from "../src/core/session_resume.js";
+import { cmdSessions, SESSIONS_CLI_COMMAND } from "../src/commands/sessions.js";
+import { CLI_COMMANDS } from "../src/commands/cli_registry.js";
 import { budgetLine, continuityLines, shortRemote } from "../src/ui/splash.js";
 import { stripAnsi } from "../src/ui/theme.js";
 import type { SessionIndexEntry } from "../src/core/session_index.js";
@@ -314,6 +316,70 @@ test("an index write that cannot happen still returns the right answer", () => {
     // And the next read is just as correct, if just as expensive.
     assert.equal(syncSessionIndex(root).entries.length, 1);
   });
+});
+
+test("the CLI registry row and the command's own spec are the same row", () => {
+  // The spec lives next to the implementation and is copied into the shared,
+  // additive-only registry by hand. Asserting the copy's own fields (which is
+  // what the sessions test does) proves nothing about the registry: this is the
+  // assertion that actually fails if the two drift, or if the row is dropped.
+  const registered = CLI_COMMANDS.find((command) => command.name === SESSIONS_CLI_COMMAND.name);
+  assert.ok(registered, "`aether sessions` is missing from the CLI registry — the command would be unreachable");
+  assert.equal(registered.args, SESSIONS_CLI_COMMAND.args);
+  assert.equal(registered.summary, SESSIONS_CLI_COMMAND.summary);
+  assert.equal(registered.section, SESSIONS_CLI_COMMAND.section);
+});
+
+test("inspect tells the three unknowns apart", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aether-inspect-"));
+  const workspace = join(root, "workspace");
+  mkdirSync(workspace, { recursive: true });
+  try {
+    const dir = join(root, "unfinished");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "manifest.json"),
+      JSON.stringify({
+        sessionId: "unfinished",
+        task: "add the continuity splash",
+        model: "gpt56_sol",
+        brain: "cloud",
+        cwd: workspace,
+        started: "2026-08-22T08:40:02.000Z",
+        ended: null,
+        finalStatus: "running",
+      }),
+    );
+    let out = "";
+    const sink = { write: (chunk: string) => ((out += chunk), true) } as unknown as NodeJS.WritableStream;
+    const ctx = {
+      cfg: {},
+      api: {},
+      tokens: {},
+      flags: { json: false, audit: false, yes: false, cwd: workspace },
+      confirm: async () => false,
+    } as unknown as Parameters<typeof cmdSessions>[0];
+    const code = await cmdSessions(ctx, ["inspect", "unfinished"], {
+      root,
+      tty: false,
+      out: sink,
+      err: sink,
+      run: () => ({ status: 1, stdout: "", stderr: "" }),
+    });
+    assert.equal(code, 0);
+    // 1. never finished — and not called running-therefore-fine.
+    assert.match(out, /ended\s+never — this run may still be live, or may have been interrupted/);
+    assert.match(out, /status\s+running \(never verified — the run did not finish\)/);
+    // 2. never recorded — a count, a command and a branch nobody wrote down.
+    assert.match(out, /written\s+unknown/);
+    assert.match(out, /verify\s+unknown/);
+    assert.match(out, /branch\s+unknown/);
+    // 3. never knowable from this build — which is not the same as "no PR".
+    assert.match(out, /pr\s+unknown — this build does not record pull requests/);
+    assert.ok(!/written\s+0/.test(out), "an unmeasured file count is never rendered as zero");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("upserting a row does not erase the sessions the index had not seen", () => {
