@@ -31,6 +31,7 @@
 import type { BrainEvent } from "./brain_protocol.js";
 import { decodeEvent } from "./brain_protocol.js";
 import { atomicWriteFile, readJsonFile } from "./durable_store.js";
+import type { SessionContext } from "./session_resume.js";
 import { loadSession, replayLines, type LoadedSession } from "./session_resume.js";
 import { logsRoot } from "./session_log.js";
 import { requireOpaqueId } from "./workspace_scope.js";
@@ -73,7 +74,19 @@ export interface Handoff {
   filesTouched: string[];
   /** The command the verify gate ran, when the prior run named one. */
   testCmd?: string;
+  /**
+   * The rules and skills the prior run was conducted under. Digests, never
+   * content: a handoff crosses machines, and a project's prose is not ours to
+   * carry. What travels is enough to tell the receiving machine whether it is
+   * about to continue the work under DIFFERENT instructions.
+   */
+  context?: SessionContext;
 }
+
+/** Bounds for the context record. A handoff is untrusted input on the way in. */
+const MAX_CONTEXT_SKILLS = 16;
+const MAX_CONTEXT_SOURCES = 24;
+const MAX_CONTEXT_CONFLICTS = 24;
 
 /** Highlights are a summary, not a transcript — these bounds keep it one. */
 const MAX_HIGHLIGHTS = 40;
@@ -187,7 +200,52 @@ export function buildHandoff(session: LoadedSession, opts: BuildHandoffOptions =
     highlights,
     filesTouched,
     ...(testCmd ? { testCmd } : {}),
+    ...(m.context ? { context: m.context } : {}),
   };
+}
+
+/**
+ * Validate the context record out of an untrusted handoff. Anything that is not
+ * a well-formed entry is DROPPED rather than half-read: a skill row with no
+ * digest cannot be compared against anything, so keeping it would put a value
+ * in the resume comparison that means nothing.
+ */
+function contextFrom(value: unknown): SessionContext | undefined {
+  const body = asObject(value);
+  if (!body) return undefined;
+  const list = (key: string, max: number): string[] =>
+    Array.isArray(body[key])
+      ? (body[key] as unknown[]).filter((v): v is string => typeof v === "string").slice(0, max).map((v) => clip(v))
+      : [];
+  const rawSkills = Array.isArray(body["skills"]) ? (body["skills"] as unknown[]) : [];
+  const skills = rawSkills
+    .slice(0, MAX_CONTEXT_SKILLS)
+    .map((entry) => asObject(entry))
+    .filter((entry): entry is Record<string, unknown> => entry != null)
+    .map((entry) => ({
+      id: typeof entry["id"] === "string" ? clip(entry["id"]) : "",
+      version: typeof entry["version"] === "string" ? clip(entry["version"]) : "",
+      digest: typeof entry["digest"] === "string" ? clip(entry["digest"]) : "",
+      invocation: typeof entry["invocation"] === "string" ? clip(entry["invocation"]) : "",
+      trust: typeof entry["trust"] === "string" ? clip(entry["trust"]) : "",
+      lock: typeof entry["lock"] === "string" ? clip(entry["lock"]) : "",
+    }))
+    .filter((entry) => entry.id !== "" && entry.digest !== "");
+  const instructionGraphDigest =
+    typeof body["instructionGraphDigest"] === "string" ? clip(body["instructionGraphDigest"]) : "";
+  const context: SessionContext = {
+    skills,
+    instructionSources: list("instructionSources", MAX_CONTEXT_SOURCES),
+    instructionGraphDigest,
+    conflicts: list("conflicts", MAX_CONTEXT_CONFLICTS),
+  };
+  // An entirely empty record carries no information and must not be mistaken
+  // for "the prior run had no rules and no skills" — that is what an ABSENT
+  // record means, and the two lead to different resume decisions.
+  if (!context.skills.length && !context.instructionSources.length && !context.instructionGraphDigest) {
+    return undefined;
+  }
+  return context;
 }
 
 /** A plain JSON object, or undefined for null/array/primitive. */
@@ -228,6 +286,7 @@ export function parseHandoff(value: unknown): Handoff {
   const identity = repoFrom(field(repo, "remote"), field(repo, "branch"), field(repo, "head"));
   const remaining = body["remaining"];
   const testCmd = str("testCmd");
+  const context = contextFrom(body["context"]);
   return {
     schemaVersion,
     kind: HANDOFF_KIND,
@@ -245,6 +304,7 @@ export function parseHandoff(value: unknown): Handoff {
     highlights: strings("highlights").slice(-MAX_HIGHLIGHTS).map((h) => clip(h)),
     filesTouched: strings("filesTouched").slice(0, MAX_FILES).map((f) => clip(f)),
     ...(testCmd ? { testCmd } : {}),
+    ...(context ? { context } : {}),
   };
 }
 

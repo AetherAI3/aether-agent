@@ -82,6 +82,27 @@ Every run ends with a verdict line: `✓ ok · 4 files changed · tests green ·
 | `--interactive` | Pause at each stage boundary to type a steer (TTY only). |
 | `--no-log` | Disable the local session log (`~/.aether-agent/logs`). |
 | `--swarm <N>` | N-agent swarm (gated; local-only; refuses at runtime — see `commands/code.ts`). |
+| `--skill <id>` | Load this skill for the run (id, short name, or command alias) and **apply its tool policy** — the host refuses any tool the skill does not declare. |
+| `--no-skills` | Load no skill. The project's own `AGENTS.md` still applies — it is not a skill. |
+
+Before the run starts, the agent prints what it loaded and what it will enforce:
+
+```
+Project   my-service
+Rules     src/AGENTS.md + AGENTS.md
+Skills    aether/fix-ci@1.0.0 (explicit · builtin · trust builtin · sha256:8efbda8eb35b)
+Context   706 tokens (measured, not estimated from a manifest)
+Policy    read_file · run_tests · repo_search  — 3 of 8 host tools, enforced for every tool this host executes
+Conflict  test command — effective "pytest -q" (nested src/AGENTS.md has higher precedence)
+            also declared: "npm test" (AGENTS.md)
+```
+
+A skill can only ever **narrow** what a run may do; nothing in a skill manifest
+or an instruction file can grant authority the session did not already hold, and
+the operator permission gate still runs on everything the narrowing leaves. A
+skill matched *automatically* from a trigger phrase contributes its instructions
+but never its policy — only a skill you name with `--skill` narrows.
+Both flags work on `aether chat` and the REPL too.
 
 ### `aether run <neo|kronus> "<task>"` — orchestrator
 Hands a multi-step task to an orchestrator, which plans, fans out sub-agents,

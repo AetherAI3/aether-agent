@@ -37,7 +37,22 @@ export function resolveExplicit(index: SkillIndex, reference: string): ResolvedS
   }
 
   if (matches.length === 0) {
-    throw new SkillError({ code: "skill.not_found", skillId: reference, detail: "no skill matches '" + reference + "'" });
+    // A skill directory that failed to validate is NOT absent — it is broken,
+    // and saying "no skill matches" for it sends the user looking for a typo
+    // in a name that is right. Carry the index errors into the refusal.
+    const indexErrors = index.errors.map((entry) => entry.root + ": " + entry.errors.join("; "));
+    throw new SkillError({
+      code: "skill.not_found",
+      skillId: reference,
+      detail:
+        "no skill matches '" +
+        reference +
+        "'" +
+        (indexErrors.length
+          ? " — " + indexErrors.length + " skill director" + (indexErrors.length === 1 ? "y" : "ies") + " failed to index and cannot load"
+          : ""),
+      ...(indexErrors.length ? { context: { index_errors: indexErrors } } : {}),
+    });
   }
   if (matches.length > 1) {
     throw new SkillError({
