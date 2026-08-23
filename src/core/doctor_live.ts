@@ -21,7 +21,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AppContext } from "./context.js";
-import type { CatalogItem } from "../types.js";
+import type { CatalogItem, CatalogResponse } from "../types.js";
 import {
   DEV_SESSIONS_PATH,
   MODELS_PATH,
@@ -484,17 +484,30 @@ async function catalogProbe(ctx: AppContext, timeoutMs: number): Promise<HealthC
   };
   const started = Date.now();
   try {
-    const items = await bounded(ctx.api.getJson<CatalogItem[]>(MODELS_PATH), timeoutMs);
-    const list = Array.isArray(items) ? items : [];
-    const wellFormed = list.every(
+    const payload = await bounded(
+      ctx.api.getJson<CatalogResponse | CatalogItem[]>(MODELS_PATH),
+      timeoutMs,
+    );
+    // Production returns CatalogResponse. Retain the old bare-array shape as a
+    // bounded compatibility read so doctor can diagnose older deployments
+    // without turning a healthy current response into an empty catalogue.
+    const list = Array.isArray(payload)
+      ? payload
+      : payload && typeof payload === "object" && Array.isArray(payload.models)
+        ? payload.models
+        : null;
+    const wellFormed = list !== null && list.every(
       (item) => typeof item?.id === "string" && typeof item?.kind === "string",
     );
-    const ok = wellFormed && list.length > 0;
+    const ok = list !== null && wellFormed && list.length > 0;
+    const evidence = list === null
+      ? "invalid /models response shape; expected {models:[...]}"
+      : `${list.length} catalog item(s), ${list.filter((i) => i?.available).length} available to this tier`;
     return check(probe, {
       reachable: axis("yes", { checkedAt: new Date().toISOString(), latencyMs: since(started) }),
       verified: axis(ok ? "yes" : "no", {
         checkedAt: new Date().toISOString(),
-        evidence: `${list.length} catalog item(s), ${list.filter((i) => i?.available).length} available to this tier`,
+        evidence,
       }),
       severity: ok ? "info" : "error",
     });

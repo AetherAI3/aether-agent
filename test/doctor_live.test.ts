@@ -65,6 +65,7 @@ interface FakeServer {
   frames?: StreamFrame[];
   controlFails?: boolean;
   closeFails?: boolean;
+  catalog?: unknown;
 }
 
 interface Recorded {
@@ -82,7 +83,11 @@ function fakeCtx(server: FakeServer = {}, cwd = process.cwd()): Recorded {
     tokens: { get: async (): Promise<string | null> => "SYNTHETIC-TOKEN" },
     api: {
       async getJson(): Promise<unknown> {
-        return [{ id: "sonnet", kind: "model", available: true }];
+        return server.catalog ?? {
+          models: [{ id: "sonnet", kind: "model", available: true }],
+          tier: "pro",
+          default: "sonnet",
+        };
       },
       async postJson(path: string, body: unknown): Promise<unknown> {
         posts.push({ path, body });
@@ -361,6 +366,29 @@ test("the create request carries the doctor purpose and a zero spend ceiling", a
   const body = create.body as Record<string, unknown>;
   assert.equal(body["purpose"], "doctor");
   assert.equal(body["max_uvt"], 0);
+});
+
+test("the live catalogue probe accepts the production envelope and legacy array", async () => {
+  for (const catalog of [
+    { models: [{ id: "sonnet", kind: "model", available: true }], tier: "pro", default: "sonnet" },
+    [{ id: "sonnet", kind: "model", available: true }],
+  ]) {
+    const { ctx } = fakeCtx({ catalog });
+    const report = await liveReport(ctx, liveOpts());
+    const result = find(report, "agent.catalog");
+    assert.equal(result.verified.state, "yes");
+    assert.match(String(result.verified.evidence), /1 catalog item\(s\), 1 available/);
+  }
+});
+
+test("the live catalogue probe names an invalid envelope instead of inventing zero models", async () => {
+  const { ctx } = fakeCtx({ catalog: { tier: "pro", default: "sonnet" } });
+  const report = await liveReport(ctx, liveOpts());
+  const result = find(report, "agent.catalog");
+  assert.equal(result.verified.state, "no");
+  assert.equal(result.severity, "error");
+  assert.match(String(result.verified.evidence), /invalid \/models response shape/);
+  assert.doesNotMatch(String(result.verified.evidence), /0 catalog item/);
 });
 
 test("a confirmed doctor session proves frames, control and the tool round trip", async () => {
