@@ -1,3 +1,242 @@
+# Aether Agent v0.3.0 — the work reaches a pull request
+
+**August 22, 2026**
+
+0.2.0 was never published. It was written up on August 19, and then `main` kept
+moving: a skills runtime, a capability contract, a redacted support bundle, a
+command-registration seam, a review-to-pull-request rail, a project session
+library, and the wiring that finally puts skills inside a real run all landed on
+top of the version that was already spoken for. Rather than quietly widen 0.2.0
+to mean two different things, this release takes the next number and describes
+everything actually on `main`.
+
+Covers `477f0fc..a845479` — every commit merged after the v0.2.0 notes were
+written, and everything the v0.2.0 notes described, which was never shipped
+either.
+
+## New
+
+- **A review → commit → pull request rail.** `aether review` reads the
+  repository's real state, lets you pick what goes in, commits exactly that, and
+  `aether ship` publishes the head branch and opens the pull request.
+  - `aether review [stage|unstage|revert|commit|diff|verify]`, with `--files`,
+    `--hunks`, `-m`, `--base` (#94, #102).
+  - `aether ship [--title t] [--body b] [--base b]` pushes HEAD — and only HEAD —
+    and opens the PR against the branch it actually resolved (#95, #102).
+  - **`--approve <action>` is the authority boundary.** `--yes` on its own never
+    approves a destructive or a publishing step; the action has to be named
+    (#102).
+  - The state is read in one pass: repository root, remote identity, head and
+    base revisions, commits ahead and behind, and every changed path. The push
+    URL is read separately with `git remote get-url --push`, so a configured
+    `pushurl` cannot publish somewhere you were never shown, and an unresolvable
+    base leaves ahead/behind **unknown rather than zero** (#93).
+  - A verification record stores the verify gate's result together with the head
+    commit and a digest of the working tree, and compares that identity *before*
+    it looks at the exit code — so neither a stale green nor a stale red can be
+    rendered as current, and nothing upgrades unknown or stale to verified
+    (#93, #97).
+  - Changed files carry their added/removed line counts beside the state rather
+    than inside it (#101).
+- **`aether sessions`** — the project session library. `list`, `inspect`,
+  `continue`, `export`, `archive` and `clean`, as a width-aware table on a
+  terminal and tab-separated columns with a fixed field order when piped. An
+  index beside the session directories makes "what was I doing here" cheap, but
+  the per-session manifest stays the authority, so a lost or corrupt index costs
+  time and never information. Where a session can be continued is answered as one
+  of six distinct states — ready, stale branch, moved checkout, another
+  workspace, missing checkout, archived — because the remedies differ, and the
+  same facts appear as a PROJECT CONTINUITY block on entry. A count nobody
+  recorded prints `unknown`, not `0`. Nothing here deletes: `archive` sets a flag
+  and `clean` drops index rows for sessions already gone (#99).
+- **Skills and `AGENTS.md` are inside real runs now, and their policy is
+  enforced.** The runtime shipped in #72 with no production call site — a run
+  never saw a skill, never saw `AGENTS.md`, and never enforced a tool policy.
+  One seam now composes the brief before a brain is chosen, so the hosted and
+  local paths carry the byte-identical string, and the refusal runs immediately
+  before this host executes a tool. A skill only ever **subtracts** from the tool
+  surface: the guard runs before the operator permission gate, never instead of
+  it, so nothing a manifest says can add a tool, add a permission, or skip a
+  confirmation. A skill matched automatically contributes context but not policy
+  — only an explicit `--skill <id>` narrows (#100).
+- **Agent skills** — `aether skills` inspects, trusts and manages skills, and six
+  are built into the package: `review-pr`, `fix-ci`, `ship`, `doctor-project`,
+  `research-and-implement`, `frontend-from-screenshot`. Skills are discovered,
+  schema-validated, lazily loaded and trust-locked; an untrusted skill is not
+  silently run.
+- **`aether capabilities`** — the capability contract this build actually
+  implements, and, with `--available`, what is reachable right now. A surface the
+  build does not have reads as absent, not as unchecked.
+- **`aether support-bundle`** — a redacted diagnostic bundle you can hand to
+  someone without handing over your credentials or your file contents.
+- **A command-registration seam.** A command now carries its own help text, its
+  own flag table and its own loader in one entry, so adding one is a single edit
+  instead of three that have to agree. Flag collisions are load-time errors
+  rather than last-writer-wins, and reachability is structural rather than
+  asserted by a regex over the source. You feel this as the three `doctor` fixes
+  below — those flags were lost precisely because the old shape let a command's
+  flags and its dispatch drift apart.
+
+## Carried forward from the unpublished 0.2.0
+
+- **Handoffs** — `aether resume export` writes one portable file: the task, the
+  model that ran it, the verify gate's verdict, how many tests were still
+  failing, the files that changed, the verification command, and the repository
+  it belongs to. Continue anywhere with `aether agent --resume <file>`, on
+  whatever model you want. No absolute paths, no file contents, no shell
+  commands, no credential-shaped values ride along.
+- **`--resume` reaches the brain** — the prior session becomes a continuation
+  brief the model reads before its own instruction. With no new task, the run
+  continues the original one.
+- **`aether agent --local "<task>"` works after a plain npm install** — the
+  one-shot offline form used to die with `spawn python ENOENT`. It now drives the
+  Ollama brain that ships in the package. `AETHER_LOCAL_BRAIN=python` opts back in.
+- **Session logs stopped redacting your file paths** — the credential filter
+  matched `pat` inside `path`. Real credential keys are still redacted.
+- **`npm run demo:handoff`** — a deterministic end-to-end proof: two sessions,
+  two models, two checkouts, one verify gate, no account and no model download.
+  See [`docs/demo/handoff.md`](docs/demo/handoff.md).
+
+## Fixed
+
+- **A coding run no longer turns into a chat about your code without saying so.**
+  When the server answers 403/404 to a dev-session request — which is what
+  `api.aethersystems.net` does today, with agent dev sessions disabled — CloudBrain
+  treated it as "legacy server" and rerouted the run onto the one-way chat
+  stream. That path runs its tools **server-side against the cloud vault**, so a
+  session asked to work in your checkout quietly became a conversation about it:
+  normal header, plausible reply, **exit 0**, and nothing anywhere saying the
+  transport had changed. A `ROUTING_DRIFT` banner now prints before any model
+  output, carrying the status, the server's own sanitized detail, the
+  consequence in plain words, and what to do about it; `--json` carries it
+  structurally as `kind:"routing_drift"` (#105).
+- **`aether auth login` opens the approval page on Windows.** The win32 launcher
+  used `explorer.exe` for URLs as well as file paths, which opens a File Explorer
+  window rather than the default browser — so the device-approval page never
+  appeared and the login poll sat on *"Waiting for approval in your browser…"*
+  forever. URLs now go through `rundll32.exe url.dll,FileProtocolHandler`, the
+  no-shell equivalent of a shell-execute on a URL, with the URL kept as a single
+  argv element. A URL containing control characters or whitespace is refused
+  outright (#103).
+- **The stored credential cannot be redirected through a planted link, or torn
+  in half by a crash.** The token store guarded its reads and writes with
+  `O_NOFOLLOW ?? 0`, and `O_NOFOLLOW` is not defined on Windows — so the guard
+  collapsed to `0` there and a symlink or directory junction planted at the token
+  path was followed on both read and write, handing over the session token or
+  capturing the next one. A junction needs no privilege to create. Reads and
+  writes now `lstat` the path first and refuse a link on every platform, and the
+  write is a `0600` exclusive temp file, fsynced and renamed over the target
+  instead of truncate-then-write, so a crash mid-write can no longer leave an
+  empty token file or let a concurrent reader see half a credential. Clearing the
+  token removes a planted link rather than whatever it pointed at (#104).
+- **Ctrl+C stops a local turn.** The abort signal now reaches local runs instead
+  of being dropped at the chat boundary.
+- **`/limit` is a real stop boundary**, and unknown spend is reported as unknown
+  rather than as zero — so a session nobody measured no longer looks like a
+  session that spent nothing.
+- **`/rollback` stopped lying about HEAD** and stopped accepting a count it never
+  used.
+- **`--repo` is validated and fetched** rather than reused blind, and the
+  worktree is pinned to the fetched revision; an unknown base is refused instead
+  of guessed.
+- **Tool execution is async with process-tree teardown** — cancelling a run kills
+  the whole tree, not just the shell that fronted it, so `npm test` or a compiler
+  no longer keeps running after you stopped it.
+- **Ollama's own `OLLAMA_HOST` format is accepted**, and the request timeout stays
+  armed through the body read instead of expiring at the headers.
+- **Ollama tool results are correlated by id**, schemas are generated, and steer
+  is no longer faked on the local path.
+- **CLI startup no longer blocks on an unbounded `git status`** in a large or
+  slow repository.
+- **The hosted dev-session protocol version the server answers is actually
+  checked**, instead of the version the client hoped for.
+- **`aether doctor --live` now actually runs the live proof.** It never had. The
+  CLI's argv parse swallowed any flag a command had not declared, so `--live`
+  was stripped before `doctor` saw it: the command quietly ran the fast
+  configured-only report and **exited 0**, presenting a live end-to-end
+  verification that was never performed. `--deep`, `--dry-run`, `--no-ui` and
+  `--only <id>` were lost the same way.
+- **`aether doctor --fix` is reachable at all.** The whole repair path was
+  unreachable, and because the global `--yes` never arrived either,
+  `aether doctor --fix --yes` answered *"re-run with `--yes`"* to someone who had
+  just passed it. `--fix` still changes nothing without `--yes`, and still shows
+  its repair plan first.
+- **A mistyped command no longer costs you a model call.** Command lookup
+  lowercased the token while dispatch was case-sensitive, so `aether Vault` fell
+  past the typo guard into a chat turn and billed it. Wrong case now reaches the
+  "did you mean" guard, as it always should have.
+
+## Behaviour changes
+
+- **A run that needs local authority now fails closed, with the new exit code
+  3.** `aether agent`, and any run that pinned `--model`, will no longer fall back
+  to the chat stream when the dev session is refused: no chat-stream request is
+  issued at all and the process exits **3**, a newly documented code in
+  `COMMANDS.md`. This is a deliberate exit-status change — a script that treated
+  a degraded run as success will now see a failure, which is the point. Chat-shaped
+  runs that pinned nothing still degrade, but they announce it. `--local` (Ollama)
+  and the auth paths are untouched (#105).
+- **A symlinked config directory is now refused when writing the token.** Saving
+  a credential validates the config directory first: it must be a real
+  directory, not a link, owned by you, and not group- or world-writable. If you
+  deliberately symlink or junction `~/.config/aether` — onto another drive, into
+  a dotfiles checkout, across a container mount — `aether auth login` now **fails
+  loudly** instead of writing your token through the link. Replace the link with
+  a real directory, or point `AETHER_CONFIG_DIR` at one. This is deliberate: on
+  Windows a directory junction needs no privilege to create, which makes
+  redirecting the config directory the most reachable form of the attack #104
+  closes. The ownership and permission half of the check is POSIX-only — Node
+  does not expose Windows ACLs — but the link refusal itself applies everywhere
+  (#104).
+- **Reading the token no longer throws on a planted link; it reports no token.**
+  A read that encounters a link is treated as "not signed in" rather than
+  surfacing a credential, so the recovery path is `aether auth login`, not an
+  error nobody can act on (#104).
+
+## Authentication
+
+Stated with its provenance, because half of this lives in a server this
+repository cannot test:
+
+- **Device-grant login works end to end again.** The repository-side half of that
+  is #103 above: before it, the approval page never opened on Windows, so the
+  flow could not complete there at all. The other half — the API accepting
+  long-lived `aek_` tokens — is a **server-side** change. It is verified by
+  operators against the deployed API and is **not** proven by any test in this
+  repository, which has no live credential.
+- **`aether auth logout` ends the session on the server, not just on disk.** The
+  client posts to `/auth/logout` with the stored token before clearing the local
+  credential. That call is **best-effort**: if the server is unreachable the
+  local credential is still cleared, so a successful `Logged out.` is proof the
+  credential is gone from this machine, and not by itself proof the server
+  honoured it. The client call is not new in this range — what changed is on the
+  server side.
+
+## Availability — read this before upgrading
+
+**0.3.0 is not on npm.** At the time these notes were written the registry served
+exactly one version of `aether-agents`, `0.1.0`, and `latest` resolved to `0.1.0`.
+Neither 0.2.0 nor 0.3.0 has ever been published, and no GitHub release exists for
+either. So `npm i -g aether-agents --ignore-scripts` installs **0.1.0**, and none
+of the above is in it.
+
+Until a `v0.3.0` release is published, build from source:
+
+```bash
+git clone https://github.com/AetherAI3/aether-agent
+cd aether-agent && npm ci && npm run build && npm link
+```
+
+Publishing is founder-owned: it needs a `v0.3.0` tag on the release commit, a published
+GitHub release, the `npm-production` environment and an `NPM_TOKEN`. The exact
+sequence, with the packed tarball's digest and manifest, is in
+[`docs/releases/OPERATOR-PACKET-v0.3.0.md`](docs/releases/OPERATOR-PACKET-v0.3.0.md).
+
+When 0.3.0 is published it upgrades in place: no configuration changes, no
+migration, and 0.1.x session logs are read unchanged.
+
+---
+
 # Aether Agent v0.2.0 — the work outlives the session
 
 **August 19, 2026**
@@ -28,19 +267,12 @@ decide when it's done.
   two sessions, two models, two checkouts, one verify gate, no account and no
   model download. See [`docs/demo/handoff.md`](docs/demo/handoff.md).
 
-**Availability.** 0.2.0 is on `main`, but it is **not yet published to npm** —
-the registry’s `latest` dist-tag still resolves to 0.1.0, so a plain
-`npm i -g aether-agents` installs 0.1.0 and none of the above. Until the 0.2.0
-release is cut, build it from source:
-
-```bash
-git clone https://github.com/AetherAI3/aether-agent
-cd aether-agent && npm ci && npm run build && npm link
-```
-
-Once 0.2.0 is published, `npm i -g aether-agents --ignore-scripts` will upgrade in
-place: no configuration changes, no migration, and 0.1.x session logs are read
-unchanged.
+**Superseded — 0.2.0 was never released.** No `v0.2.0` tag, no GitHub release
+and no npm version ever existed for it. `main` kept moving after these notes
+were written, so the work above ships as part of **[v0.3.0](#aether-agent-v030--skills-and-a-release-that-matches-the-repository)**
+instead of widening 0.2.0 to mean two different things. This entry is kept as
+the record of what was written on August 19, not as an install instruction —
+see the v0.3.0 availability section above.
 
 ---
 

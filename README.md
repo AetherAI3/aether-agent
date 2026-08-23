@@ -35,16 +35,24 @@ Two things make it different from the rest of the terminal-agent shelf:
 **Aether Agent is in beta.** Updates are shipping quickly.
 
 > **What `npm i -g` gives you today: 0.1.0.** The npm `latest` dist-tag is still
-> `0.1.0`; **0.2.0 is on `main` but not yet published**. So the features described
-> under [v0.2.0 in the release notes](RELEASE_NOTES.md) — portable handoffs,
-> `--resume` reaching the brain, `aether agent --local "<task>"` working straight
-> after an install — are **not** in the package the command above installs. Until
-> the 0.2.0 release is cut, build from source to get them:
+> `0.1.0`, and 0.1.0 is the only version ever published. **`main` is 0.3.0 and is
+> not on the registry** — neither was 0.2.0, which was written up but never
+> released and is now superseded. So the features described under
+> [v0.3.0 in the release notes](RELEASE_NOTES.md) — the `aether review` →
+> `aether ship` rail, `aether sessions`, skills enforced inside real runs,
+> `aether skills`, `aether capabilities`, `aether support-bundle`, portable handoffs, `--resume`
+> reaching the brain, `aether agent --local "<task>"` working straight after an
+> install — are **not** in the package the command above installs. Until a
+> `v0.3.0` release is published, build from source to get them:
 >
 > ```bash
 > git clone https://github.com/AetherAI3/aether-agent
 > cd aether-agent && npm ci && npm run build && npm link
 > ```
+>
+> Publishing is owner-gated; the exact steps, the commit the tag must point at,
+> and the packed tarball's digest are in
+> [`docs/releases/OPERATOR-PACKET-v0.3.0.md`](docs/releases/OPERATOR-PACKET-v0.3.0.md).
 
 ## Carry the work across models and machines
 
@@ -101,7 +109,7 @@ aether agent --local           #      …same terminal, nothing leaves the machi
 
 > Running the separate Python brain instead — Aether's open-source (Apache-2.0) **[Unlimited Context](https://github.com/AetherAI3/Unlimited-Context-LLM)** engine, which gives an Ollama model a billion-token working memory — is opt-in with `AETHER_LOCAL_BRAIN=python` once you have installed it. It is not bundled with the npm package.
 
-> Prefer the installer UI? Download [`install.sh`](install.sh) or [`install.ps1`](install.ps1), inspect it, then run it locally. Both follow npm's `latest` dist-tag, which today is **0.1.0**; `AETHER_VERSION=<version>` (shell) or `-Version <version>` (PowerShell) pins an exact **published** release, so a version that is not on the registry yet — 0.2.0 included — will fail with `No matching version found`. The canonical npm command above verifies registry integrity and disables lifecycle scripts; there are no native or runtime dependencies and no daemon.
+> Prefer the installer UI? Download [`install.sh`](install.sh) or [`install.ps1`](install.ps1), inspect it, then run it locally. Both follow npm's `latest` dist-tag, which today is **0.1.0**; `AETHER_VERSION=<version>` (shell) or `-Version <version>` (PowerShell) pins an exact **published** release, so a version that is not on the registry yet — 0.2.0 and 0.3.0 included — will fail with `No matching version found`. The canonical npm command above verifies registry integrity and disables lifecycle scripts; there are no native or runtime dependencies and no daemon.
 
 ## Models & pricing
 
@@ -161,6 +169,9 @@ aether models                     # list models + orchestrators
 aether resume                     # replay the last session in this workspace
 aether resume export              # write a portable handoff for another machine
 aether agent --resume <id|file>   # continue it — on any model, with the context
+aether sessions                   # every session in this project, and where it can resume
+aether review                     # see what changed, pick it, commit exactly that
+aether ship                       # push the head branch and open the pull request
 ```
 
 Flags you can set when launching the REPL (or pass with an inline task `aether agent "<task>"` for one-shot autonomous mode):
