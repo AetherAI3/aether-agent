@@ -1,5 +1,5 @@
 <!-- GENERATED FILE: run `npm run docs:generate`; do not edit by hand. -->
-<!-- manifest-digest: sha256:a5b2c78021ecdff281df646e5b17400f9dba95b19d406e9ef0a831a349c4ac56 -->
+<!-- manifest-digest: sha256:df14ab07942c3d50b1429741743ad1eccdfc97fa3f45db9a8f2899ec9ca6ef45 -->
 # Generated command reference
 
 This reference is generated from the validated runtime command manifest. Availability is evaluated at runtime; a listed command may still require authentication, a hosted capability, or local tooling.
@@ -236,6 +236,12 @@ inspect or change configuration
 
 Permission: `local-write` · Availability: `runtime-dependent` · Telemetry: `shell.config`
 
+#### `aether rc [status|off|<name>]`
+
+remote\-control this session from Aether Code \(QR \+ viewer URL\)
+
+Permission: `network` · Availability: `runtime-dependent` · Telemetry: `shell.rc`
+
 #### `aether doctor [--live|--fix] [--deep] [--only <id>]`
 
 run structured runtime diagnostics
@@ -314,6 +320,12 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 manage the declared loopback development preview
 
 Permission: `local-write` · Availability: `runtime-dependent` · Telemetry: `slash.preview` · Requires: `aether.local-preview`
+
+#### `/rc [status|off|<name>]`
+
+remote\-control this session from Aether Code \(QR \+ viewer URL\)
+
+Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.rc`
 
 #### `/clear`
 

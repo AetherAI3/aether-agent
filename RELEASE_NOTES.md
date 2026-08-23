@@ -37,6 +37,20 @@ either.
   runs print the URL without claiming a browser opened. This is a separate
   local capability and does not relax web-fetch SSRF rules.
 
+- **Remote Control (viewer-only preview).** `aether rc` and `/rc` register the
+  current local session with the remote-session broker (AETHER-CLOUD ADR-0007)
+  and print the Aether Code viewer URL plus a terminal QR whose link carries a
+  single-use redemption id — never a reusable token. The host connection is
+  outbound-only, applies a strict payload allowlist before anything is
+  uploaded (no env vars, tokens, file contents, shell history, absolute paths,
+  MCP credentials, cookies, or hidden prompts), keeps a durable resume cursor
+  and outbox so reconnects replay without duplicates, and heartbeats every
+  15 s with exponential backoff on loss. `aether rc off` revokes all remote
+  access immediately without touching the local session; any remote-control
+  failure leaves the local session untouched by construction. Requires the
+  broker service; until it is deployed the command reports an honest
+  connection failure.
+
 - **`aether exec` — a local, agent-driven JSONL interface.** It starts the
   packaged Node/Ollama brain child and emits `aether.exec/1` frames with
   sequence and correlation IDs, explicit permission decisions, bounded tool

@@ -155,6 +155,21 @@ export const DISPATCH_COMMANDS: DispatchedCommand[] = [
     },
   },
   {
+    // `aether rc` — Remote Control host (AETHER-AGENT-LIVE-01 R2, ADR-0007).
+    // Positional-only: `rc`, `rc status`, `rc off`, or `rc <session name>`.
+    name: "rc",
+    args: "[status|off|<name>]",
+    summary: "remote-control this session from Aether Code (QR + viewer URL)",
+    section: "System",
+    load: async () => {
+      const { cmdRc } = await import("./rc.js");
+      // From the shell the host connection lives only as long as the process,
+      // so an interactive start stays open until Ctrl+C; status/off return.
+      return (ctx, argv, _flags) =>
+        cmdRc(ctx, argv, { wait: process.stdin.isTTY === true && argv[0] !== "status" && argv[0] !== "off" });
+    },
+  },
+  {
     name: "doctor",
     args: "[--live|--fix] [--deep] [--only <id>]",
     summary: "run structured runtime diagnostics",

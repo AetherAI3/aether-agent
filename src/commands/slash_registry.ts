@@ -51,6 +51,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "audit", args: "[n]", summary: "recent audit trail", section: "Session" },
   { name: "doctor", args: "[deep]", summary: "structured runtime diagnostics", section: "Session" },
   { name: "preview", args: "start|open|logs|status|stop", summary: "manage the declared loopback development preview", section: "Session" },
+  { name: "rc", args: "[status|off|<name>]", summary: "remote-control this session from Aether Code (QR + viewer URL)", section: "Session" },
   { name: "clear", summary: "clear screen", section: "Session" },
   { name: "exit", aliases: ["quit"], summary: "leave the REPL", section: "Session" },
   { name: "mcp", args: "[list|doctor|repair]", summary: "manage and diagnose MCP servers", section: "Session" },
