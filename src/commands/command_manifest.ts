@@ -1,11 +1,17 @@
 // JSON-safe product metadata over the existing command registries. Runtime
 // loaders stay separate so consumers never receive executable functions.
-import type { CommandSpec } from "../core/command_registry.js";
+import {
+  commandNames,
+  completeCommand,
+  renderRegistryHelp,
+  suggestRegisteredCommand,
+  type CommandSpec,
+} from "../core/command_registry.js";
 import type { DispatchedCommand, FlagSpec, FlagTable } from "../core/command_dispatch.js";
 import { ALL_CLI_COMMANDS, DISPATCH_COMMANDS, GLOBAL_FLAGS } from "./cli_registry.js";
 import { SLASH_COMMANDS } from "./slash_registry.js";
 
-export const COMMAND_SURFACES = ["shell", "slash"] as const;
+export const COMMAND_SURFACES = ["shell", "slash", "headless"] as const;
 export type CommandSurface = (typeof COMMAND_SURFACES)[number];
 export type CommandManifestKey = `${CommandSurface}:${string}`;
 export const PERMISSION_CLASSES = ["unknown", "read-only", "local-write", "network", "account", "destructive"] as const;
@@ -40,6 +46,7 @@ export interface CommandManifestEntry {
   permissionClass: PermissionClass;
   availability: CommandAvailability;
   telemetryName: string;
+  acceptedGlobalFlags: readonly string[];
   ownedFlags: FlagTable;
   handler: CommandHandlerIdentity;
   docs: CommandDocsBinding;
@@ -47,6 +54,7 @@ export interface CommandManifestEntry {
 }
 export interface CommandRegistrySources {
   shell: readonly CommandSpec[]; slash: readonly CommandSpec[]; lazyShell?: readonly DispatchedCommand[];
+  globalShellFlags?: FlagTable;
 }
 export interface ManifestValidationOptions { reservedShellFlags?: FlagTable }
 
@@ -56,11 +64,35 @@ const CAPABILITY_NAME = /^[a-z][a-z0-9._:-]*$/;
 const KNOWN_HANDLER_OWNERS: Readonly<Record<CommandSurface, readonly string[]>> = {
   shell: ["host:src/main.ts#main", "lazy:src/commands/cli_registry.ts#DISPATCH_COMMANDS"],
   slash: ["host:src/commands/slash.ts#handleSlash"],
+  headless: ["host:src/main.ts#main"],
 };
 const KNOWN_DOCS_OWNERS: Readonly<Record<CommandSurface, readonly string[]>> = {
   shell: ["src/commands/cli_registry.ts#ALL_CLI_COMMANDS"],
   slash: ["src/commands/slash_registry.ts#SLASH_COMMANDS"],
+  headless: ["src/commands/cli_registry.ts#ALL_CLI_COMMANDS"],
 };
+
+const READ_ONLY_COMMANDS = new Set(["help", "models", "agents", "audit", "capabilities"]);
+const ACCOUNT_COMMANDS = new Set(["auth", "login", "logout", "github"]);
+const LOCAL_WRITE_COMMANDS = new Set(["resume", "sessions", "review", "skills", "memory", "output", "support-bundle", "config"]);
+const DESTRUCTIVE_COMMANDS = new Set(["ship"]);
+const HOSTED_CAPABILITY_COMMANDS = new Set(["chat", "run", "models", "agents", "image", "video", "vault", "workflow", "receipt"]);
+
+function permissionFor(surface: CommandSurface, name: string): PermissionClass {
+  if (surface === "slash") return name === "rollback" || name === "revert" ? "destructive" : "unknown";
+  if (READ_ONLY_COMMANDS.has(name)) return "read-only";
+  if (ACCOUNT_COMMANDS.has(name)) return "account";
+  if (DESTRUCTIVE_COMMANDS.has(name)) return "destructive";
+  if (LOCAL_WRITE_COMMANDS.has(name) || name === "agent") return "local-write";
+  return "network";
+}
+
+function capabilitiesFor(surface: CommandSurface, name: string): string[] {
+  if (surface === "shell" && HOSTED_CAPABILITY_COMMANDS.has(name)) return ["aether.hosted"];
+  if (surface === "shell" && name === "agent") return ["aether.hosted-or-local"];
+  if (surface === "slash" && ["models", "model", "agents", "agent", "tier"].includes(name)) return ["aether.catalogue"];
+  return [];
+}
 
 function usageOf(surface: CommandSurface, command: Pick<CommandSpec, "name" | "args">): string {
   return `${surface === "shell" ? "aether " : "/"}${command.name}${command.args ? ` ${command.args}` : ""}`;
@@ -76,7 +108,12 @@ function handlerOf(surface: CommandSurface, name: string, lazy?: DispatchedComma
     ? { id: `handler:${surface}:${name}`, kind: "host", module: "src/main.ts", symbol: "main" }
     : { id: `handler:${surface}:${name}`, kind: "host", module: "src/commands/slash.ts", symbol: "handleSlash" };
 }
-function normalizeCommand(surface: CommandSurface, command: CommandSpec, lazy?: DispatchedCommand): CommandManifestEntry {
+function normalizeCommand(
+  surface: CommandSurface,
+  command: CommandSpec,
+  lazy?: DispatchedCommand,
+  globalFlags: FlagTable = {},
+): CommandManifestEntry {
   const usage = usageOf(surface, command);
   const registry = surface === "shell"
     ? { module: "src/commands/cli_registry.ts", symbol: "ALL_CLI_COMMANDS" }
@@ -86,9 +123,11 @@ function normalizeCommand(surface: CommandSurface, command: CommandSpec, lazy?: 
     aliases: [...(command.aliases ?? [])], compatibilityAliases: [...(command.aliases ?? [])], deprecatedAliases: [],
     ...(command.args === undefined ? {} : { args: command.args }),
     summary: command.summary, detailedHelp: `${usage}\n${command.summary}`, section: command.section,
-    hidden: command.hidden === true, permissionClass: "unknown",
-    availability: { state: "runtime-dependent", capabilityRequirements: [] },
-    telemetryName: `${surface}.${command.name}`, ownedFlags: copyFlags(lazy?.flags),
+    hidden: command.hidden === true, permissionClass: permissionFor(surface, command.name),
+    availability: { state: "runtime-dependent", capabilityRequirements: capabilitiesFor(surface, command.name) },
+    telemetryName: `${surface}.${command.name}`,
+    acceptedGlobalFlags: surface === "shell" ? Object.keys(globalFlags).sort() : [],
+    ownedFlags: copyFlags(lazy?.flags),
     handler: handlerOf(surface, command.name, lazy),
     docs: { kind: "registry-help", ...registry, target: command.name, usage, visible: command.hidden !== true, disposition: "registry-only" },
     release: { disposition: "existing", note: null },
@@ -97,7 +136,7 @@ function normalizeCommand(surface: CommandSurface, command: CommandSpec, lazy?: 
 export function createCommandManifest(sources: CommandRegistrySources): readonly CommandManifestEntry[] {
   const lazy = new Map((sources.lazyShell ?? []).map((command) => [command.name, command]));
   return [
-    ...sources.shell.map((command) => normalizeCommand("shell", command, lazy.get(command.name))),
+    ...sources.shell.map((command) => normalizeCommand("shell", command, lazy.get(command.name), sources.globalShellFlags)),
     ...sources.slash.map((command) => normalizeCommand("slash", command)),
   ];
 }
@@ -112,10 +151,12 @@ function sameFlagSpec(a: FlagSpec, b: FlagSpec): boolean {
 function validateBindings(label: string, entry: CommandManifestEntry, errors: string[]): void {
   if (entry.handler.id !== `handler:${entry.surface}:${entry.name}`) errors.push(`${label}: invalid handler id '${entry.handler.id}'`);
   const handlerOwner = `${entry.handler.kind}:${entry.handler.module}#${entry.handler.symbol}`;
-  if (!KNOWN_HANDLER_OWNERS[entry.surface].includes(handlerOwner)) errors.push(`${label}: unknown handler owner '${handlerOwner}'`);
+  const handlerOwners = KNOWN_HANDLER_OWNERS[entry.surface];
+  if (!handlerOwners || !handlerOwners.includes(handlerOwner)) errors.push(`${label}: unknown handler owner '${handlerOwner}'`);
   if (entry.docs.kind !== "registry-help") errors.push(`${label}: invalid docs kind`);
   const docsOwner = `${entry.docs.module}#${entry.docs.symbol}`;
-  if (!KNOWN_DOCS_OWNERS[entry.surface].includes(docsOwner)) errors.push(`${label}: unknown docs owner '${docsOwner}'`);
+  const docsOwners = KNOWN_DOCS_OWNERS[entry.surface];
+  if (!docsOwners || !docsOwners.includes(docsOwner)) errors.push(`${label}: unknown docs owner '${docsOwner}'`);
   if (entry.docs.target !== entry.name) errors.push(`${label}: docs target '${entry.docs.target}' does not match command name`);
   const usage = usageOf(entry.surface, entry);
   if (entry.docs.usage !== usage) errors.push(`${label}: docs usage must be '${usage}'`);
@@ -133,6 +174,12 @@ function validateProductMetadata(label: string, entry: CommandManifestEntry, err
     capabilities.add(capability);
   }
   if (entry.telemetryName !== `${entry.surface}.${entry.name}`) errors.push(`${label}: telemetry name must be '${entry.surface}.${entry.name}'`);
+  const globalFlags = new Set<string>();
+  for (const flag of entry.acceptedGlobalFlags) {
+    if (!FLAG_NAME.test(flag)) errors.push(`${label}: invalid accepted global flag --${flag}`);
+    if (globalFlags.has(flag)) errors.push(`${label}: duplicate accepted global flag --${flag}`);
+    globalFlags.add(flag);
+  }
   if (!(RELEASE_DISPOSITIONS as readonly string[]).includes(entry.release.disposition)) errors.push(`${label}: invalid release disposition '${entry.release.disposition}'`);
   if (entry.release.note !== null && !entry.release.note.trim()) errors.push(`${label}: empty release note`);
   const declared = new Set(entry.aliases);
@@ -213,7 +260,12 @@ export function validateCommandManifest(entries: readonly CommandManifestEntry[]
   return errors;
 }
 
-export const COMMAND_MANIFEST = createCommandManifest({ shell: ALL_CLI_COMMANDS, slash: SLASH_COMMANDS, lazyShell: DISPATCH_COMMANDS });
+export const COMMAND_MANIFEST = createCommandManifest({
+  shell: ALL_CLI_COMMANDS,
+  slash: SLASH_COMMANDS,
+  lazyShell: DISPATCH_COMMANDS,
+  globalShellFlags: GLOBAL_FLAGS,
+});
 export const COMMAND_RUNTIME_LOADERS = createCommandRuntimeLoaders(DISPATCH_COMMANDS);
 const manifestErrors = validateCommandManifest(COMMAND_MANIFEST, { reservedShellFlags: GLOBAL_FLAGS });
 if (manifestErrors.length) throw new Error(`Invalid command manifest: ${manifestErrors.join("; ")}`);
@@ -236,4 +288,60 @@ export function projectLegacyCommandSpecs(
     ...(entry.args === undefined ? {} : { args: entry.args }),
     summary: entry.summary, section: entry.section, ...(entry.hidden ? { hidden: true } : {}),
   }));
+}
+
+/** The exact parseArgs table consumed by the executable: manifest globals plus command-owned flags. */
+export function manifestParseOptions(
+  entries: readonly CommandManifestEntry[] = COMMAND_MANIFEST,
+  globalFlags: FlagTable = GLOBAL_FLAGS,
+): Record<string, FlagSpec> {
+  const merged: Record<string, FlagSpec> = { ...globalFlags };
+  for (const entry of entries) {
+    if (entry.surface !== "shell") continue;
+    for (const [name, spec] of Object.entries(entry.ownedFlags)) merged[name] ??= spec;
+  }
+  return merged;
+}
+
+export const COMMAND_PARSE_OPTIONS = manifestParseOptions();
+
+export function renderManifestHelp(surface: "shell" | "slash", target = ""): string {
+  const commands = projectLegacyCommandSpecs(surface);
+  if (surface === "shell") {
+    return renderRegistryHelp({
+      title: "Aether Agent - local-first coding agent",
+      intro: "Authenticated turns use the Aether cloud brain; signed-out turns use local Ollama.",
+      usage: ["aether", 'aether "<prompt>"', "aether help [command]", "aether <command> --help"],
+      prefix: "aether ",
+      commands,
+      sections: [...new Set(commands.map((command) => command.section))],
+      target,
+      footer: [
+        "Global flags: --model <id> --agent <id> --cwd <dir> --json --audit -y/--yes -h/--help -v/--version",
+        "Unknown command text remains a bare prompt.",
+      ],
+    });
+  }
+  return renderRegistryHelp({
+    title: "Aether Agent slash commands",
+    intro: "Commands are grouped by terminal workflow.",
+    prefix: "/",
+    commands,
+    sections: [...new Set(commands.map((command) => command.section))],
+    target: target.trim().replace(/^\//, ""),
+    footer: [
+      "/help <command> for detail · /help <word> searches · Tab completes slash commands.",
+      "/model or /agent with no argument opens the picker.",
+    ],
+  });
+}
+
+export function completeManifestSlash(input: string): { completed: string | null; matches: string[] } {
+  if (!input.startsWith("/") || /\s/.test(input)) return { completed: null, matches: [] };
+  const result = completeCommand(input.slice(1).toLowerCase(), manifestCommandNames("slash"));
+  return { completed: result.completed ? `/${result.completed}` : null, matches: result.matches };
+}
+
+export function suggestManifestCommand(surface: "shell" | "slash", name: string, maxDistance = 2): string | null {
+  return suggestRegisteredCommand(name, commandNames(projectLegacyCommandSpecs(surface)), maxDistance);
 }

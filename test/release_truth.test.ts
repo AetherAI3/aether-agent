@@ -15,12 +15,15 @@ import {
 } from "../scripts/release-truth.js";
 
 const commands = [
-  { name: "agent", aliases: ["code"] },
-  { name: "doctor" },
-  { name: "skills" },
-  { name: "login", hidden: true },
+  { name: "agent", aliases: ["code"], release: { disposition: "existing" as const, note: null } },
+  { name: "doctor", release: { disposition: "existing" as const, note: null } },
+  { name: "skills", release: { disposition: "existing" as const, note: null } },
+  { name: "login", hidden: true, release: { disposition: "internal" as const, note: null } },
 ] as const;
-const slashCommands = [{ name: "help" }, { name: "model", aliases: ["models"] }] as const;
+const slashCommands = [
+  { name: "help", release: { disposition: "existing" as const, note: null } },
+  { name: "model", aliases: ["models"], release: { disposition: "existing" as const, note: null } },
+] as const;
 
 function validInput(): ReleaseTruthInput {
   const packet = [
@@ -69,7 +72,7 @@ test("release-truth@1 emits a stable machine-readable passing result", () => {
   assert.equal(result.schema, RELEASE_TRUTH_SCHEMA);
   assert.equal(result.status, "pass");
   assert.equal(result.ok, true);
-  assert.deepEqual(result.summary, { total: 11, passed: 11, failed: 0, unavailable: 0, notApplicable: 0 });
+  assert.deepEqual(result.summary, { total: 12, passed: 12, failed: 0, unavailable: 0, notApplicable: 0 });
   assert.match(JSON.stringify(result), /aether-agent\/release-truth@1/);
   assert.match(result.humanSummary[0]!, /^PASS/);
 });
@@ -132,9 +135,21 @@ test("command parsing handles environment assignments, global flags, and slash c
   assert.deepEqual(documentedCommands("`AETHER_AGENT_DEV_ENABLED=1 aether --json --model sonnet doctor --live`"), ["doctor"]);
   assert.deepEqual(documentedCommands("aether --cwd . --yes skills list"), ["skills"]);
   assert.deepEqual(documentedSlashCommands("Use `/help`, `/models`, and `/model sonnet`."), ["help", "model", "models"]);
+  assert.deepEqual(documentedCommands("This removed friction: use `aether teleport`."), ["teleport"]);
+  assert.deepEqual(documentedSlashCommands("This was improved: use `/teleport`."), ["teleport"]);
+  assert.deepEqual(documentedSlashCommands("Typos get a nudge: `/modle` answers with a suggestion."), []);
+  assert.deepEqual(documentedCommands("A lone near-miss token is treated as a typo: `aether auht`"), []);
 });
 
-test("the repository-wide Aether Terminal regression guard is case-insensitive", () => {
+test("every command requires release disposition metadata", () => {
+  const input = validInput();
+  input.commands = [{ name: "agent" }];
+  const finding = evaluateReleaseTruth(input).checks.find((item) => item.id === "commands.release-disposition");
+  assert.equal(finding?.status, "fail");
+  assert.match(finding?.evidence.join("\n") ?? "", /agent has no release disposition/);
+});
+
+test("the repository-wide retired-product regression guard is case-insensitive", () => {
   const input = validInput();
   input.scannedTexts = {
     ...input.scannedTexts,
@@ -142,8 +157,8 @@ test("the repository-wide Aether Terminal regression guard is case-insensitive",
   };
   const finding = evaluateReleaseTruth(input).checks.find((item) => item.id === "links.no-aether-terminal");
   assert.equal(finding?.status, "fail");
-  assert.deepEqual(finding?.evidence, ["docs/stale.md contains the forbidden Aether Terminal URL"]);
-  assert.match(finding?.remediation ?? "", /ATS is not part/);
+  assert.deepEqual(finding?.evidence, ["docs/stale.md contains the retired product URL"]);
+  assert.match(finding?.remediation ?? "", /outside Aether Agent/);
 });
 
 test("the collector scans every regular text extension and records binary/undecodable skips", () => {
@@ -188,7 +203,8 @@ test("new evidence lanes fail drift and never turn absent data green", () => {
 
   const absent = validInput(); delete absent.capabilities; delete absent.generatedDocs; delete absent.catalogue; delete absent.packedClaims;
   const absentResult = evaluateReleaseTruth(absent);
-  assert.equal(absentResult.checks.find((item) => item.id === "catalogue.digest-freshness")?.status, "not_applicable");
+  assert.equal(absentResult.checks.find((item) => item.id === "catalogue.digest-freshness")?.status, "unavailable");
+  assert.equal(absentResult.ok, false);
 });
 
 test("collection failures always return structured release-truth JSON with remediation", async () => {
@@ -201,4 +217,6 @@ test("collection failures always return structured release-truth JSON with remed
   const pack = releaseTruthFailure("pack", new Error("pack exploded"));
   assert.equal(pack.checks[0]?.id, "pack.unavailable");
   assert.match(pack.checks[0]?.remediation ?? "", /npm pack --dry-run --json/);
+  const secret = releaseTruthFailure("pack", new Error("AETHER_TOKEN=secret-value Bearer abc.def"));
+  assert.doesNotMatch(JSON.stringify(secret), /secret-value|abc\.def/);
 });

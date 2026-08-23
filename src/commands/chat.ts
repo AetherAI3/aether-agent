@@ -23,7 +23,7 @@ import { renderInputView } from "../ui/input_render.js";
 import { decodeKey, splitKeys } from "../ui/keys.js";
 import { ThinkingPulse } from "../ui/thinking.js";
 import { registerRestore } from "../ui/restore.js";
-import { completeSlash } from "./slash_registry.js";
+import { completeManifestSlash } from "./command_manifest.js";
 // history_store.ts (origin/main's own persistence + AETHER_NO_HISTORY opt-out)
 // supersedes the old readline-backed ./history.js — see chat.ts's resolution
 // report for why that file is now dead code pending a cleanup pass.
@@ -922,7 +922,7 @@ async function repl(ctx: AppContext, skillOpts: TurnSkillOptions = {}): Promise<
           if (busy) return;
           const v = buf.value;
           if (v.startsWith("/") && !/\s/.test(v) && buf.pos === [...v].length) {
-            const r = completeSlash(v);
+            const r = completeManifestSlash(v);
             if (r.completed) {
               buf.clear();
               buf.insert(r.completed);

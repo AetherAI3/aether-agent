@@ -13,9 +13,9 @@ to npm are founder-owned and are listed at the end, unrun.
 | Release commit | the merge commit of this repair PR into `main` — **re-run the candidate on it before tagging** (§6.2) |
 | Last packet-embedded candidate | `fb96ee44b03f37a386954a32412728fa7e98a046` (ancestor of #96; final-head evidence belongs on the PR and must be re-run after merge) |
 | Tarball | `aether-agents-0.3.0.tgz` |
-| Tarball sha256 | `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` |
-| Tarball size | 739,977 bytes packed / 3,022,168 unpacked |
-| Packed entries | 575 |
+| Tarball sha256 | **PENDING exact-head candidate** |
+| Tarball size | 745,950 bytes packed / 3,055,776 unpacked |
+| Packed entries | 578 |
 
 ## 1. Semantic version decision
 
@@ -131,7 +131,7 @@ PASS     release-tests — 4 release test files, exit 0
 NOT-RUN  npm-test — NOT RUN here — the full suite is release.yml's gate.
                     This report says nothing about it.
 PASS     verify-production — {"ok":true,"package":"aether-agents","version":"0.3.0",
-                             "packedFiles":575,"packedBytes":3022168,"workflows":3}
+                             "packedFiles":578,"packedBytes":3055776,"workflows":4}
 PASS     pack — aether-agents-0.3.0.tgz
                 sha256:70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d
 PASS     install-tarball — <prefix>/node_modules/aether-agents
@@ -191,7 +191,7 @@ catch a dropped feature, because it does not know what the notes promised.
 
 ### Packaged file manifest
 
-575 entries, 3,022,168 bytes unpacked. Five files at the package root, everything
+578 entries, 3,055,776 bytes unpacked. Five files at the package root, everything
 else under `dist/src/` — the allowlist is `dist/src` plus four documents, and
 nothing else reaches a user.
 

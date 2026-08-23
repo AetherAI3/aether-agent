@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync }
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { deterministicRepositoryEvidence, releaseTruthFromRepository } from "./release-truth.js";
 
 interface PackageManifest {
   name?: unknown;
@@ -254,6 +255,17 @@ export function verifyProduction(root: string, expectedTag?: string): {
     ...validateManifest(manifest, expectedTag),
     ...validatePack(pack, manifest),
   ];
+  const truthEvidence = deterministicRepositoryEvidence();
+  truthEvidence.registry = {
+    state: "not_applicable",
+    reason: "deterministic package verification does not use the network; release:truth performs the live npm host probe",
+  };
+  const releaseTruth = releaseTruthFromRepository(root, pack.files.map((file) => file.path), truthEvidence);
+  if (!releaseTruth.ok) {
+    for (const item of releaseTruth.checks.filter((check) => check.status === "fail" || check.status === "unavailable")) {
+      errors.push(`release truth ${item.id}: ${item.summary}; ${item.remediation}`);
+    }
+  }
 
   const workflowDir = join(root, ".github", "workflows");
   const workflowNames = readdirSync(workflowDir).filter((name) => /\.ya?ml$/i.test(name));

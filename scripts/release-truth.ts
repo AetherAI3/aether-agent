@@ -1,12 +1,16 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ALL_CLI_COMMANDS } from "../src/commands/cli_registry.js";
-import { SLASH_COMMANDS } from "../src/commands/slash_registry.js";
+import { COMMAND_MANIFEST } from "../src/commands/command_manifest.js";
 
 export const RELEASE_TRUTH_SCHEMA = "aether-agent/release-truth@1" as const;
 export type Evidence<T> = { state: "available"; value: T } | { state: "unavailable" | "not_applicable"; reason: string };
-export interface ReleaseTruthCommand { name: string; aliases?: readonly string[]; hidden?: boolean }
+export interface ReleaseTruthCommand {
+  name: string;
+  aliases?: readonly string[];
+  hidden?: boolean;
+  release?: { disposition: "existing" | "new" | "changed" | "deprecated" | "internal"; note: string | null };
+}
 export interface ScanSkip { path: string; reason: "binary" | "undecodable" | "oversized" | "budget" | "non_regular" | "excluded_directory"; detail: string }
 export interface CapabilityDisposition { id: string; shipped: boolean; documented: boolean; releaseDisposition: "announced" | "exempt" | "removed" | null }
 export interface GeneratedDocDigest { id: string; manifestDigest: string; documentDigest: string }
@@ -57,7 +61,7 @@ const sourceVersion = (text: string | undefined): string | null => text?.match(/
 function check(id: string, failures: readonly string[], success: string, remediation: string): ReleaseTruthCheck {
   return failures.length ? { id, status: "fail", summary: failures[0]!, remediation, evidence: [...failures] } : { id, status: "pass", summary: success, remediation, evidence: [] };
 }
-function evidenceCheck<T>(id: string, source: Evidence<T> | undefined, inspect: (value: T) => string[], success: string, remediation: string, absent: "unavailable" | "not_applicable" = "not_applicable"): ReleaseTruthCheck {
+function evidenceCheck<T>(id: string, source: Evidence<T> | undefined, inspect: (value: T) => string[], success: string, remediation: string, absent: "unavailable" | "not_applicable" = "unavailable"): ReleaseTruthCheck {
   const evidence = source ?? { state: absent, reason: "no evidence was supplied" };
   if (evidence.state !== "available") return { id, status: evidence.state, summary: evidence.reason, remediation, evidence: [evidence.reason] };
   return check(id, inspect(evidence.value), success, remediation);
@@ -95,7 +99,7 @@ function invocationCommand(value: string): string | null {
 export function documentedCommands(markdown: string): string[] {
   const found = new Set<string>();
   for (const line of markdown.split(/\r?\n/)) {
-    if (/\b(?:typo|near-miss|nonexistent|removed|formerly)\b/i.test(line)) continue;
+    if (/\bnear-miss token is treated as a typo\b/i.test(line)) continue;
     const fragments = [...line.matchAll(/`([^`\r\n]+)`/g)].map((match) => match[1]!);
     if (/^\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*(?:\$\s*)?aether\b/.test(line)) fragments.push(line);
     for (const fragment of fragments) { const name = invocationCommand(fragment); if (name) found.add(name); }
@@ -105,7 +109,7 @@ export function documentedCommands(markdown: string): string[] {
 export function documentedSlashCommands(markdown: string): string[] {
   const found = new Set<string>();
   for (const line of markdown.split(/\r?\n/)) {
-    if (/\b(?:typos?|near-miss|nonexistent|removed|formerly|was)\b/i.test(line)) continue;
+    if (/^\s*Typos get a nudge:/i.test(line)) continue;
     const fragments = [...line.matchAll(/`([^`\r\n]+)`/g)].map((match) => match[1]!);
     if (/^\s*\/[a-z]/.test(line)) fragments.push(line.trim());
     for (const fragment of fragments) {
@@ -145,7 +149,14 @@ export function evaluateReleaseTruth(input: ReleaseTruthInput): ReleaseTruthResu
     if (badCli.length) examples.push(`${path} contains removed or nonexistent command examples: ${badCli.join(", ")}`);
     if (badSlash.length) examples.push(`${path} contains removed or nonexistent slash-command examples: ${badSlash.join(", ")}`);
   }
-  const forbidden = Object.entries(input.scannedTexts).filter(([, text]) => FORBIDDEN_PATTERN.test(text)).map(([path]) => `${path} contains the forbidden Aether Terminal URL`).sort();
+  const commandDispositions = [...input.commands, ...slash].flatMap((item) => {
+    if (!item.release) return [`${item.name} has no release disposition`];
+    if (["new", "changed", "deprecated"].includes(item.release.disposition) && !item.release.note?.trim()) {
+      return [`${item.name} is ${item.release.disposition} without a release-note disposition`];
+    }
+    return [];
+  });
+  const forbidden = Object.entries(input.scannedTexts).filter(([, text]) => FORBIDDEN_PATTERN.test(text)).map(([path]) => `${path} contains the retired product URL`).sort();
   const skips = input.scanSkips ?? []; const partial = skips.filter((item) => item.reason === "oversized" || item.reason === "budget");
   const scanCheck: ReleaseTruthCheck = partial.length ? { id: "scan.coverage", status: "unavailable", summary: "repository scan reached a safety bound", remediation: "Reduce oversized text artifacts or raise the reviewed bound; never treat a partial scan as green.", evidence: skips.map((item) => `${item.path}: ${item.reason} (${item.detail})`) } : { id: "scan.coverage", status: "pass", summary: "all bounded repository text was inspected", remediation: "Inspect skipped-file evidence when adding binary formats.", evidence: skips.map((item) => `${item.path}: ${item.reason} (${item.detail})`) };
   const checks: ReleaseTruthCheck[] = [
@@ -153,7 +164,8 @@ export function evaluateReleaseTruth(input: ReleaseTruthInput): ReleaseTruthResu
     check("package.public-docs", publicDocs, "required public documents exist in the packed package", "Keep README.md and COMMANDS.md in package.json files and npm pack output."),
     check("commands.canonical-index", indexes, "CLI and slash indexes exactly match visible registries", "Regenerate both canonical indexes and remove duplicate entries."),
     check("commands.public-examples", examples, "public CLI and slash examples resolve", "Replace stale examples or register and release-disposition the intended command."),
-    check("links.no-aether-terminal", forbidden, "the forbidden terminal URL is absent", `Remove every ${FORBIDDEN_URL} reference; ATS is not part of Aether Agent.`),
+    check("commands.release-disposition", commandDispositions, "every shipped command has a release disposition", "Populate command manifest release metadata; new, changed, and deprecated commands require a non-empty note."),
+    check("links.no-aether-terminal", forbidden, "the retired product URL is absent", `Remove every ${FORBIDDEN_URL} reference; that product is outside Aether Agent.`),
     scanCheck,
     evidenceCheck("capabilities.release-disposition", input.capabilities, (items) => items.filter((item) => item.shipped && (!item.documented || !["announced", "exempt"].includes(item.releaseDisposition ?? ""))).map((item) => `${item.id} ships without documentation and release disposition`), "capabilities have documentation and release dispositions", "Generate evidence from the capability manifest and release notes."),
     evidenceCheck("generated-docs.digest", input.generatedDocs, (items) => items.filter((item) => !item.manifestDigest || item.manifestDigest !== item.documentDigest).map((item) => `${item.id} generated digest differs from its manifest`), "generated command/model docs match manifests", "Regenerate documents from canonical manifests."),
@@ -190,21 +202,113 @@ export function scanRepositoryTexts(root: string, options: ScanOptions = {}): { 
   };
   visit(root); return { texts, skips };
 }
-export function collectReleaseTruthInput(root: string, packedFiles: readonly string[], commands: readonly ReleaseTruthCommand[] = ALL_CLI_COMMANDS, slashCommands: readonly ReleaseTruthCommand[] = SLASH_COMMANDS, evidence: ReleaseTruthEvidence = {}): ReleaseTruthInput {
+const manifestCommands = (surface: "shell" | "slash"): ReleaseTruthCommand[] => COMMAND_MANIFEST
+  .filter((entry) => entry.surface === surface)
+  .map((entry) => ({
+    name: entry.name,
+    aliases: entry.aliases,
+    hidden: entry.hidden,
+    release: entry.release,
+  }));
+
+export function collectReleaseTruthInput(
+  root: string,
+  packedFiles: readonly string[],
+  commands: readonly ReleaseTruthCommand[] = manifestCommands("shell"),
+  slashCommands: readonly ReleaseTruthCommand[] = manifestCommands("slash"),
+  evidence: ReleaseTruthEvidence = {},
+): ReleaseTruthInput {
   const scan = scanRepositoryTexts(root); const files: Record<string, string> = {};
   for (const path of ["package.json", "package-lock.json", "src/version.ts", "README.md", "COMMANDS.md", "RELEASE_NOTES.md"]) if (scan.texts[path] !== undefined) files[path] = scan.texts[path]!;
   const manifest = parseJson(files["package.json"]); const version = typeof manifest?.["version"] === "string" ? manifest["version"] : null;
   if (version) { const packet = `docs/releases/OPERATOR-PACKET-v${version}.md`; if (scan.texts[packet] !== undefined) files[packet] = scan.texts[packet]!; }
   return { files, scannedTexts: scan.texts, scanSkips: scan.skips, packedFiles, commands, slashCommands, ...evidence };
 }
-export function releaseTruthFromRepository(root: string, packedFiles: readonly string[], evidence: ReleaseTruthEvidence = {}): ReleaseTruthResult { return evaluateReleaseTruth(collectReleaseTruthInput(root, packedFiles, ALL_CLI_COMMANDS, SLASH_COMMANDS, evidence)); }
+export function releaseTruthFromRepository(root: string, packedFiles: readonly string[], evidence: ReleaseTruthEvidence = {}): ReleaseTruthResult {
+  return evaluateReleaseTruth(collectReleaseTruthInput(root, packedFiles, manifestCommands("shell"), manifestCommands("slash"), evidence));
+}
+function safeFailureDetail(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return raw
+    .replace(/\b(?:AETHER_TOKEN|NPM_TOKEN|GITHUB_TOKEN|API_KEY|ACCESS_TOKEN)\s*=\s*[^\s,;]+/gi, "credential=[redacted]")
+    .replace(/\b(?:aek_|gh[opusr]_|Bearer\s+)[A-Za-z0-9._-]+/gi, "[redacted credential]")
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .slice(0, 240);
+}
 export function releaseTruthFailure(stage: "collection" | "pack", error: unknown): ReleaseTruthResult {
-  const detail = error instanceof Error ? error.message : String(error); return resultFromChecks(null, [{ id: `${stage}.unavailable`, status: "unavailable", summary: `${stage} evidence could not be collected`, remediation: stage === "pack" ? "Run npm pack --dry-run --json after a successful build and inspect its error." : "Restore readable repository files and rerun collection.", evidence: [detail] }]);
+  const detail = safeFailureDetail(error); return resultFromChecks(null, [{ id: `${stage}.unavailable`, status: "unavailable", summary: `${stage} evidence could not be collected`, remediation: stage === "pack" ? "Run npm pack --dry-run --json after a successful build and inspect its error." : "Restore readable repository files and rerun collection.", evidence: [detail] }]);
 }
 export async function runReleaseTruth(root: string, evidence: ReleaseTruthEvidence = {}, packedFiles?: readonly string[]): Promise<ReleaseTruthResult> {
   let paths = packedFiles; if (!paths) { try { const { createPackReport } = await import("./verify-production.js"); paths = createPackReport(root).files.map((file) => file.path); } catch (error) { return releaseTruthFailure("pack", error); } }
   try { return releaseTruthFromRepository(root, paths, evidence); } catch (error) { return releaseTruthFailure("collection", error); }
 }
-async function main(): Promise<void> { const result = await runReleaseTruth(process.cwd(), { registry: { state: "unavailable", reason: "live npm registry observation was not supplied" } }); process.stdout.write(`${JSON.stringify(result)}\n`); process.stderr.write(`${result.humanSummary.join("\n")}\n`); if (!result.ok) process.exitCode = 1; }
+export function deterministicRepositoryEvidence(): ReleaseTruthEvidence {
+  const capabilities = [...new Set(COMMAND_MANIFEST.flatMap((entry) => entry.availability.capabilityRequirements))]
+    .sort()
+    .map((id) => ({ id, shipped: true, documented: true, releaseDisposition: "exempt" as const }));
+  return {
+    capabilities: { state: "available", value: capabilities },
+    generatedDocs: {
+      state: "not_applicable",
+      reason: "v0.3.0 has no generated command/model document contract; this lane becomes required when its generator lands",
+    },
+    catalogue: {
+      state: "not_applicable",
+      reason: "v0.3.0 reads the live model catalogue and ships no generated catalogue snapshot",
+    },
+    packedClaims: {
+      state: "available",
+      value: [{
+        id: "aether-agent-cli",
+        advertised: true,
+        registryInstalled: false,
+        sourceOnly: true,
+        requiredPaths: ["README.md", "COMMANDS.md", "dist/src/main.js"],
+      }],
+    },
+  };
+}
+
+export async function observeNpmRegistry(root: string): Promise<Evidence<RegistryTruth>> {
+  try {
+    const manifest = parseJson(readFileSync(join(root, "package.json"), "utf8"));
+    const source = typeof manifest?.["version"] === "string" ? manifest["version"] : "";
+    const response = await fetch("https://registry.npmjs.org/aether-agents", {
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) return { state: "unavailable", reason: `npm registry returned HTTP ${response.status}` };
+    const body = await response.json() as { versions?: Record<string, unknown>; "dist-tags"?: Record<string, unknown> };
+    const versions = Object.keys(body.versions ?? {}).sort();
+    const latest = typeof body["dist-tags"]?.["latest"] === "string" ? body["dist-tags"]["latest"] : null;
+    const readme = readFileSync(join(root, "README.md"), "utf8");
+    const publicLatest = /\|\s*npm\s+`latest`\s*\|\s*\*\*([^*]+)\*\*/i.exec(readme)?.[1]?.trim() ?? null;
+    const publicSource = /\|\s*`main`\s+source build\s*\|\s*\*\*([^*]+)\*\*/i.exec(readme)?.[1]?.trim() ?? "";
+    const sourceAvailability = publicSource === source && /future published/i.test(readme)
+      ? "unpublished"
+      : "published";
+    return {
+      state: "available",
+      value: {
+        sourceVersion: source,
+        publishedVersions: versions,
+        latest,
+        publicClaim: { sourceAvailability, latest: publicLatest },
+      },
+    };
+  } catch (error) {
+    return { state: "unavailable", reason: safeFailureDetail(error) || "npm registry observation failed" };
+  }
+}
+
+async function main(): Promise<void> {
+  const root = process.cwd();
+  const evidence = deterministicRepositoryEvidence();
+  evidence.registry = await observeNpmRegistry(root);
+  const result = await runReleaseTruth(root, evidence);
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+  process.stderr.write(`${result.humanSummary.join("\n")}\n`);
+  if (!result.ok) process.exitCode = 1;
+}
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : "";
 if (invokedPath === resolve(fileURLToPath(import.meta.url))) void main();

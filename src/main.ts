@@ -5,6 +5,8 @@
 
 import { parseArgs } from "node:util";
 import { createInterface } from "node:readline";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "./core/config.js";
 import { tokenStoreFromEnv } from "./core/auth.js";
 import { ApiClient } from "./core/transport.js";
@@ -24,9 +26,14 @@ import { cmdVault } from "./commands/vault.js";
 import { cmdWorkflow } from "./commands/workflow.js";
 import { cmdImage, cmdVideo } from "./commands/media.js";
 import { cmdOutput } from "./commands/output.js";
-import { ALL_CLI_COMMANDS, CLI_PARSE_OPTIONS, findDispatchedCliCommand, renderCliHelp } from "./commands/cli_registry.js";
+import { findDispatchedCliCommand } from "./commands/cli_registry.js";
+import {
+  COMMAND_PARSE_OPTIONS,
+  manifestCommandNames,
+  renderManifestHelp,
+  suggestManifestCommand,
+} from "./commands/command_manifest.js";
 import { commandFlags } from "./core/command_dispatch.js";
-import { commandNames, suggestRegisteredCommand } from "./core/command_registry.js";
 
 /** Coerce a parsed flag value to string | undefined. */
 const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
@@ -35,7 +42,7 @@ const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : unde
 // registry and the dispatch table (cli_registry.ts) — the same registries the
 // dispatch is cross-checked against — so this can never drift from the actual
 // dispatched subcommands.
-const TOP_LEVEL_COMMAND_NAMES = commandNames(ALL_CLI_COMMANDS);
+const TOP_LEVEL_COMMAND_NAMES = manifestCommandNames("shell");
 
 /**
  * Suggestion for a lone bare token at the top level (`aether auht`). Exact
@@ -46,17 +53,17 @@ const TOP_LEVEL_COMMAND_NAMES = commandNames(ALL_CLI_COMMANDS);
 function suggestTopLevel(token: string): string | null {
   if (TOP_LEVEL_COMMAND_NAMES.includes(token)) return null;
   const max = token.length <= 5 ? 1 : 2;
-  return suggestRegisteredCommand(token, TOP_LEVEL_COMMAND_NAMES, max);
+  return suggestManifestCommand("shell", token, max);
 }
 
-async function main(argv: string[]): Promise<number> {
+export async function main(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
     strict: false,
     // Globals plus every dispatch-table command's flags — one flat namespace,
     // validated for collisions at registry load (cli_registry.ts).
-    options: CLI_PARSE_OPTIONS,
+    options: COMMAND_PARSE_OPTIONS,
   });
 
   if (values["version"]) {
@@ -66,7 +73,7 @@ async function main(argv: string[]): Promise<number> {
   const cmd = positionals[0];
   if (values["help"] || cmd === "help") {
     const target = cmd === "help" ? positionals[1] : cmd;
-    process.stdout.write(renderCliHelp(target));
+    process.stdout.write(renderManifestHelp("shell", target));
     return 0;
   }
 
@@ -264,9 +271,12 @@ function finish(code: number): void {
   setTimeout(() => process.exit(code), 2000).unref();
 }
 
-main(process.argv.slice(2))
-  .then(finish)
-  .catch((err) => {
-    process.stderr.write(`\n${errTheme.red("✗")} ${err instanceof Error ? err.message : String(err)}\n`);
-    finish(1);
-  });
+const invokedPath = process.argv[1] ? resolve(process.argv[1]) : "";
+if (invokedPath === resolve(fileURLToPath(import.meta.url))) {
+  main(process.argv.slice(2))
+    .then(finish)
+    .catch((err) => {
+      process.stderr.write(`\n${errTheme.red("✗")} ${err instanceof Error ? err.message : String(err)}\n`);
+      finish(1);
+    });
+}

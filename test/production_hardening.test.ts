@@ -111,7 +111,10 @@ test("production verifier installs and launches the exact packed CLI", { timeout
   const result = verifyProduction(process.cwd(), `v${expected}`);
   assert.equal(result.package, "aether-agents");
   assert.equal(result.version, expected);
-  assert.equal(result.workflows, 3);
+  assert.equal(
+    result.workflows,
+    readdirSync(join(process.cwd(), ".github", "workflows")).filter((entry) => /\.ya?ml$/i.test(entry)).length,
+  );
   assert.ok(result.packedFiles > 0);
   assert.ok(result.packedBytes > 0);
 });

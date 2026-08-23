@@ -34,6 +34,7 @@
     "test": "npm run build && node --test --test-isolation=none \"dist/test/**/*.test.js\"",
     "smoke": "npm run build && node -e \"import('./dist/src/core/smoke.js').then(m=>m.smokeMain()).then(c=>process.exit(c)).catch(e=>{console.error(e);process.exit(1)})\"",
     "verify:production": "npm run build && node dist/scripts/verify-production.js",
+    "release:truth": "npm run build && node dist/scripts/release-truth.js",
     "release:candidate": "npm run build && node dist/scripts/release-candidate.js",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "prepack": "npm run build",

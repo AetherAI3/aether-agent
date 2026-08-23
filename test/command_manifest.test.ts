@@ -5,8 +5,9 @@ import type { FlagTable } from "../src/core/command_dispatch.js";
 import { ALL_CLI_COMMANDS, DISPATCH_COMMANDS, GLOBAL_FLAGS } from "../src/commands/cli_registry.js";
 import { SLASH_COMMANDS, findCommand as findSlashCommand } from "../src/commands/slash_registry.js";
 import {
-  COMMAND_MANIFEST, COMMAND_RUNTIME_LOADERS, createCommandManifest, findManifestCommand,
-  manifestCommandNames, projectLegacyCommandSpecs, validateCommandManifest, type CommandManifestEntry,
+  COMMAND_MANIFEST, COMMAND_PARSE_OPTIONS, COMMAND_RUNTIME_LOADERS, completeManifestSlash,
+  createCommandManifest, findManifestCommand, manifestCommandNames, projectLegacyCommandSpecs,
+  renderManifestHelp, suggestManifestCommand, validateCommandManifest, type CommandManifestEntry,
 } from "../src/commands/command_manifest.js";
 
 test("adapter preserves registries and additive old-client projections", () => {
@@ -50,7 +51,8 @@ test("public manifest is JSON-safe and runtime loaders stay separate", () => {
     assert.equal(COMMAND_RUNTIME_LOADERS.get(entry.key), command.load);
     assert.deepEqual(entry.ownedFlags, command.flags ?? {});
   }
-  assert.deepEqual(findManifestCommand("shell", "agent")?.ownedFlags, {});
+  assert.ok(findManifestCommand("shell", "agent")?.acceptedGlobalFlags.includes("local"));
+  assert.deepEqual(COMMAND_PARSE_OPTIONS["local"], GLOBAL_FLAGS["local"]);
 });
 
 const shellFixture: CommandSpec[] = [
@@ -114,4 +116,18 @@ test("validator detects product, alias, docs, and release metadata drift", () =>
 test("production manifest validates with the real global flag namespace", () => {
   assert.ok(COMMAND_MANIFEST.length > 0);
   assert.deepEqual(validateCommandManifest(COMMAND_MANIFEST, { reservedShellFlags: GLOBAL_FLAGS }), []);
+});
+
+test("the executable parser, help, completion, and suggestions project from the manifest", () => {
+  assert.match(renderManifestHelp("shell"), /aether agent/);
+  assert.match(renderManifestHelp("slash", "model"), /Usage: \/model/);
+  assert.equal(completeManifestSlash("/mod").matches.includes("model"), true);
+  assert.equal(suggestManifestCommand("shell", "aut", 1), "auth");
+  assert.equal(COMMAND_PARSE_OPTIONS["only"]?.multiple, true);
+});
+
+test("an invalid additive surface returns errors instead of throwing", () => {
+  const invalid = { ...fixture()[0]!, surface: "future" as "shell", key: "shell:alpha" as const };
+  assert.doesNotThrow(() => validateCommandManifest([invalid]));
+  assert.ok(validateCommandManifest([invalid]).some((error) => error.includes("invalid surface")));
 });
