@@ -1,5 +1,5 @@
 <!-- GENERATED FILE: run `npm run docs:generate`; do not edit by hand. -->
-<!-- manifest-digest: sha256:87a518a769a47012dc2f4a9c592354c2ac43c9c11d6ae146a07866161160b62e -->
+<!-- manifest-digest: sha256:7689d5ef78ef461df489bfe2da2973eb2870120568ee5f8ef3640b3ed0760927 -->
 # Generated command reference
 
 This reference is generated from the validated runtime command manifest. Availability is evaluated at runtime; a listed command may still require authentication, a hosted capability, or local tooling.
@@ -53,6 +53,32 @@ Permission: `read-only` · Availability: `runtime-dependent` · Telemetry: `shel
 list available orchestrators
 
 Permission: `read-only` · Availability: `runtime-dependent` · Telemetry: `shell.agents` · Requires: `aether.hosted`
+
+#### `aether exec [flags] "task"`
+
+run the local coding agent over versioned JSONL
+
+Permission: `local-write` · Availability: `runtime-dependent` · Telemetry: `shell.exec` · Requires: `aether.local-child`, `aether.headless.v1`
+
+Command flags:
+
+- `--permission <value>`
+- `--allow-tool <value>…`
+- `--capability-pack <value>…`
+- `--timeout-ms <value>`
+- `--exec-driver <value>`
+
+#### `aether setup --local`
+
+diagnose bounded local Ollama setup without changing configuration
+
+Permission: `read-only` · Availability: `runtime-dependent` · Telemetry: `shell.setup` · Requires: `ollama.local`
+
+#### `aether local doctor|models|use <model>|pull <model>`
+
+diagnose and explicitly manage the local Ollama runtime
+
+Permission: `local-write` · Availability: `runtime-dependent` · Telemetry: `shell.local` · Requires: `ollama.local`
 
 #### `aether sessions [inspect|continue|export|archive|clean] [id]`
 

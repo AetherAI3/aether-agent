@@ -128,7 +128,7 @@ export const DISPATCH_COMMANDS: DispatchedCommand[] = [
   },
   {
     name: "local",
-    args: "<doctor|models|use <model>|pull <model>>",
+    args: "doctor|models|use <model>|pull <model>",
     summary: "diagnose and explicitly manage the local Ollama runtime",
     section: "Start",
     load: async () => {

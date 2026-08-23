@@ -14,7 +14,8 @@ to npm are founder-owned and are listed at the end, unrun.
 | Historical candidate | `fb96ee44b03f37a386954a32412728fa7e98a046` (PR-local evidence commit; historical only, not reachable from current `main`) |
 | Historical archive | `aether-agents-0.3.0.tgz` — 739,977 bytes packed / 3,022,168 unpacked / 575 entries |
 | Historical archive sha256 | `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` |
-| Current exact-head dry run | 597 entries / 3,163,953 unpacked bytes / 4 workflows |
+| Current exact-head dry run | 603 entries / 3,216,462 unpacked bytes / 4 workflows |
+| Current dry-run predicted packed size | 780,868 bytes (inventory estimate; no archive was created) |
 | Current archive | **PENDING — no exact-head archive has been produced** |
 | Current archive sha256 | **PENDING — record only after producing that archive** |
 
@@ -77,7 +78,7 @@ survived beside its 575-entry header. The current product-spine integration
 worktree includes later release-truth, command-manifest, and bounded local/Ollama
 lanes on top of that historical range. Those commits are not silently folded
 into the old 28-commit count: review the actual merge-base-to-HEAD range. The
-current tree has a 597-entry dry-run inventory, but no matching archive. Any lane that lands before
+current tree has a 603-entry dry-run inventory, but no matching archive. Any lane that lands before
 the tag is created moves the evidence again — which is why step 2 of §6 re-runs
 the candidate on the merge commit rather than trusting a historical digest.
 `test/release_coherence.test.ts` fails the build if a
@@ -130,12 +131,13 @@ setup fix cycle; they do not describe an archive. This packet does not embed a
 supposed self-referential commit id: committing the packet changes that id.
 The archive digest and installed-CLI proof come from the **historical candidate**
 at `fb96ee44b03f37a386954a32412728fa7e98a046`; they do not describe the current
-597-entry tree. Neither substitutes for the post-merge run required by §6.2.
+603-entry tree. Neither substitutes for the post-merge run required by §6.2.
 
 ### Current integration dry-run
 
-On the integration tree, `verify:production` exited 0 and reported 597 entries,
-3,163,953 unpacked bytes, and 4 workflows. This was an
+On the integration tree, `verify:production` exited 0 and reported 603 entries,
+3,216,462 unpacked bytes, and 4 workflows; the matching dry-run JSON predicted
+780,868 packed bytes. This was an
 `npm pack --dry-run` inventory. It did not produce `aether-agents-0.3.0.tgz`, so
 the current archive size and sha256 are pending rather than borrowed from an
 older candidate.
@@ -227,7 +229,7 @@ catch a dropped feature, because it does not know what the notes promised.
 
 ### Current dry-run packaged file manifest
 
-The exact-head dry run reported 597 entries and 3,163,953 bytes unpacked. Five
+The exact-head dry run reported 603 entries and 3,216,462 bytes unpacked. Five
 files are at the package root, four generated public documents are under `docs/`,
 and everything else is under `dist/src/`. This is an inventory prediction, not
 a statement that a current archive exists.
@@ -236,14 +238,14 @@ a statement that a current archive exists.
 |---|---:|
 | `COMMANDS.md`, `LICENSE`, `NOTICE.md`, `README.md`, `package.json` | 5 |
 | `docs/generated/**`, `docs/model-catalogue/**` | 4 |
-| `dist/src/core/**` | 315 |
+| `dist/src/core/**` | 318 |
 | `dist/src/ui/**` | 117 |
-| `dist/src/commands/**` | 123 |
+| `dist/src/commands/**` | 126 |
 | `dist/src/skills/**` (six built-in skills) | 18 |
 | `dist/src/generated/**` | 3 |
 | `dist/src/{index,main,types,version}.*` | 12 |
 
-By extension: 190 `.js`, 190 `.d.ts`, 190 `.js.map`, 14 `.json`, 11 `.md`, 1
+By extension: 192 `.js`, 192 `.d.ts`, 192 `.js.map`, 14 `.json`, 11 `.md`, 1
 `.html`, 1 extensionless. Source maps ship, as they did in 0.1.0; that is
 existing policy, unchanged by this release.
 
@@ -355,7 +357,7 @@ Named as unproven rather than omitted:
   something this tag fixes.
 - **A current exact-head archive or digest.** The current evidence is a dry-run
   inventory only. The `70a48aca…` digest belongs to the historical 575-entry
-  candidate and must not be compared as though it described the 597-entry tree.
+  candidate and must not be compared as though it described the 603-entry tree.
 - **Reproducibility of an archive digest across machines.** Once the exact-head
   archive exists, its digest is a machine reading to compare with CI, not a
   promise that another machine must produce byte-identical gzip bytes.
