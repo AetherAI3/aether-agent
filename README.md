@@ -21,21 +21,35 @@ agent finishes. The same TypeScript host drives the hosted and Ollama paths; the
 selected brain changes, but workspace checks, tool execution, review, session, and
 verification code remain local.
 
-This README documents the current `main` branch. The npm package installs the
-registry's current `latest` release, which can lag `main`. Check the installed
-version with `aether --version` and use [release notes](RELEASE_NOTES.md) for its
-feature set. A source feature is not claimed as published merely because it is on
-`main`.
+## Published package versus current source
+
+These are different product surfaces today:
+
+| Install | Version | Safe starting point |
+|---|---:|---|
+| npm `latest` | **0.1.0** | Published baseline: sign in, inspect models, and use chat. |
+| `main` source build | **0.3.0** | The coding, Ollama, doctor repair, handoff, review, session, skill, and ship workflows documented below. |
+
+> **Check before continuing:** npm `latest` currently resolves to **0.1.0**. That
+> build does not contain the source-only workflows in this README. Use the source
+> build below, or wait until `aether --version` reports a published **0.3.x**
+> release, before following any section labeled “source 0.3.0.”
+
+This split is backed by the committed [0.3.0 release record](docs/releases/2026-08-22.md):
+`main` is 0.3.0, while the last recorded npm `latest` is 0.1.0. Publishing is an
+owner-controlled operation, so source presence is not registry availability.
 
 ## Install
 
 Node.js 24 or newer is required.
 
-Install the latest release currently published on npm:
+Install the current published npm baseline:
 
 ```bash
 npm install -g aether-agents@latest --ignore-scripts
-aether --version
+aether --version # expected from npm latest today: 0.1.0
+aether auth login
+aether chat "hello"
 ```
 
 To run the current source instead:
@@ -53,7 +67,13 @@ The source repository is
 feature requests in its [issue tracker](https://github.com/AetherAI3/aether-agent/issues).
 The package is [`aether-agents`](https://www.npmjs.com/package/aether-agents).
 
-## Choose how to run
+<!-- SOURCE-0.3-WORKFLOWS:START -->
+
+> **Requires the 0.3.0 source build above, or a future published 0.3.x release.**
+> A clean npm `latest` install still reports 0.1.0 and does not have the complete
+> command/flag surface used below.
+
+## Choose how to run — source 0.3.0
 
 ### Hosted Aether account
 
@@ -76,11 +96,18 @@ copied into a hand-maintained table here.
 
 ### Fully local Ollama, no Aether account
 
-Install [Ollama](https://ollama.com/), then start its server and pull the CLI's
-default local model:
+Install [Ollama](https://ollama.com/) and keep it running. On Windows and macOS,
+launch the Ollama app first; it normally owns the background server. On a headless
+machine, `ollama serve` stays in the foreground, so run it by itself in terminal 1:
 
 ```bash
 ollama serve
+```
+
+Wait until Ollama is ready. In terminal 2 (PowerShell, Command Prompt, or a POSIX
+shell), pull the CLI's default local model and start the agent:
+
+```bash
 ollama pull qwen2.5-coder:7b
 aether agent --local --test-cmd "npm test" "fix the failing test"
 ```
@@ -91,7 +118,7 @@ talks directly to the configured Ollama endpoint (by default
 point elsewhere, so "local" describes the selected backend, not a guarantee about a
 user-supplied remote Ollama URL.
 
-## A sixty-second proof
+## A sixty-second proof — source 0.3.0
 
 From a git repository, give the agent a small task and an explicit verification
 command:
@@ -129,7 +156,7 @@ requires the explicit `--approve publish` authority; `--yes` alone is insufficie
 - **Capabilities stay visible.** `aether capabilities` reports the runtime contract;
   `aether skills` manages capability-scoped skill discovery and trust.
 
-## Setup and diagnosis
+## Setup and diagnosis — source 0.3.0
 
 ```bash
 aether doctor
@@ -142,7 +169,7 @@ services. Repair mode is limited to the doctor's registered repairs; preview it 
 `--dry-run` before approving changes. Run `aether doctor --help` for the current
 flags and checks.
 
-## Essential commands
+## Essential commands — source 0.3.0
 
 | Command | Purpose |
 |---|---|
@@ -162,6 +189,8 @@ flags and checks.
 Use `aether help`, `aether help <command>`, or the complete
 [command reference](COMMANDS.md) for the complete surface. The README intentionally
 keeps only the main path.
+
+<!-- SOURCE-0.3-WORKFLOWS:END -->
 
 ## Security and runtime boundaries
 

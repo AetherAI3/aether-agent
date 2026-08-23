@@ -3,11 +3,12 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ALL_CLI_COMMANDS } from "../src/commands/cli_registry.js";
+import { ALL_CLI_COMMANDS, CLI_PARSE_OPTIONS } from "../src/commands/cli_registry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
 const readme = readFileSync(join(root, "README.md"), "utf8");
+const releaseTruth = readFileSync(join(root, "docs", "releases", "2026-08-22.md"), "utf8");
 
 function repositoryFiles(dir: string): string[] {
   const files: string[] = [];
@@ -51,14 +52,108 @@ test("README has durable assets and canonical public repository URLs", () => {
   }
 });
 
-test("README shell examples name registered commands", () => {
+interface ShellWord {
+  value: string;
+  quoted: boolean;
+}
+
+function shellWords(line: string): ShellWord[] {
+  const words: ShellWord[] = [];
+  let value = "";
+  let quote = "";
+  let quoted = false;
+  const push = (): void => {
+    if (value) words.push({ value, quoted });
+    value = "";
+    quoted = false;
+  };
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i]!;
+    if (!quote && char === "#" && !value) break;
+    if (!quote && (char === "'" || char === '"')) {
+      quote = char;
+      quoted = true;
+    } else if (quote && char === quote) {
+      quote = "";
+    } else if (!quote && /\s/.test(char)) {
+      push();
+    } else {
+      value += char;
+    }
+  }
+  push();
+  return words;
+}
+
+function shellAetherInvocations(markdown: string): Array<{ words: ShellWord[]; offset: number }> {
+  const invocations: Array<{ words: ShellWord[]; offset: number }> = [];
+  const fences = /```(?:bash|sh|shell|powershell|pwsh|cmd)\s*\r?\n([\s\S]*?)```/gi;
+  for (const fence of markdown.matchAll(fences)) {
+    const body = fence[1]!;
+    let lineOffset = fence.index!;
+    for (const line of body.split(/\r?\n/)) {
+      const words = shellWords(line.trimStart().replace(/^(?:\$|>)\s*/, ""));
+      if (words[0]?.value === "aether") invocations.push({ words, offset: lineOffset });
+      lineOffset += line.length + 1;
+    }
+  }
+  return invocations;
+}
+
+test("README names the committed published and source versions without registry access", () => {
+  const registryVersion = /registry served exactly one\s+version of\s+`[^`]+`[^`\n]*`([^`]+)`/i.exec(
+    releaseTruth,
+  )?.[1];
+  const latestVersion = /dist-tags\.latest`? resolved to\s*\r?\n?`([^`]+)`/i.exec(releaseTruth)?.[1];
+  assert.ok(registryVersion && latestVersion, "committed release truth has no parseable npm availability record");
+  assert.equal(registryVersion, latestVersion, "committed registry version and latest dist-tag disagree");
+  const publishedVersion = latestVersion;
+  const sourceVersion = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }).version;
+  assert.notEqual(sourceVersion, publishedVersion, "this guard is only needed while source is ahead of npm latest");
+  const tick = String.fromCharCode(96);
+  assert.ok(readme.includes(`| npm ${tick}latest${tick} | **${publishedVersion}** |`));
+  assert.ok(readme.includes(`| ${tick}main${tick} source build | **${sourceVersion}** |`));
+
+  const sourceStart = readme.indexOf("<!-- SOURCE-0.3-WORKFLOWS:START -->");
+  const sourceEnd = readme.indexOf("<!-- SOURCE-0.3-WORKFLOWS:END -->");
+  assert.ok(sourceStart >= 0 && sourceEnd > sourceStart, "README source-only scope markers are missing");
+  const sourceScope = readme.slice(sourceStart, sourceEnd);
+  assert.match(sourceScope, new RegExp(`Requires the ${sourceVersion.replaceAll(".", "\\.")} source build`));
+  assert.match(sourceScope, /future published 0\.3\.x release/);
+});
+
+test("README fenced shell examples use registered commands and flags", () => {
   const registered = new Set<string>();
   for (const command of ALL_CLI_COMMANDS) {
     registered.add(command.name);
     for (const alias of command.aliases ?? []) registered.add(alias);
   }
+  const shortFlags = new Set(
+    Object.values(CLI_PARSE_OPTIONS).flatMap((flag) => (flag.short ? [flag.short] : [])),
+  );
+  const sourceStart = readme.indexOf("<!-- SOURCE-0.3-WORKFLOWS:START -->");
+  const sourceEnd = readme.indexOf("<!-- SOURCE-0.3-WORKFLOWS:END -->");
+  const sourceOnlyCommands = new Set(["review", "ship", "sessions", "skills", "capabilities", "support-bundle"]);
+  const sourceOnlyFlags = new Set(["local", "test-cmd", "resume", "live", "fix", "dry-run"]);
+  const publishedExamples = new Set(["auth", "chat", "models"]);
 
-  for (const match of readme.matchAll(/^\s*aether\s+([a-z][a-z-]*)\b/gm)) {
-    assert.ok(registered.has(match[1]!), `README names an unregistered command: ${match[1]}`);
+  for (const invocation of shellAetherInvocations(readme)) {
+    const inSourceScope = invocation.offset > sourceStart && invocation.offset < sourceEnd;
+    let command: string | undefined;
+    for (const word of invocation.words.slice(1)) {
+      const long = !word.quoted ? /^--([a-z][a-z0-9-]*)(?:=.*)?$/.exec(word.value) : null;
+      const short = !word.quoted ? /^-([A-Za-z])$/.exec(word.value) : null;
+      if (long) {
+        assert.ok(CLI_PARSE_OPTIONS[long[1]!], `README uses an unregistered flag: ${word.value}`);
+        if (sourceOnlyFlags.has(long[1]!)) assert.ok(inSourceScope, `${word.value} is advertised to npm 0.1.0 users`);
+      } else if (short) {
+        assert.ok(shortFlags.has(short[1]!), `README uses an unregistered short flag: ${word.value}`);
+      } else if (!command && !word.quoted) {
+        command = word.value;
+        assert.ok(registered.has(command), `README names an unregistered command: ${command}`);
+        if (sourceOnlyCommands.has(command)) assert.ok(inSourceScope, `${command} is advertised to npm 0.1.0 users`);
+        if (!inSourceScope) assert.ok(publishedExamples.has(command), `${command} is outside the source-only scope`);
+      }
+    }
   }
 });
