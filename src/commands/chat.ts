@@ -38,6 +38,8 @@ import { HostRenderer } from "../ui/host_render.js";
 import type { TaskCommand } from "../core/brain.js";
 import { getRegistry } from "../core/context_registry.js";
 import { decideGate } from "../core/autonomy.js";
+import { openRunSession, refusalToolResult } from "../core/skills/run_session.js";
+import type { SkillRefusal } from "../core/skills/skill_errors.js";
 import { renderHud, timerLive } from "../core/hud.js";
 import {
   createViewerState,
@@ -69,6 +71,12 @@ interface ChatJsonResponse {
  *  see resolveBackend below); this is how it still signals failure to the
  *  one-shot `cmdChat` path without forcing a boolean-return shape onto every
  *  onFrame call site. */
+/** Session-level skill selection for REPL/one-shot chat turns (`--skill`, `--no-skills`). */
+export interface TurnSkillOptions {
+  explicitSkill?: string;
+  noSkills?: boolean;
+}
+
 export class ChatTurnError extends Error {
   constructor(msg: string) {
     super(msg);
@@ -105,22 +113,79 @@ export async function runTurn(
   signal?: AbortSignal,
   onFrame?: (f: StreamFrame) => void,
   onPulsePaint?: () => void,
+  skillOpts: TurnSkillOptions = {},
 ): Promise<void> {
   const backend = await resolveBackend(ctx);
+  // The same seam `aether agent` uses (commands/code.ts). Opened per turn, not
+  // per session, because automatic skill selection reads THIS prompt — a turn
+  // that says "the CI is failing" should pull the CI skill and the next one
+  // should not inherit it.
+  const opened = openRunSession({
+    projectRoot: ctx.flags.cwd,
+    prompt,
+    ...(skillOpts.explicitSkill ? { explicitSkill: skillOpts.explicitSkill } : {}),
+    ...(skillOpts.noSkills ? { noSkills: true } : {}),
+  });
+  if (!opened.ok) {
+    // Painted here, then thrown as a ChatTurnError — the caller's contract is
+    // that a ChatTurnError has already been rendered (see cmdChat), so this
+    // must not be left for printError to duplicate.
+    for (const line of opened.lines) process.stderr.write(errTheme.red(line) + "\n");
+    throw new ChatTurnError(opened.refusal.code + ": " + opened.refusal.detail);
+  }
+  const run = opened.run;
+  // Only say something when something was loaded, and only when it CHANGED.
+  // A REPL re-opens its run session every turn (automatic selection reads the
+  // prompt), so reprinting an identical five-line header on every turn would
+  // bury the answers it sits above. A change — a skill matched, a rules file
+  // was edited mid-session — still prints, which is the case worth seeing.
+  // A notice is the whole point of this header: an untrusted skill, a manifest
+  // that would not index, a rules file dropped for an unparsable scope. Those
+  // can all occur with NOTHING composed — no rules, no skill body, zero context
+  // tokens — so gating the header on composed size alone silently swallowed
+  // exactly the cases the header exists to report.
+  if (run.contextTokens > 0 || run.session.notices.length > 0 || run.hasWarnings) {
+    const header = run.headerLines.join("\n");
+    if (header !== lastTurnHeader) {
+      lastTurnHeader = header;
+      for (const line of run.headerLines) process.stderr.write(errTheme.dim("  " + line) + "\n");
+    }
+  } else {
+    lastTurnHeader = null;
+  }
+  const brief = run.brief(prompt);
+
   if (backend === "local") {
     // Aether meters nothing on a local brain, so the session is unmetered
     // rather than "zero spend so far".
     getRegistry().markLocalUnmetered();
     // The signal used to be dropped here, so the REPL Ctrl+C controller could
     // not reach a local turn at all: the abort fired and nothing observed it.
-    await runLocalTurn(ctx, prompt, signal);
+    await runLocalTurn(ctx, brief, signal, {}, run.guard);
     return;
   }
-  await runCloudTurn(ctx, prompt, signal, onFrame, onPulsePaint);
+  // The cloud REPL turn streams from /agent/chat/stream, where the SERVER runs
+  // the tools. This host executes nothing on that path, so it can enforce
+  // nothing on it either. Say so rather than let the Policy line above read as
+  // a guarantee it is not: a narrowing the host cannot check is not in force.
+  if (run.policies.length > 0) {
+    process.stderr.write(
+      errTheme.dim(
+        "  " +
+          "Policy".padEnd(10) +
+          "! NOT ENFORCED on this turn — a cloud chat turn runs its tools server-side, " +
+          "so the host cannot refuse them. Use `aether agent` for a host-enforced run.",
+      ) + "\n",
+    );
+  }
+  await runCloudTurn(ctx, brief, signal, onFrame, onPulsePaint);
 }
 
 /** Monotonic per-process turn id, so a settled turn can be recognised on replay. */
 let cloudTurnCounter = 0;
+
+/** Last skill/rules header printed, so an unchanged one is not reprinted per turn. */
+let lastTurnHeader: string | null = null;
 
 /** The cloud path — build an envelope, POST to the universal stream, render.
  * Extracted so runTurn can fork local vs cloud. */
@@ -237,6 +302,7 @@ export async function runLocalTurn(
   prompt: string,
   signal?: AbortSignal,
   deps: LocalTurnDeps = {},
+  skillGuard?: (tool: string) => SkillRefusal | null,
 ): Promise<void> {
   const cwd = ctx.flags.cwd;
   const brain = deps.brain ?? new OllamaBrain(ctx.flags.model ? { model: ctx.flags.model } : {});
@@ -277,12 +343,21 @@ export async function runLocalTurn(
       if (ev.type === "error") sawError = ev.msg;
       if (ev.type === "done" && !ev.ok) sawError = ev.result || ev.reason || "turn did not complete";
       if (ev.type === "tool_call") {
-        // executeAsync so the two web tools (web_search/web_fetch) work too.
-        const approved = await approveTool(ev.name, ev.args);
-        const result = approved
-          ? await exec.executeAsync(ev.name, ev.args)
-          : { output: `[tool ${ev.name} blocked: permission denied]`, exitCode: 1 };
-        brain.sendToolResult(ev.id, result);
+        // Same ordering as hostLoop (commands/code.ts): the skill narrowing is
+        // checked first and refuses without executing or prompting; the
+        // operator gate then decides about whatever survived. A skill can only
+        // subtract here — it is never consulted again after this line.
+        const refusal = skillGuard ? skillGuard(ev.name) : null;
+        if (refusal) {
+          brain.sendToolResult(ev.id, refusalToolResult(refusal));
+        } else {
+          // executeAsync so the two web tools (web_search/web_fetch) work too.
+          const approved = await approveTool(ev.name, ev.args);
+          const result = approved
+            ? await exec.executeAsync(ev.name, ev.args)
+            : { output: `[tool ${ev.name} blocked: permission denied]`, exitCode: 1 };
+          brain.sendToolResult(ev.id, result);
+        }
       }
     }
   } finally {
@@ -368,10 +443,14 @@ function previewLine(s: string): string {
 // tail lands in the same chunk), and holding it would delay it forever.
 const PARTIAL_ESC_RE = /\x1b(?:\[[0-9;:<=>?]*[ -/]*|O|\])$/;
 
-export async function cmdChat(ctx: AppContext, prompt: string): Promise<number> {
+export async function cmdChat(
+  ctx: AppContext,
+  prompt: string,
+  skillOpts: TurnSkillOptions = {},
+): Promise<number> {
   if (prompt.trim()) {
     try {
-      await runTurn(ctx, prompt);
+      await runTurn(ctx, prompt, undefined, undefined, undefined, skillOpts);
       return 0;
     } catch (err) {
       // ChatTurnError: the Renderer already painted "✗ <msg>" for the
@@ -380,10 +459,12 @@ export async function cmdChat(ctx: AppContext, prompt: string): Promise<number> 
       return 1;
     }
   }
-  return repl(ctx);
+  return repl(ctx, skillOpts);
 }
 
-async function repl(ctx: AppContext): Promise<number> {
+// skillOpts is session-level (`--skill` / `--no-skills` on the launching
+// command): every turn in this REPL opens its run session with it.
+async function repl(ctx: AppContext, skillOpts: TurnSkillOptions = {}): Promise<number> {
   const username = userInfo().username || "you";
   const model = ctx.flags.model ?? ctx.cfg.defaultModel ?? "auto";
   process.stdout.write(
@@ -398,7 +479,7 @@ async function repl(ctx: AppContext): Promise<number> {
   const where = backend === "local" ? "local Ollama (offline)" : "cloud (Aether API)";
   process.stdout.write(theme.dim(`backend: ${where}`) + "\n");
   process.stdout.write("Type a prompt, or /help for commands. /exit to quit.\n\n");
-  if (!process.stdin.isTTY) return replLines(ctx);
+  if (!process.stdin.isTTY) return replLines(ctx, skillOpts);
   void primeCatalog(ctx); // non-blocking warm; first /models is then instant
 
   const buf = new InputBuffer();
@@ -560,7 +641,7 @@ async function repl(ctx: AppContext): Promise<number> {
               viewerOpen = false;
               break;
           }
-        }, redrawInput);
+        }, redrawInput, skillOpts);
         return false;
       } catch (err) {
         if (isAbortError(err)) {
@@ -964,7 +1045,7 @@ async function repl(ctx: AppContext): Promise<number> {
  *  Ctrl+C to cancel the current turn/slash-command rather than killing the
  *  whole process (a bare non-TTY session, e.g. `ssh host aether`, still gets
  *  SIGINT delivered normally since readline isn't in terminal mode here). */
-async function replLines(ctx: AppContext): Promise<number> {
+async function replLines(ctx: AppContext, skillOpts: TurnSkillOptions = {}): Promise<number> {
   const rl = createInterface({ input: process.stdin });
   const p = promptPrefix(userInfo().username || "you");
   let inflight: AbortController | null = null;
@@ -1001,7 +1082,7 @@ async function replLines(ctx: AppContext): Promise<number> {
     inflight = new AbortController();
     let printed = false; // printError already ends with a blank line
     try {
-      await runTurn(ctx, t, inflight.signal);
+      await runTurn(ctx, t, inflight.signal, undefined, undefined, skillOpts);
     } catch (err) {
       if (isAbortError(err)) {
         process.stderr.write("\n" + errTheme.dim("✗ canceled — turn discarded") + "\n");

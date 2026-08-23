@@ -9,6 +9,7 @@
 //   manifest.json  {sessionId, task, model, poolGb, brain, started, ended, finalStatus, ...}
 
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import type { SessionContext } from "./session_resume.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { BrainEvent } from "./brain_protocol.js";
@@ -110,6 +111,8 @@ export interface SessionMeta {
   /** The command the verify gate runs for this session. Recorded so a handoff
    *  can tell the next machine how this work is checked. */
   testCmd?: string;
+  /** The rules and skills this run was conducted under (digests, never content). */
+  context?: SessionContext;
 }
 
 export class SessionLog {
@@ -232,6 +235,9 @@ export class SessionLog {
           brain: this.meta.brain,
           cwd: normalizeWorkspace(this.meta.cwd),
           ...(this.meta.testCmd ? { testCmd: redactInline(this.meta.testCmd) } : {}),
+          // Digests and paths only. Instruction and skill bodies are the
+          // project's prose and never belong in a session directory.
+          ...(this.meta.context ? { context: this.meta.context } : {}),
           started: this.started,
           ended: end?.ended ?? null,
           finalStatus: end?.finalStatus ?? "running",

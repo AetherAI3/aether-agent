@@ -8,6 +8,33 @@ import { logsRoot, monologueLine } from "./session_log.js";
 import { decodeEvent, type BrainEvent } from "./brain_protocol.js";
 import { isCurrentWorkspace, resolveOpaqueChild } from "./workspace_scope.js";
 
+/**
+ * Which rules and skills a session actually ran under.
+ *
+ * Recorded so a resume can tell that they MOVED. A session id names a
+ * conversation; it does not name the instructions that conversation was
+ * conducted under, and those live in files anyone can edit between two runs.
+ * Digests only — never instruction or skill CONTENT, which would put a
+ * project's prose into every session directory on disk.
+ */
+export interface SessionContext {
+  skills: Array<{
+    id: string;
+    version: string;
+    /** "sha256:<hex>" of the skill package as loaded. */
+    digest: string;
+    invocation: string;
+    trust: string;
+    lock: string;
+  }>;
+  /** Display paths of the instruction sources that governed the run. */
+  instructionSources: string[];
+  /** One digest over the whole ordered instruction graph. */
+  instructionGraphDigest: string;
+  /** "topic=effective" for each conflict the run resolved. */
+  conflicts: string[];
+}
+
 export interface SessionManifest {
   sessionId: string;
   task: string;
@@ -21,6 +48,8 @@ export interface SessionManifest {
   remaining?: number;
   /** The command this session's verify gate ran, when one was named. */
   testCmd?: string;
+  /** The rules and skills the run was conducted under. */
+  context?: SessionContext;
 }
 
 export interface LoadedSession {
