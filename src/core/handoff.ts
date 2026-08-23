@@ -31,25 +31,21 @@
 import type { BrainEvent } from "./brain_protocol.js";
 import { decodeEvent } from "./brain_protocol.js";
 import { atomicWriteFile, readJsonFile } from "./durable_store.js";
+import type { SessionContext } from "./session_resume.js";
 import { loadSession, replayLines, type LoadedSession } from "./session_resume.js";
-import { logsRoot } from "./session_log.js";
+import { logsRoot, repoFrom, type RepoIdentity } from "./session_log.js";
 import { requireOpaqueId } from "./workspace_scope.js";
-import type { RunResult, Runner } from "./worktree.js";
+import type { SessionIndexEntry } from "./session_index.js";
 import { clipCodePoints } from "../ui/theme.js";
 import { sanitizeTerm } from "../ui/text.js";
 
 export const HANDOFF_SCHEMA_VERSION = 1;
 export const HANDOFF_KIND = "aether-agent-handoff";
 
-/** Where the work lives, expressed so it survives the trip to another machine. */
-export interface HandoffRepo {
-  /** `git remote get-url origin`, when there is one. */
-  remote?: string;
-  /** Branch the prior run ended on. */
-  branch?: string;
-  /** HEAD sha at export time — recorded for provenance; nothing reads it yet. */
-  head?: string;
-}
+/** Where the work lives, expressed so it survives the trip to another machine.
+ *  The same record the session manifest stores — one shape with one spelling,
+ *  so a handoff and a library row cannot describe a repository differently. */
+export type HandoffRepo = RepoIdentity;
 
 export interface Handoff {
   schemaVersion: number;
@@ -73,7 +69,19 @@ export interface Handoff {
   filesTouched: string[];
   /** The command the verify gate ran, when the prior run named one. */
   testCmd?: string;
+  /**
+   * The rules and skills the prior run was conducted under. Digests, never
+   * content: a handoff crosses machines, and a project's prose is not ours to
+   * carry. What travels is enough to tell the receiving machine whether it is
+   * about to continue the work under DIFFERENT instructions.
+   */
+  context?: SessionContext;
 }
+
+/** Bounds for the context record. A handoff is untrusted input on the way in. */
+const MAX_CONTEXT_SKILLS = 16;
+const MAX_CONTEXT_SOURCES = 24;
+const MAX_CONTEXT_CONFLICTS = 24;
 
 /** Highlights are a summary, not a transcript — these bounds keep it one. */
 const MAX_HIGHLIGHTS = 40;
@@ -133,33 +141,11 @@ export function summarizeEvents(events: Array<Record<string, unknown>>): {
   return { highlights, filesTouched: [...files] };
 }
 
-/** Assemble a repo record, dropping empty fields. `undefined` when nothing is
- *  known — the shape is built in two places (probe and parse), so it is one
- *  rule here rather than two spellings that can drift. */
-function repoFrom(remote?: string, branch?: string, head?: string): HandoffRepo | undefined {
-  if (!remote && !branch && !head) return undefined;
-  return { ...(remote && { remote }), ...(branch && { branch }), ...(head && { head }) };
-}
-
-/** Read the repository identity of `cwd`. Every probe is best-effort — a plain
- *  directory with no git in it yields nothing, never an error. */
-export function readRepoIdentity(cwd: string, run: Runner): HandoffRepo | undefined {
-  const value = (args: string[]): string | undefined => {
-    let r: RunResult;
-    try {
-      r = run("git", args, cwd);
-    } catch {
-      return undefined;
-    }
-    const out = r.stdout.trim();
-    return r.status === 0 && out ? out : undefined;
-  };
-  return repoFrom(
-    value(["remote", "get-url", "origin"]),
-    value(["rev-parse", "--abbrev-ref", "HEAD"]),
-    value(["rev-parse", "HEAD"]),
-  );
-}
+// repoFrom / readRepoIdentity moved to session_log.ts, which is where the
+// identity is now STORED (it goes into the manifest at close, so the library
+// can say which branch a session belonged to). Re-exported here because a
+// handoff carries the same record and this is where callers look for it.
+export { readRepoIdentity } from "./session_log.js";
 
 export interface BuildHandoffOptions {
   repo?: HandoffRepo | undefined;
@@ -187,7 +173,52 @@ export function buildHandoff(session: LoadedSession, opts: BuildHandoffOptions =
     highlights,
     filesTouched,
     ...(testCmd ? { testCmd } : {}),
+    ...(m.context ? { context: m.context } : {}),
   };
+}
+
+/**
+ * Validate the context record out of an untrusted handoff. Anything that is not
+ * a well-formed entry is DROPPED rather than half-read: a skill row with no
+ * digest cannot be compared against anything, so keeping it would put a value
+ * in the resume comparison that means nothing.
+ */
+function contextFrom(value: unknown): SessionContext | undefined {
+  const body = asObject(value);
+  if (!body) return undefined;
+  const list = (key: string, max: number): string[] =>
+    Array.isArray(body[key])
+      ? (body[key] as unknown[]).filter((v): v is string => typeof v === "string").slice(0, max).map((v) => clip(v))
+      : [];
+  const rawSkills = Array.isArray(body["skills"]) ? (body["skills"] as unknown[]) : [];
+  const skills = rawSkills
+    .slice(0, MAX_CONTEXT_SKILLS)
+    .map((entry) => asObject(entry))
+    .filter((entry): entry is Record<string, unknown> => entry != null)
+    .map((entry) => ({
+      id: typeof entry["id"] === "string" ? clip(entry["id"]) : "",
+      version: typeof entry["version"] === "string" ? clip(entry["version"]) : "",
+      digest: typeof entry["digest"] === "string" ? clip(entry["digest"]) : "",
+      invocation: typeof entry["invocation"] === "string" ? clip(entry["invocation"]) : "",
+      trust: typeof entry["trust"] === "string" ? clip(entry["trust"]) : "",
+      lock: typeof entry["lock"] === "string" ? clip(entry["lock"]) : "",
+    }))
+    .filter((entry) => entry.id !== "" && entry.digest !== "");
+  const instructionGraphDigest =
+    typeof body["instructionGraphDigest"] === "string" ? clip(body["instructionGraphDigest"]) : "";
+  const context: SessionContext = {
+    skills,
+    instructionSources: list("instructionSources", MAX_CONTEXT_SOURCES),
+    instructionGraphDigest,
+    conflicts: list("conflicts", MAX_CONTEXT_CONFLICTS),
+  };
+  // An entirely empty record carries no information and must not be mistaken
+  // for "the prior run had no rules and no skills" — that is what an ABSENT
+  // record means, and the two lead to different resume decisions.
+  if (!context.skills.length && !context.instructionSources.length && !context.instructionGraphDigest) {
+    return undefined;
+  }
+  return context;
 }
 
 /** A plain JSON object, or undefined for null/array/primitive. */
@@ -228,6 +259,7 @@ export function parseHandoff(value: unknown): Handoff {
   const identity = repoFrom(field(repo, "remote"), field(repo, "branch"), field(repo, "head"));
   const remaining = body["remaining"];
   const testCmd = str("testCmd");
+  const context = contextFrom(body["context"]);
   return {
     schemaVersion,
     kind: HANDOFF_KIND,
@@ -245,6 +277,7 @@ export function parseHandoff(value: unknown): Handoff {
     highlights: strings("highlights").slice(-MAX_HIGHLIGHTS).map((h) => clip(h)),
     filesTouched: strings("filesTouched").slice(0, MAX_FILES).map((f) => clip(f)),
     ...(testCmd ? { testCmd } : {}),
+    ...(context ? { context } : {}),
   };
 }
 
@@ -368,4 +401,39 @@ export function resumeReplayLines(resolved: ResolvedResume, ref: string): string
   if (resolved.session) return replayLines(resolved.session.events);
   const h = resolved.handoff;
   return [`⇄ continuing ${h.sessionId} (${h.finalStatus}) from ${ref}`, ...h.highlights.map((l) => "  " + l)];
+}
+
+/**
+ * Project a handoff onto a library row so the SAME Project Continuity header
+ * renders for an imported handoff as for a local session.
+ *
+ * The one field a handoff cannot supply is the workspace: it is deliberately
+ * not keyed to an absolute path — that is what makes it portable — so the row
+ * carries the empty string and callers render it with `kind: "handoff"` and no
+ * continuity state rather than inventing a checkout for it.
+ */
+export function handoffEntry(h: Handoff): SessionIndexEntry {
+  return {
+    sessionId: h.sessionId,
+    workspace: "",
+    workspaceFingerprint: "",
+    task: h.task,
+    model: h.model,
+    brain: h.brain,
+    started: h.started,
+    ended: h.ended,
+    finalStatus: h.finalStatus,
+    ...(h.remaining != null && h.remaining > 0 ? { remaining: h.remaining } : {}),
+    ...(h.testCmd ? { testCmd: h.testCmd } : {}),
+    ...(h.repo?.remote ? { repoRemote: h.repo.remote } : {}),
+    ...(h.repo?.branch ? { branch: h.repo.branch } : {}),
+    ...(h.repo?.head ? { headRev: h.repo.head } : {}),
+    // The handoff carries the actual paths, so the count is exact — UNTIL it
+    // hits the bound. `summarizeEvents` stops adding at MAX_FILES and
+    // `parseHandoff` slices to it again, so a run that wrote 200 files arrives
+    // carrying 60. Reporting "60" there would be a confident wrong number, and
+    // this library's rule is that a number nobody can vouch for is omitted:
+    // at the bound the count is left absent and renders as "unknown".
+    ...(h.filesTouched.length < MAX_FILES ? { filesTouched: h.filesTouched.length } : {}),
+  };
 }

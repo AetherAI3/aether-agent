@@ -14,14 +14,14 @@ aether                                  # no args = interactive REPL
 <!-- Registry markers are checked against the declarative command registries. -->
 
 <!-- CLI-COMMANDS:START -->
-`help`, `agent`, `chat`, `resume`, `run`, `models`, `agents`, `auth`,
+`help`, `agent`, `chat`, `resume`, `sessions`, `run`, `review`, `ship`, `models`, `agents`, `auth`,
 `github`, `vault`, `workflow`, `memory`, `skills`, `capabilities`, `image`,
 `video`, `output`, `audit`, `receipt`, `doctor`, `support-bundle`, `mcp`,
 `config`
 <!-- CLI-COMMANDS:END -->
 
 <!-- SLASH-COMMANDS:START -->
-`help`, `models`, `model`, `agent`, `agents`, `tier`, `audit`, `effort`, `doctor`, `clear`, `exit`, `mcp`, `autonomous-execution`, `subagent-driven-execution`, `self-review`, `recon`, `plan`, `research`, `review`, `code-review`, `writing-skills`, `writing-plans`, `queue`, `steer`, `btw`, `pin`, `drop`, `snapshot`, `limit`, `audit-receipt`, `rollback`, `logs-view`, `goal`, `goals`, `memory`, `workflow`, `workflow-templates`, `workflow-template`, `vault`, `vault-context`, `vault-search`, `vault-recent`, `vault-project`, `vault-tag`, `vault-tree`, `delegate`, `tree`, `broadcast`, `gather`, `scaffold`, `port`, `test-drive`, `bench`, `purge`, `stage-diff`, `revert`, `photogen`, `frame`, `re-frame`, `videogen`, `sequence`, `animate`, `re-cut`, `output`, `storyboard`, `add`, `hud`
+`help`, `models`, `model`, `agent`, `agents`, `tier`, `audit`, `effort`, `doctor`, `clear`, `exit`, `mcp`, `autonomous-execution`, `subagent-driven-execution`, `self-review`, `recon`, `plan`, `research`, `project-review`, `code-review`, `writing-skills`, `writing-plans`, `queue`, `steer`, `btw`, `pin`, `drop`, `snapshot`, `limit`, `audit-receipt`, `rollback`, `logs-view`, `goal`, `goals`, `memory`, `workflow`, `workflow-templates`, `workflow-template`, `vault`, `vault-context`, `vault-search`, `vault-recent`, `vault-project`, `vault-tag`, `vault-tree`, `delegate`, `tree`, `broadcast`, `gather`, `scaffold`, `port`, `test-drive`, `bench`, `purge`, `stage-diff`, `review`, `ship`, `revert`, `photogen`, `frame`, `re-frame`, `videogen`, `sequence`, `animate`, `re-cut`, `output`, `storyboard`, `add`, `hud`
 <!-- SLASH-COMMANDS:END -->
 
 
@@ -82,6 +82,27 @@ Every run ends with a verdict line: `✓ ok · 4 files changed · tests green ·
 | `--interactive` | Pause at each stage boundary to type a steer (TTY only). |
 | `--no-log` | Disable the local session log (`~/.aether-agent/logs`). |
 | `--swarm <N>` | N-agent swarm (gated; local-only; refuses at runtime — see `commands/code.ts`). |
+| `--skill <id>` | Load this skill for the run (id, short name, or command alias) and **apply its tool policy** — the host refuses any tool the skill does not declare. |
+| `--no-skills` | Load no skill. The project's own `AGENTS.md` still applies — it is not a skill. |
+
+Before the run starts, the agent prints what it loaded and what it will enforce:
+
+```
+Project   my-service
+Rules     src/AGENTS.md + AGENTS.md
+Skills    aether/fix-ci@1.0.0 (explicit · builtin · trust builtin · sha256:8efbda8eb35b)
+Context   706 tokens (measured, not estimated from a manifest)
+Policy    read_file · run_tests · repo_search  — 3 of 8 host tools, enforced for every tool this host executes
+Conflict  test command — effective "pytest -q" (nested src/AGENTS.md has higher precedence)
+            also declared: "npm test" (AGENTS.md)
+```
+
+A skill can only ever **narrow** what a run may do; nothing in a skill manifest
+or an instruction file can grant authority the session did not already hold, and
+the operator permission gate still runs on everything the narrowing leaves. A
+skill matched *automatically* from a trigger phrase contributes its instructions
+but never its policy — only a skill you name with `--skill` narrows.
+Both flags work on `aether chat` and the REPL too.
 
 ### `aether run <neo|kronus> "<task>"` — orchestrator
 Hands a multi-step task to an orchestrator, which plans, fans out sub-agents,
@@ -121,6 +142,54 @@ instruction — you never re-paste the conversation. See
 > Local-first: sessions are read from disk, so resume works offline. When you stop
 > a coding run with Ctrl-C, the exact `aether agent --resume <id>` command is printed.
 > A session id is workspace-scoped; a handoff file deliberately is not.
+
+### `aether sessions [...]` — the project session library
+
+Everything the agent has done in this project, and what can still be done with
+it. Reads a small index beside the session logs, so listing costs one file read
+however long your history is — it never opens a transcript.
+
+```bash
+aether sessions                        # this project's sessions, newest first
+aether sessions --all                  # every project on this machine
+aether sessions --json                 # machine-readable rows + continuity state
+aether sessions inspect <id>           # one session in full
+aether sessions continue <id>          # what it was, and the exact next command
+aether sessions export <id>            # write the portable handoff
+aether sessions archive <id>           # hide it from the default list
+aether sessions archive <id> --undo    # bring it back
+aether sessions clean                  # drop index rows whose session is gone
+aether resume list                     # the same listing, from the older command
+aether resume <file.json>              # show an imported handoff, not a local session
+```
+
+On a terminal, `aether sessions` opens an arrow-key picker (`/` filters, Enter
+inspects, Esc/q leaves); `--no-select` gives the flat table instead, and a pipe
+or `--json` always does. Piped output is tab-separated with a fixed field order
+(`SESSION STARTED STATUS STATE BRAIN MODEL FILES_WRITTEN BRANCH TASK`); a TTY gets a
+padded table.
+
+**Where a session can be continued** is computed, not assumed. A session id is
+scoped to the absolute working directory it ran in, so the listing labels each
+row: `ready`, `stale-branch` (this checkout moved to another branch),
+`moved` (same repository, different checkout), `elsewhere` (another project),
+`missing` (the directory is not on this disk), `archived`. A session that
+cannot be continued here is refused with the reason and pointed at
+`aether sessions export`, which is the form that crosses machines.
+
+**Unknown is never rendered as zero.** A file count nobody recorded prints as
+`unknown`, not `0`. A run whose manifest never closed prints as *never
+finished — running or interrupted, unknown which*, because nothing on this
+machine can tell those apart. A branch the record does not name is not assumed
+to be the branch you are on now. Pull-request state is not recorded by this
+build at all, and says so rather than reading as "no PR".
+
+**Nothing here deletes your work.** `archive` sets a flag; the session log,
+worktree and branch are untouched, and `--undo` reverses it. Archiving a
+session whose record never closed says so before asking. `clean` removes only
+index rows that point at sessions already gone from disk, after printing every
+row it will remove, and it is refusable. Neither command touches a worktree, a
+branch, or a file a run wrote.
 
 ### `aether models [use <id>]` — list / pick a model
 - `aether models` — list every model **and** orchestrator visible to your tier.
@@ -335,7 +404,7 @@ Each starts an agent loop in the REPL.
 | `/plan <topic>` | Write an implementation plan. |
 | `/writing-plans <topic>` | Write a plan to `.hermes/plans/`. |
 | `/research <topic>` | Research → gather → summarize. |
-| `/review` | Full project review + summary. |
+| `/project-review` | Full project review + summary. (Was `/review`; that name is now the change-review rail below.) |
 | `/code-review` | Sweep: clean up + simplify. |
 | `/writing-skills` | Author reusable skills. |
 
@@ -408,6 +477,8 @@ Requires an active orchestrator — switch with `/agent neo` or `/agent kronus` 
 | `/bench <target>` | Profile a function/endpoint and suggest optimizations (requires an active orchestrator). |
 | `/purge` | Flush pinned files, temp files, and the UVT cap back to a lean baseline. |
 | `/stage-diff` | Unified diff of uncommitted changes + a suggested commit message. |
+| `/review [stage|unstage|revert|commit|diff|verify]` | See what changed, pick files or hunks, stage, revert and commit. |
+| `/ship` | Publish the reviewed branch and open a pull request. |
 | `/revert <file\|step>` | Surgical rollback of a single file (git-backed). |
 
 ### Media

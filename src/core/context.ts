@@ -19,6 +19,16 @@ export interface GlobalFlags {
   cwd: string;
   /** Explicit offline agent selection (--local); cloud memory must stay disabled. */
   local?: boolean;
+  /** Widen a listing past the current workspace (--all). Global rather than one
+   *  command's, because several commands already answer to that spelling — the
+   *  dispatch table cannot hand it to any single one of them without changing
+   *  what it means for the others. */
+  all?: boolean;
+  /** Output path (--out) for the commands that write a file. Global for the
+   *  same reason as --all. */
+  out?: string;
+  /** The verification command (--test-cmd), handed to the VerifyRunner. */
+  testCmd?: string;
 }
 
 export interface AppContext {

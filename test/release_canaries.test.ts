@@ -10,7 +10,7 @@
 //   2 live-child cancel      test/process_tree.test.ts  (whole tree, by pid)
 //   3 reconnect replay       HERE
 //   4 remote freshness       test/worktree.test.ts      (real git, pinned base)
-//   5 fake-gh ship           test/ship_rail.test.ts     (argv asserted, #86)
+//   5 fake-gh ship           test/ship_rail.test.ts + test/review_ship_e2e.test.ts
 //   6 cap across reconnect   HERE
 //   7 brain parity           test/brain_parity.test.ts  (injectable seam, #87)
 //
@@ -117,19 +117,38 @@ test("canary 6b: an unmeasured session is never reported as capped", () => {
   assert.equal(reg.usageStatus(), "unknown");
 });
 
+// ── Canary 5 — fake-gh ship. WRITTEN. ───────────────────────────────────────
+//
+// It used to say: "There is no PR-creation path to exercise. repo.ts's
+// prCreateHint returns a STRING for the user to run; no subprocess ever invokes
+// `gh pr create`." Both halves are now false. `aether ship` / `/ship` invoke it,
+// and the run tail offers it instead of printing it.
+//
+// The canary lives in two files rather than one, split by layer:
+//   test/ship_rail.test.ts       — the argv boundary, fake gh, hostile strings.
+//   test/review_ship_e2e.test.ts — the whole rail through the real command
+//                                  entry points: a real repository, a real bare
+//                                  remote, the refs that actually moved, and
+//                                  the exact `gh pr create` argv.
+
 // ── The map above is enforced, not asserted in prose ────────────────────────
 //
 // Canaries 2, 4, 5 and 7 live in other files. A coverage map that only claims
 // they exist is a comment, and comments do not fail when the file they name is
 // deleted or renamed — which is precisely how the previous version of this
 // header went stale in the other direction.
+// It also went stale in this one: main's closing note still called canary 7
+// unwritable after #87 had landed the injectable parity seam and
+// test/brain_parity.test.ts. Enforcing the map is what stops either kind of
+// untruth from surviving a merge.
 
 test("every canary this file delegates is a real file with real assertions", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const delegated: Array<[string, string]> = [
     ["canary 2 (live-child cancel)", "process_tree.test.js"],
     ["canary 4 (remote freshness)", "worktree.test.js"],
-    ["canary 5 (fake-gh ship)", "ship_rail.test.js"],
+    ["canary 5 (fake-gh ship, argv boundary)", "ship_rail.test.js"],
+    ["canary 5 (fake-gh ship, end to end)", "review_ship_e2e.test.js"],
     ["canary 7 (brain parity)", "brain_parity.test.js"],
   ];
   for (const [canary, file] of delegated) {
