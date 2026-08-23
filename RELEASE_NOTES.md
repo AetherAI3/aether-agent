@@ -21,10 +21,20 @@ either.
 - `aether.hosted-or-local` — `exempt`: an existing runtime requirement, unchanged in this release.
 - `aether.local-child` — `announced`: the new headless driver is deliberately limited to a local brain child process.
 - `aether.headless.v1` — `announced`: versioned JSONL events, controls, permission decisions, receipts, and authoritative verification.
+- `aether.local-preview` — `announced`: the managed preview supervisor accepts declared commands and loopback URLs only.
 - `ollama.local` — `announced`: local setup and Ollama management are explicit command surfaces.
 <!-- CAPABILITY-RELEASE:END -->
 
 ## New
+
+- **Managed localhost previews.** `aether preview start|open|logs|status|stop`
+  and `/preview` run only an explicit argv declaration or
+  `.aether/preview.json`, show the execution and network plan before consent,
+  detect a reachable loopback URL, and use the existing no-shell platform
+  opener. A token-bound local supervisor owns the full process tree, so stale
+  PID files and unrelated processes are never attached to or killed. Headless
+  runs print the URL without claiming a browser opened. This is a separate
+  local capability and does not relax web-fetch SSRF rules.
 
 - **`aether exec` — a local, agent-driven JSONL interface.** It starts the
   packaged Node/Ollama brain child and emits `aether.exec/1` frames with

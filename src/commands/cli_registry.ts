@@ -137,6 +137,24 @@ export const DISPATCH_COMMANDS: DispatchedCommand[] = [
     },
   },
   {
+    name: "preview",
+    args: "start|open|logs|status|stop",
+    summary: "manage an explicitly declared loopback development preview",
+    section: "Start",
+    flags: {
+      command: { type: "string" },
+      arg: { type: "string", multiple: true },
+      "ready-url": { type: "string" },
+      "preview-cwd": { type: "string" },
+      "preview-timeout-ms": { type: "string" },
+      "no-open": { type: "boolean", default: false },
+    },
+    load: async () => {
+      const { cmdPreview, previewOptionsFromFlags } = await import("./preview.js");
+      return (ctx, argv, flags) => cmdPreview(ctx, argv, previewOptionsFromFlags(flags));
+    },
+  },
+  {
     name: "doctor",
     args: "[--live|--fix] [--deep] [--only <id>]",
     summary: "run structured runtime diagnostics",

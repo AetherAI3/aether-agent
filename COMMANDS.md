@@ -18,14 +18,14 @@ aether                                  # no args = interactive REPL
 <!-- Registry markers are checked against the declarative command registries. -->
 
 <!-- CLI-COMMANDS:START -->
-`help`, `agent`, `exec`, `chat`, `resume`, `sessions`, `run`, `review`, `ship`, `setup`, `local`, `models`, `agents`, `auth`,
+`help`, `agent`, `exec`, `chat`, `resume`, `sessions`, `run`, `review`, `ship`, `setup`, `local`, `preview`, `models`, `agents`, `auth`,
 `github`, `vault`, `workflow`, `memory`, `skills`, `capabilities`, `image`,
 `video`, `output`, `audit`, `receipt`, `doctor`, `support-bundle`, `mcp`,
 `config`
 <!-- CLI-COMMANDS:END -->
 
 <!-- SLASH-COMMANDS:START -->
-`help`, `models`, `model`, `agent`, `agents`, `tier`, `audit`, `effort`, `doctor`, `clear`, `exit`, `mcp`, `autonomous-execution`, `subagent-driven-execution`, `self-review`, `recon`, `plan`, `research`, `project-review`, `code-review`, `writing-skills`, `writing-plans`, `queue`, `steer`, `btw`, `pin`, `drop`, `snapshot`, `limit`, `audit-receipt`, `rollback`, `logs-view`, `goal`, `goals`, `memory`, `workflow`, `workflow-templates`, `workflow-template`, `vault`, `vault-context`, `vault-search`, `vault-recent`, `vault-project`, `vault-tag`, `vault-tree`, `delegate`, `tree`, `broadcast`, `gather`, `scaffold`, `port`, `test-drive`, `bench`, `purge`, `stage-diff`, `review`, `ship`, `revert`, `photogen`, `frame`, `re-frame`, `videogen`, `sequence`, `animate`, `re-cut`, `output`, `storyboard`, `add`, `hud`
+`help`, `models`, `model`, `agent`, `agents`, `tier`, `audit`, `effort`, `doctor`, `preview`, `clear`, `exit`, `mcp`, `autonomous-execution`, `subagent-driven-execution`, `self-review`, `recon`, `plan`, `research`, `project-review`, `code-review`, `writing-skills`, `writing-plans`, `queue`, `steer`, `btw`, `pin`, `drop`, `snapshot`, `limit`, `audit-receipt`, `rollback`, `logs-view`, `goal`, `goals`, `memory`, `workflow`, `workflow-templates`, `workflow-template`, `vault`, `vault-context`, `vault-search`, `vault-recent`, `vault-project`, `vault-tag`, `vault-tree`, `delegate`, `tree`, `broadcast`, `gather`, `scaffold`, `port`, `test-drive`, `bench`, `purge`, `stage-diff`, `review`, `ship`, `revert`, `photogen`, `frame`, `re-frame`, `videogen`, `sequence`, `animate`, `re-cut`, `output`, `storyboard`, `add`, `hud`
 <!-- SLASH-COMMANDS:END -->
 
 ## Runtime capability requirements
@@ -40,6 +40,7 @@ notes.
 - `aether.hosted-or-local` — either the hosted runtime or the packaged local fallback.
 - `aether.local-child` — local child-process brain authority; never a remote shell.
 - `aether.headless.v1` — versioned `aether.exec/1` JSONL events and controls.
+- `aether.local-preview` — consent-gated local dev-server supervision and loopback opening.
 - `ollama.local` — a user-operated Ollama endpoint and optional local CLI binary.
 <!-- CAPABILITY-DOCS:END -->
 
@@ -169,6 +170,32 @@ A bare `--model <tag>` is accepted for backward compatibility only when
 `ollama:<tag>` namespace, so a hosted model id cannot silently become an Ollama
 pull/chat tag. Conversely, an `ollama:` id is rejected before any hosted
 request.
+
+### `aether preview <start|open|logs|status|stop>` — managed local preview
+
+`preview start` accepts an argv-only command (`--command` plus repeatable
+`--arg`) or the versioned project declaration `.aether/preview.json`. Before it
+starts anything it prints the exact argv, working directory, inherited
+permissions, and network implications, then requires confirmation or `--yes`.
+The supervisor accepts readiness only from reachable loopback HTTP(S) URLs,
+stores sanitized bounded logs under `.aether/preview/`, and owns the complete
+process tree. `status`, `logs`, and `stop` use a token-bound loopback challenge
+instead of trusting a PID file; an unverifiable stale PID is never signalled.
+
+```json
+{
+  "version": 1,
+  "command": "npm",
+  "args": ["run", "dev"],
+  "cwd": ".",
+  "readyUrl": "http://127.0.0.1:5173"
+}
+```
+
+Use `--no-open` in automation. A headless machine always receives the URL and
+an honest “not opened” result. `/preview start|open|logs|status|stop` uses the
+same project declaration and lifecycle inside the REPL. This local opener is
+separate from web fetching; it does not change the SSRF policy.
 
 ### `aether resume [id | export [id]]` — replay or carry a session
 Replays a prior local coding session's transcript from `~/.aether-agent/logs/`.

@@ -159,6 +159,15 @@ test(
  */
 const FEATURE_MANIFEST: Array<{ claim: string; command?: string; packaged: string[] }> = [
   {
+    claim: "managed localhost previews — `aether preview`",
+    command: "preview",
+    packaged: [
+      "dist/src/commands/preview.js",
+      "dist/src/core/preview_contract.js",
+      "dist/src/core/preview_supervisor.js",
+    ],
+  },
+  {
     claim: "the review → commit → pull request rail — `aether review`",
     command: "review",
     packaged: [

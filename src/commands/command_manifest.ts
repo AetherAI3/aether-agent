@@ -92,6 +92,8 @@ const COMMAND_RELEASE_ENTRIES: ReadonlyArray<readonly [CommandManifestKey, Comma
   }],
   ["shell:setup", { disposition: "new", note: "v0.3.0 adds bounded local setup diagnosis." }],
   ["shell:local", { disposition: "new", note: "v0.3.0 adds explicit Ollama diagnosis and management." }],
+  ["shell:preview", { disposition: "new", note: "v0.3.0 adds a consent-gated, managed loopback preview lifecycle." }],
+  ["slash:preview", { disposition: "new", note: "v0.3.0 adds the same managed preview lifecycle inside the REPL." }],
 ];
 export const COMMAND_RELEASE_CONTRACT: ReadonlyMap<CommandManifestKey, CommandReleaseBinding> =
   new Map(COMMAND_RELEASE_ENTRIES);
@@ -112,11 +114,12 @@ const KNOWN_DOCS_OWNERS: Readonly<Record<CommandSurface, readonly string[]>> = {
 
 const READ_ONLY_COMMANDS = new Set(["help", "models", "agents", "audit", "capabilities", "setup"]);
 const ACCOUNT_COMMANDS = new Set(["auth", "login", "logout", "github"]);
-const LOCAL_WRITE_COMMANDS = new Set(["resume", "sessions", "review", "skills", "memory", "output", "support-bundle", "config", "local"]);
+const LOCAL_WRITE_COMMANDS = new Set(["resume", "sessions", "review", "skills", "memory", "output", "support-bundle", "config", "local", "preview"]);
 const DESTRUCTIVE_COMMANDS = new Set(["ship"]);
 const HOSTED_CAPABILITY_COMMANDS = new Set(["chat", "run", "models", "agents", "image", "video", "vault", "workflow", "receipt"]);
 
 function permissionFor(surface: CommandSurface, name: string): PermissionClass {
+  if (name === "preview") return "local-write";
   if (surface === "slash") return name === "rollback" || name === "revert" ? "destructive" : "unknown";
   if (READ_ONLY_COMMANDS.has(name)) return "read-only";
   if (ACCOUNT_COMMANDS.has(name)) return "account";
@@ -127,6 +130,7 @@ function permissionFor(surface: CommandSurface, name: string): PermissionClass {
 
 function capabilitiesFor(surface: CommandSurface, name: string): string[] {
   if (surface === "shell" && (name === "setup" || name === "local")) return ["ollama.local"];
+  if (name === "preview") return ["aether.local-preview"];
   if (surface === "shell" && HOSTED_CAPABILITY_COMMANDS.has(name)) return ["aether.hosted"];
   if (surface === "shell" && name === "agent") return ["aether.hosted-or-local"];
   if (surface === "shell" && name === "exec") return ["aether.local-child", "aether.headless.v1"];

@@ -217,6 +217,12 @@ export async function handleSlash(
       await cmdDoctor(ctx, arg.trim() ? arg.trim().split(/\s+/) : [], { out });
       break;
     }
+    case "preview": {
+      const { cmdPreview } = await import("./preview.js");
+      const args = arg.trim() ? arg.trim().split(/\s+/) : ["status"];
+      await cmdPreview(ctx, args, { out, err: out });
+      break;
+    }
     case "mcp": {
       const args = arg.trim() ? arg.trim().split(/\s+/) : [];
       if (args.length > 0) {

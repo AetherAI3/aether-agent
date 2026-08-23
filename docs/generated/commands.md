@@ -1,5 +1,5 @@
 <!-- GENERATED FILE: run `npm run docs:generate`; do not edit by hand. -->
-<!-- manifest-digest: sha256:7689d5ef78ef461df489bfe2da2973eb2870120568ee5f8ef3640b3ed0760927 -->
+<!-- manifest-digest: sha256:a5b2c78021ecdff281df646e5b17400f9dba95b19d406e9ef0a831a349c4ac56 -->
 # Generated command reference
 
 This reference is generated from the validated runtime command manifest. Availability is evaluated at runtime; a listed command may still require authentication, a hosted capability, or local tooling.
@@ -79,6 +79,21 @@ Permission: `read-only` · Availability: `runtime-dependent` · Telemetry: `shel
 diagnose and explicitly manage the local Ollama runtime
 
 Permission: `local-write` · Availability: `runtime-dependent` · Telemetry: `shell.local` · Requires: `ollama.local`
+
+#### `aether preview start|open|logs|status|stop`
+
+manage an explicitly declared loopback development preview
+
+Permission: `local-write` · Availability: `runtime-dependent` · Telemetry: `shell.preview` · Requires: `aether.local-preview`
+
+Command flags:
+
+- `--command <value>`
+- `--arg <value>…`
+- `--ready-url <value>`
+- `--preview-cwd <value>`
+- `--preview-timeout-ms <value>`
+- `--no-open`
 
 #### `aether sessions [inspect|continue|export|archive|clean] [id]`
 
@@ -293,6 +308,12 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 structured runtime diagnostics
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.doctor`
+
+#### `/preview start|open|logs|status|stop`
+
+manage the declared loopback development preview
+
+Permission: `local-write` · Availability: `runtime-dependent` · Telemetry: `slash.preview` · Requires: `aether.local-preview`
 
 #### `/clear`
 
