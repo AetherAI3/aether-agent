@@ -328,7 +328,31 @@ test("port hijack and early exit never become ready", { timeout: 15_000 }, async
   const out = sink(); const err = sink();
   const code = await cmdPreview(context(root), ["start"], { command: process.execPath, args: [script], readyUrl: url, timeoutMs: "3000", noOpen: true, out: out.stream, err: err.stream });
   assert.equal(code, PREVIEW_EXIT.launchFailed);
-  assert.match(err.text(), /exited before readiness/);
+  assert.match(err.text(), /already reachable before the preview child started/);
+  await new Promise<void>((resolvePromise) => hijacker.close(() => resolvePromise()));
+});
+
+test("an occupied explicit ready URL cannot authenticate a long-lived nonbinding child", { timeout: 15_000 }, async (t) => {
+  const root = tempProject();
+  const hijacker = createServer((_q, res) => res.end("unrelated listener"));
+  await new Promise<void>((resolvePromise) => hijacker.listen(0, "127.0.0.1", () => resolvePromise()));
+  t.after(() => { try { hijacker.closeAllConnections(); hijacker.close(); } catch { /* already closed */ } });
+  const address = hijacker.address(); assert.ok(address && typeof address !== "string");
+  const url = `http://127.0.0.1:${address.port}`;
+  const script = join(root, "nonbinding.mjs");
+  writeFileSync(script, "setInterval(() => {}, 1000);", "utf8");
+  const out = sink(); const err = sink();
+
+  const code = await cmdPreview(context(root), ["start"], {
+    command: process.execPath, args: [script], readyUrl: url, timeoutMs: "3000",
+    noOpen: true, out: out.stream, err: err.stream,
+  });
+
+  assert.equal(code, PREVIEW_EXIT.launchFailed);
+  assert.match(err.text(), /already reachable before the preview child started/i);
+  const state = JSON.parse(readFileSync(previewPaths(root).statePath, "utf8")) as PreviewState;
+  assert.equal(state.phase, "failed");
+  assert.equal(state.childPid, 0, "the nonbinding child should never have been spawned");
   await new Promise<void>((resolvePromise) => hijacker.close(() => resolvePromise()));
 });
 
@@ -339,6 +363,12 @@ test("launch failure is explicit and stale state never causes a PID signal", { t
   assert.match(err.text(), /launch failed|exited before readiness/i);
 
   const paths = previewPaths(root);
+  const failedLaunch = JSON.parse(readFileSync(paths.statePath, "utf8")) as PreviewState;
+  for (let i = 0; i < 40; i += 1) {
+    try { process.kill(failedLaunch.supervisorPid, 0); }
+    catch { break; }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+  }
   const stale: PreviewState = {
     schema: PREVIEW_SCHEMA, instanceId: randomUUID(), projectRoot: root, commandDigest: "a".repeat(64),
     phase: "ready", supervisorPid: process.pid, childPid: process.pid, controlPort: 9,

@@ -134,6 +134,23 @@ export async function runPreviewSupervisor(launchJson: string): Promise<number> 
   const address = server.address();
   if (!address || typeof address === "string") return 2;
 
+  // An explicit readiness URL is part of the launch authority. It must be
+  // unoccupied before the child starts so that a later successful probe is an
+  // observed transition attributable to this launch, rather than an unrelated
+  // listener that happened to survive our startup-stability window.
+  if (launch.command.readyUrl && await probe(launch.command.readyUrl)) {
+    state = {
+      schema: PREVIEW_SCHEMA, instanceId: launch.instanceId, projectRoot: launch.projectRoot,
+      commandDigest: launch.commandDigest, phase: "failed", supervisorPid: process.pid, childPid: 0,
+      controlPort: address.port, startedAt: new Date().toISOString(),
+      error: "declared ready URL was already reachable before the preview child started",
+    };
+    writeState(launch.statePath, state);
+    closeSync(logFd);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    return 1;
+  }
+
   try {
     child = spawn(launch.command.executable, launch.command.args, {
       cwd: launch.command.cwd,

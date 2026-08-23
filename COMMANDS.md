@@ -194,9 +194,13 @@ request.
 `--arg`) or the versioned project declaration `.aether/preview.json`. Before it
 starts anything it prints the exact argv, working directory, inherited
 permissions, and network implications, then requires confirmation or `--yes`.
-The supervisor accepts readiness only from reachable loopback HTTP(S) URLs,
-stores sanitized bounded logs under `.aether/preview/`, and owns the complete
-process tree. `status`, `logs`, and `stop` use an owner-private, one-use
+The supervisor accepts readiness only from reachable loopback HTTP(S) URLs.
+An explicitly declared readiness URL must be unreachable before launch and
+then become reachable while the child remains stable; this prevents an
+unrelated listener from authenticating the child. A URL discovered from child
+output is observational convenience, not proof that the child owns the port.
+The supervisor stores sanitized bounded logs under `.aether/preview/` and owns
+the complete process tree. `status`, `logs`, and `stop` use an owner-private, one-use
 loopback challenge
 instead of trusting a PID file; an unverifiable stale PID is never signalled.
 
