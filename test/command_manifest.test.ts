@@ -1,130 +1,117 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { commandNames, type CommandSpec } from "../src/core/command_registry.js";
-import { ALL_CLI_COMMANDS, DISPATCH_COMMANDS, findCliCommand } from "../src/commands/cli_registry.js";
+import type { FlagTable } from "../src/core/command_dispatch.js";
+import { ALL_CLI_COMMANDS, DISPATCH_COMMANDS, GLOBAL_FLAGS } from "../src/commands/cli_registry.js";
 import { SLASH_COMMANDS, findCommand as findSlashCommand } from "../src/commands/slash_registry.js";
 import {
-  COMMAND_MANIFEST,
-  createCommandManifest,
-  findManifestCommand,
-  manifestCommandNames,
-  validateCommandManifest,
-  type CommandManifestEntry,
+  COMMAND_MANIFEST, COMMAND_RUNTIME_LOADERS, createCommandManifest, findManifestCommand,
+  manifestCommandNames, projectLegacyCommandSpecs, validateCommandManifest, type CommandManifestEntry,
 } from "../src/commands/command_manifest.js";
 
-test("adapter preserves registry order, names, aliases, and help metadata", () => {
-  const shell = COMMAND_MANIFEST.filter((entry) => entry.surface === "shell");
-  const slash = COMMAND_MANIFEST.filter((entry) => entry.surface === "slash");
-  assert.deepEqual(shell.map((entry) => entry.name), ALL_CLI_COMMANDS.map((entry) => entry.name));
-  assert.deepEqual(slash.map((entry) => entry.name), SLASH_COMMANDS.map((entry) => entry.name));
+test("adapter preserves registries and additive old-client projections", () => {
+  const oldShell: CommandSpec[] = ALL_CLI_COMMANDS.map((command) => ({
+    name: command.name,
+    ...(command.aliases?.length ? { aliases: [...command.aliases] } : {}),
+    ...(command.args === undefined ? {} : { args: command.args }),
+    summary: command.summary,
+    section: command.section,
+    ...(command.hidden ? { hidden: true } : {}),
+  }));
+  assert.deepEqual(projectLegacyCommandSpecs("shell"), oldShell);
+  assert.deepEqual(projectLegacyCommandSpecs("slash"), SLASH_COMMANDS);
   assert.deepEqual(manifestCommandNames("shell"), commandNames(ALL_CLI_COMMANDS));
   assert.deepEqual(manifestCommandNames("slash"), commandNames(SLASH_COMMANDS));
-
-  for (const [surface, source] of [
-    ["shell", ALL_CLI_COMMANDS],
-    ["slash", SLASH_COMMANDS],
-  ] as const) {
-    for (const command of source) {
-      const entry = findManifestCommand(surface, command.name)!;
-      assert.deepEqual(entry.aliases, command.aliases ?? [], `${surface}:${command.name} aliases`);
-      assert.equal(entry.args, command.args, `${surface}:${command.name} args`);
-      assert.equal(entry.summary, command.summary, `${surface}:${command.name} summary`);
-      assert.equal(entry.section, command.section, `${surface}:${command.name} section`);
-      assert.equal(entry.hidden, command.hidden === true, `${surface}:${command.name} hidden`);
-      assert.equal(entry.docs.target, command.name);
-      assert.equal(entry.docs.visible, command.hidden !== true);
-    }
-  }
+  const enriched = COMMAND_MANIFEST.map((entry) => ({
+    ...entry, detailedHelp: `richer: ${entry.detailedHelp}`, permissionClass: "read-only" as const,
+    release: { disposition: "changed" as const, note: "metadata only" },
+  }));
+  assert.deepEqual(projectLegacyCommandSpecs("shell", enriched), oldShell);
+  assert.deepEqual(projectLegacyCommandSpecs("slash", enriched), SLASH_COMMANDS);
 });
 
-test("manifest lookup is surface-aware and alias compatible with both registries", () => {
-  for (const name of commandNames(ALL_CLI_COMMANDS)) {
-    assert.equal(findManifestCommand("shell", name)?.name, findCliCommand(name)?.name, name);
-  }
-  for (const name of commandNames(SLASH_COMMANDS)) {
-    assert.equal(findManifestCommand("slash", `/${name}`)?.name, findSlashCommand(name)?.name, name);
-  }
-  assert.equal(findManifestCommand("shell", "help")?.key, "shell:help");
-  assert.equal(findManifestCommand("slash", "help")?.key, "slash:help");
-  assert.equal(findManifestCommand("slash", "QUIT")?.name, "exit");
+test("shell lookup is exact-case while slash lookup retains compatibility", () => {
+  assert.equal(findManifestCommand("shell", "agent")?.name, "agent");
+  assert.equal(findManifestCommand("shell", "code")?.name, "agent");
+  assert.equal(findManifestCommand("shell", "AGENT"), undefined);
+  assert.equal(findManifestCommand("shell", "CODE"), undefined);
+  assert.equal(findManifestCommand("slash", "/QUIT")?.name, findSlashCommand("QUIT")?.name);
+  assert.equal(findManifestCommand("slash", " help ")?.name, "help");
 });
 
-test("lazy CLI registrations retain their existing loader by reference", () => {
-  const lazyNames = new Set(DISPATCH_COMMANDS.map((command) => command.name));
-  for (const entry of COMMAND_MANIFEST.filter((item) => item.surface === "shell")) {
-    if (!lazyNames.has(entry.name)) {
-      assert.equal(entry.handler.kind, "host", entry.name);
-      continue;
-    }
-    assert.equal(entry.handler.kind, "lazy", entry.name);
-    if (entry.handler.kind === "lazy") {
-      assert.equal(entry.handler.load, DISPATCH_COMMANDS.find((command) => command.name === entry.name)?.load);
-    }
+test("public manifest is JSON-safe and runtime loaders stay separate", () => {
+  assert.doesNotThrow(() => structuredClone(COMMAND_MANIFEST));
+  const json = JSON.stringify(COMMAND_MANIFEST);
+  assert.equal(json.includes('"load"'), false);
+  assert.deepEqual(JSON.parse(json), COMMAND_MANIFEST);
+  for (const command of DISPATCH_COMMANDS) {
+    const entry = findManifestCommand("shell", command.name)!;
+    assert.equal(entry.handler.kind, "lazy");
+    assert.equal(COMMAND_RUNTIME_LOADERS.get(entry.key), command.load);
+    assert.deepEqual(entry.ownedFlags, command.flags ?? {});
   }
+  assert.deepEqual(findManifestCommand("shell", "agent")?.ownedFlags, {});
 });
 
 const shellFixture: CommandSpec[] = [
   { name: "alpha", aliases: ["a"], args: "<x>", summary: "first", section: "One" },
   { name: "beta", summary: "second", section: "One" },
 ];
+const fixture = (): readonly CommandManifestEntry[] => createCommandManifest({ shell: shellFixture, slash: [] });
 
-function fixtureManifest(): readonly CommandManifestEntry[] {
-  return createCommandManifest({ shell: shellFixture, slash: [] });
-}
+test("validator detects aliases and surface/name collisions but permits cross-surface names", () => {
+  const base = fixture();
+  const duplicate: CommandManifestEntry = { ...base[0]!, aliases: ["a", "a"], compatibilityAliases: ["a", "a"] };
+  const errors = validateCommandManifest([duplicate]);
+  assert.ok(errors.includes("shell:alpha: duplicate alias 'a'"));
+  assert.ok(errors.includes("shell:alpha: token 'a' collides with shell:alpha"));
+  const collision: CommandManifestEntry = { ...base[1]!, aliases: ["a"], compatibilityAliases: ["a"] };
+  assert.ok(validateCommandManifest([base[0]!, collision]).includes("shell:beta: token 'a' collides with shell:alpha"));
+  assert.ok(validateCommandManifest([base[0]!, { ...base[0]! }]).includes("shell:alpha: duplicate surface/name key"));
+  assert.deepEqual(validateCommandManifest(createCommandManifest({ shell: [shellFixture[0]!], slash: [shellFixture[0]!] })), []);
+});
 
-test("validator detects duplicate aliases and surface/name token collisions", () => {
-  const base = fixtureManifest();
-  const duplicateAlias: CommandManifestEntry = { ...base[0]!, aliases: ["a", "a"] };
-  assert.deepEqual(validateCommandManifest([duplicateAlias]), ["shell:alpha: duplicate alias 'a'", "shell:alpha: token 'a' collides with shell:alpha"]);
-
-  const aliasCollision: CommandManifestEntry = { ...base[1]!, aliases: ["a"] };
-  assert.deepEqual(validateCommandManifest([base[0]!, aliasCollision]), ["shell:beta: token 'a' collides with shell:alpha"]);
-
-  assert.deepEqual(validateCommandManifest([base[0]!, { ...base[0]! }]), [
-    "shell:alpha: duplicate surface/name key",
-    "shell:alpha: token 'alpha' collides with shell:alpha",
-    "shell:alpha: token 'a' collides with shell:alpha",
+test("validator rejects nonexistent handler and docs ownership", () => {
+  const base = fixture()[0]!;
+  const handler = { ...base, handler: { ...base.handler, module: "src/commands/does_not_exist.ts" } };
+  assert.deepEqual(validateCommandManifest([handler]), [
+    "shell:alpha: unknown handler owner 'host:src/commands/does_not_exist.ts#main'",
+  ]);
+  const docs = { ...base, docs: { ...base.docs, module: "src/commands/does_not_exist.ts" } };
+  assert.deepEqual(validateCommandManifest([docs]), [
+    "shell:alpha: unknown docs owner 'src/commands/does_not_exist.ts#ALL_CLI_COMMANDS'",
   ]);
 });
 
-test("same command token on different surfaces is valid", () => {
-  const entries = createCommandManifest({ shell: [shellFixture[0]!], slash: [shellFixture[0]!] });
-  assert.deepEqual(validateCommandManifest(entries), []);
-  assert.equal(entries[0]?.key, "shell:alpha");
-  assert.equal(entries[1]?.key, "slash:alpha");
+test("validator detects owned flag collisions, reserved shadows, and malformed specs", () => {
+  const [alpha, beta] = fixture();
+  const first = { ...alpha!, ownedFlags: { mode: { type: "boolean" as const, short: "m" } } };
+  const longConflict = { ...beta!, ownedFlags: { mode: { type: "string" as const, short: "m" } } };
+  assert.ok(validateCommandManifest([first, longConflict]).includes("shell:beta: --mode conflicts with shell:alpha"));
+  const shortConflict = { ...beta!, ownedFlags: { format: { type: "string" as const, short: "m" } } };
+  assert.ok(validateCommandManifest([first, shortConflict]).includes("shell:beta: -m on --format conflicts with shell:alpha's --mode"));
+  const reserved: FlagTable = { mode: { type: "boolean" } };
+  assert.ok(validateCommandManifest([first], { reservedShellFlags: reserved }).includes("shell:alpha: --mode shadows a reserved flag"));
+  const malformed = { ...alpha!, ownedFlags: { count: { type: "boolean", multiple: true } } } as CommandManifestEntry;
+  assert.ok(validateCommandManifest([malformed]).includes("shell:alpha: --count cannot be boolean and repeatable"));
 });
 
-test("validator rejects invalid handler ownership metadata", () => {
-  const base = fixtureManifest()[0]!;
-  const badModule = { ...base, handler: { ...base.handler, module: "../main.js" } } as CommandManifestEntry;
-  assert.deepEqual(validateCommandManifest([badModule]), ["shell:alpha: invalid handler module '../main.js'"]);
-
-  const traversal = { ...base, handler: { ...base.handler, module: "src/commands/../../main.ts" } } as CommandManifestEntry;
-  assert.deepEqual(validateCommandManifest([traversal]), ["shell:alpha: invalid handler module 'src/commands/../../main.ts'"]);
-
-  const badSymbol = { ...base, handler: { ...base.handler, symbol: "not a symbol" } } as CommandManifestEntry;
-  assert.deepEqual(validateCommandManifest([badSymbol]), ["shell:alpha: invalid handler symbol 'not a symbol'"]);
-
-  const missingLoader = {
-    ...base,
-    handler: { kind: "lazy", module: "src/commands/example.ts", symbol: "COMMANDS" },
-  } as unknown as CommandManifestEntry;
-  assert.deepEqual(validateCommandManifest([missingLoader]), ["shell:alpha: lazy handler is missing load()"]);
+test("validator detects product, alias, docs, and release metadata drift", () => {
+  const base = fixture()[0]!;
+  assert.deepEqual(validateCommandManifest([{ ...base, detailedHelp: "" }]), ["shell:alpha: missing detailed help"]);
+  assert.deepEqual(validateCommandManifest([{ ...base, telemetryName: "alpha" }]), ["shell:alpha: telemetry name must be 'shell.alpha'"]);
+  assert.deepEqual(validateCommandManifest([{ ...base, compatibilityAliases: [] }]), ["shell:alpha: alias 'a' has no compatibility disposition"]);
+  assert.deepEqual(
+    validateCommandManifest([{ ...base, availability: { ...base.availability, capabilityRequirements: ["Bad Cap"] } }]),
+    ["shell:alpha: invalid capability requirement 'Bad Cap'"],
+  );
+  assert.deepEqual(validateCommandManifest([{ ...base, docs: { ...base.docs, target: "beta" } }]), [
+    "shell:alpha: docs target 'beta' does not match command name",
+  ]);
+  assert.deepEqual(validateCommandManifest([{ ...base, release: { ...base.release, note: "" } }]), ["shell:alpha: empty release note"]);
 });
 
-test("validator rejects documentation metadata drift", () => {
-  const base = fixtureManifest()[0]!;
-  const badTarget = { ...base, docs: { ...base.docs, target: "beta" } };
-  assert.deepEqual(validateCommandManifest([badTarget]), ["shell:alpha: docs target 'beta' does not match command name"]);
-
-  const badUsage = { ...base, docs: { ...base.docs, usage: "aether alpha" } };
-  assert.deepEqual(validateCommandManifest([badUsage]), ["shell:alpha: docs usage must be 'aether alpha <x>'"]);
-
-  const badVisibility = { ...base, docs: { ...base.docs, visible: false } };
-  assert.deepEqual(validateCommandManifest([badVisibility]), ["shell:alpha: docs visibility disagrees with hidden metadata"]);
-});
-
-test("the production manifest is structurally valid", () => {
+test("production manifest validates with the real global flag namespace", () => {
   assert.ok(COMMAND_MANIFEST.length > 0);
-  assert.deepEqual(validateCommandManifest(COMMAND_MANIFEST), []);
+  assert.deepEqual(validateCommandManifest(COMMAND_MANIFEST, { reservedShellFlags: GLOBAL_FLAGS }), []);
 });
