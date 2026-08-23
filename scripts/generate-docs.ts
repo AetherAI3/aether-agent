@@ -9,6 +9,7 @@ import {
   type CommandSurface,
 } from "../src/commands/command_manifest.js";
 import { GLOBAL_FLAGS } from "../src/commands/cli_registry.js";
+import { redactForBundle } from "../src/core/redaction.js";
 
 export const PUBLIC_CATALOGUE_SCHEMA = "aether-agent/public-model-catalogue-source@1" as const;
 export const GENERATED_CATALOGUE_SCHEMA = "aether-agent/public-model-catalogue@1" as const;
@@ -67,22 +68,39 @@ const ID = /^[a-z0-9][a-z0-9._-]*$/;
 const PROVIDER = /^(?:unknown|[A-Za-z0-9][A-Za-z0-9 .&+-]*)$/;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
-const SECRET = /(?:\bBearer\s+[A-Za-z0-9._-]+|\b(?:aek_|gh[opusr]_)[A-Za-z0-9._-]+|\bsk-[A-Za-z0-9]{16,}|\b(?:sk|pk)_(?:live|test)_[A-Za-z0-9]+|\bAKIA[A-Z0-9]{16}|\b(?:AETHER_TOKEN|NPM_TOKEN|GITHUB_TOKEN|API_KEY|ACCESS_TOKEN)\s*=)/i;
-const CREDENTIALED_URL = /\bhttps?:\/\/[^\s/@:]+:[^\s/@]+@/i;
-const INTERNAL_ROUTE = /(?:\/(?:api\/)?internal(?:\/|\b)|\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(?::\d+)?\b|\b[A-Za-z0-9.-]+\.internal\b)/i;
-const PRICING_ASSERTION = /(?:[$€£]\s*\d|\b(?:usd|eur|gbp)\b|\b(?:price|pricing|costs?|rates?)\b[^.\n]{0,40}\b(?:token|request|image|video|month|hour)\b)/i;
+const SECRET = /(?:\b(?:aek_|gh[opusr]_|github_pat_|npm_|pypi-|glpat-|xox[baprs]-)[A-Za-z0-9._-]{8,}|\bsk-[A-Za-z0-9_-]{8,}|\b(?:sk|pk)_(?:live|test)_[A-Za-z0-9_-]+|\bAIza[A-Za-z0-9_-]{20,}|\b(?:AKIA|ASIA)[A-Z0-9]{16})/i;
+const GENERIC_CREDENTIAL = /\b[A-Za-z0-9_-]*(?:token|password|passwd|secret|api[-_]?key|authorization|credential|cookie|private[-_]?key|pat)[A-Za-z0-9_-]*\s*[:=]\s*(?:"[^"\r\n]+"|'[^'\r\n]+'|[^\s,;]+)/i;
+const PRIVATE_NETWORK = /(?:\b(?:localhost|0\.0\.0\.0|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|169\.254\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(?::\d+)?\b|\b[A-Za-z0-9.-]+\.internal\b|(?:^|[^A-Za-z0-9])(?:::1|(?:f[cd][0-9a-f]{0,2}|fe[89ab][0-9a-f]?):[0-9a-f:]*[0-9a-f])(?:$|[^A-Za-z0-9]))/i;
+const INTERNAL_ROUTE = /\/(?:api\/)?internal(?:\/|\b)/i;
+const PRICING_ASSERTION = /(?:[$€£]\s*\d|\b(?:usd|eur|gbp)\b|\b(?:price|pricing|costs?|rates?)\b[^.\n]{0,40}\b(?:token|request|image|video|month|hour)\b|\b\d+(?:\.\d+)?\s*(?:cents?|pence)\s+(?:per|\/)\s+(?:token|request|image|video|month|hour)\b)/i;
+const MARKDOWN_INJECTION = /(?:<\/?[A-Za-z][^>]*>|\[[^\]\n]*\]\([^)]*\)|!\[|`|\*|__|(?:^|[\s(])_[^_\n]+_(?=$|[\s).,;:!?])|^\s{0,3}#{1,6}(?:\s|$))/m;
 
 export function normalizeEol(value: string): string { return value.replace(/\r\n?/g, "\n"); }
 
-function validatePublicString(value: unknown, label: string, options: { markdown?: boolean } = {}): string {
+function validatePublicString(value: unknown, label: string, options: { markdown?: boolean; commandArgs?: boolean } = {}): string {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${label} is required`);
   if (CONTROL.test(value)) throw new Error(`${label} contains control characters`);
-  if (SECRET.test(value)) throw new Error(`${label} contains credential-shaped content`);
-  if (CREDENTIALED_URL.test(value)) throw new Error(`${label} contains a credentialed URL`);
-  if (INTERNAL_ROUTE.test(value)) throw new Error(`${label} contains an internal route`);
+  // Reuse the repository's canonical exported-artifact redactor as a detector,
+  // then add provider-token shapes that are intentionally more catalogue-specific.
+  // Errors name only the field so rejected credential values never reach logs.
+  if (redactForBundle(value, {}) !== value || SECRET.test(value) || GENERIC_CREDENTIAL.test(value)) throw new Error(`${label} contains credential-shaped content`);
+  if (PRIVATE_NETWORK.test(value) || INTERNAL_ROUTE.test(value)) throw new Error(`${label} contains an internal route`);
   if (PRICING_ASSERTION.test(value)) throw new Error(`${label} contains a pricing assertion`);
-  if (options.markdown && /(?:<\/?[A-Za-z][^>]*>|\[[^\]]*\]\([^)]*\)|!\[|^\s{0,3}#{1,6}\s)/m.test(value)) throw new Error(`${label} contains markdown injection`);
+  const markdownInput = options.commandArgs
+    ? value.replace(/<[A-Za-z0-9][A-Za-z0-9_|-]*>/g, "")
+    : value;
+  if (options.markdown && MARKDOWN_INJECTION.test(markdownInput)) throw new Error(`${label} contains markdown injection`);
   return value.trim();
+}
+
+function validateCommandPublicContent(commands: readonly CommandManifestEntry[]): void {
+  for (const [index, entry] of commands.entries()) {
+    const label = `command ${index}`;
+    validatePublicString(entry.section, `${label} section`, { markdown: true });
+    validatePublicString(entry.summary, `${label} summary`, { markdown: true });
+    if (entry.args !== undefined) validatePublicString(entry.args, `${label} args`, { markdown: true, commandArgs: true });
+    validatePublicString(entry.docs.usage, `${label} usage`, { markdown: true, commandArgs: true });
+  }
 }
 
 function canonicalJson(value: unknown): string {
@@ -109,6 +127,13 @@ export function extractMarkdownSection(text: string, heading: string): string {
   return `${lines.slice(start, end).join("\n").trimEnd()}\n`;
 }
 
+function hasExactBacktickedToken(text: string, token: string): boolean {
+  for (const match of text.matchAll(/(^|[^`])`([^`\r\n]+)`(?!`)/gm)) {
+    if (match[2] === token) return true;
+  }
+  return false;
+}
+
 function parseCatalogue(text: string, root: string): PublicCatalogueSource {
   let value: unknown;
   try { value = JSON.parse(text); } catch { throw new Error("public catalogue source is not valid JSON"); }
@@ -118,7 +143,9 @@ function parseCatalogue(text: string, root: string): PublicCatalogueSource {
   const unexpectedSourceKeys = Object.keys(source).filter((key) => !sourceKeys.has(key));
   if (unexpectedSourceKeys.length) throw new Error(`public catalogue source contains unsupported fields: ${unexpectedSourceKeys.join(", ")}`);
   if (source.schema !== PUBLIC_CATALOGUE_SCHEMA) throw new Error(`public catalogue source must use schema ${PUBLIC_CATALOGUE_SCHEMA}`);
-  if (typeof source.asOf !== "string" || !Number.isFinite(Date.parse(source.asOf))) throw new Error("public catalogue source has an invalid asOf timestamp");
+  if (typeof source.asOf !== "string") throw new Error("public catalogue source has an invalid asOf timestamp");
+  validatePublicString(source.asOf, "public catalogue asOf");
+  if (!Number.isFinite(Date.parse(source.asOf))) throw new Error("public catalogue source has an invalid asOf timestamp");
   if (Date.parse(source.asOf) > Date.now() + 5 * 60_000) throw new Error("public catalogue generatedAt is materially in the future");
   validatePublicString(source.scopeNote, "public catalogue scopeNote", { markdown: true });
   if (source.source === null || typeof source.source !== "object" || Array.isArray(source.source)) throw new Error("public catalogue source provenance is required");
@@ -127,7 +154,9 @@ function parseCatalogue(text: string, root: string): PublicCatalogueSource {
   const unexpectedProvenanceKeys = Object.keys(provenance).filter((key) => !provenanceKeys.has(key));
   if (unexpectedProvenanceKeys.length) throw new Error(`public catalogue provenance contains unsupported fields: ${unexpectedProvenanceKeys.join(", ")}`);
   if (provenance.kind !== "repository-markdown-section") throw new Error("public catalogue provenance kind is invalid");
-  if (typeof provenance.path !== "string" || !/^(?![A-Za-z]:|\/|.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._/-]+$/.test(provenance.path)) throw new Error("public catalogue provenance path must be repository-relative");
+  if (typeof provenance.path !== "string") throw new Error("public catalogue provenance path must be repository-relative");
+  validatePublicString(provenance.path, "public catalogue provenance path");
+  if (!/^(?![A-Za-z]:|\/|.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._/-]+$/.test(provenance.path)) throw new Error("public catalogue provenance path must be repository-relative");
   const sectionName = validatePublicString(provenance.section, "public catalogue provenance section", { markdown: true });
   if (typeof provenance.digest !== "string" || !DIGEST.test(provenance.digest)) throw new Error("public catalogue provenance digest is invalid");
   const provenancePath = resolve(root, provenance.path);
@@ -143,20 +172,25 @@ function parseCatalogue(text: string, root: string): PublicCatalogueSource {
     const modelKeys = new Set(["id", "label", "provider", "kind", "tierMin", "modality", "hosting", "availability", "evidence"]);
     const unexpectedModelKeys = Object.keys(model).filter((key) => !modelKeys.has(key));
     if (unexpectedModelKeys.length) throw new Error(`public catalogue model ${index} contains unsupported fields: ${unexpectedModelKeys.join(", ")}`);
-    if (typeof model.id !== "string" || !ID.test(model.id)) throw new Error(`public catalogue model ${index} has an invalid id`);
+    if (typeof model.id !== "string") throw new Error(`public catalogue model ${index} has an invalid id`);
     validatePublicString(model.id, `public catalogue model ${index} id`);
+    if (!ID.test(model.id) || model.id === "model") throw new Error(`public catalogue model ${index} has an invalid or generic id`);
     if (ids.has(model.id)) throw new Error(`public catalogue contains duplicate model id ${model.id}`);
     ids.add(model.id);
     validatePublicString(model.label, `public catalogue model ${model.id} label`, { markdown: true });
-    if (typeof model.provider !== "string" || !PROVIDER.test(model.provider)) throw new Error(`public catalogue model ${model.id} has an invalid provider`);
+    if (typeof model.provider !== "string") throw new Error(`public catalogue model ${model.id} has an invalid provider`);
     validatePublicString(model.provider, `public catalogue model ${model.id} provider`, { markdown: true });
+    if (!PROVIDER.test(model.provider)) throw new Error(`public catalogue model ${model.id} has an invalid provider`);
     if (model.kind !== "model" && model.kind !== "orchestrator") throw new Error(`public catalogue model ${model.id} has an invalid kind`);
     if (!(["free", "solo", "pro", "team"] as const).includes(model.tierMin as "free")) throw new Error(`public catalogue model ${model.id} has an invalid tierMin`);
     if (!(["text", "image", "video", "audio", "multimodal", "unknown"] as const).includes(model.modality as "text")) throw new Error(`public catalogue model ${model.id} has an invalid modality`);
     if (!(["local", "hosted", "unknown"] as const).includes(model.hosting as "local")) throw new Error(`public catalogue model ${model.id} has an invalid hosting state`);
     if (!(["available", "unavailable", "unknown"] as const).includes(model.availability as "available")) throw new Error(`public catalogue model ${model.id} has an invalid availability state`);
-    const evidence = validatePublicString(model.evidence, `public catalogue model ${model.id} evidence`, { markdown: true });
-    if (!evidence.includes(model.id) || !section.includes(evidence)) throw new Error(`public catalogue model ${model.id} has no literal evidence in its provenance section`);
+    const evidence = validatePublicString(model.evidence, `public catalogue model ${model.id} evidence`);
+    const expectedEvidence = `\`${model.id}\``;
+    if (evidence !== expectedEvidence || !hasExactBacktickedToken(section, model.id)) {
+      throw new Error(`public catalogue model ${model.id} has no exact backticked evidence in its provenance section`);
+    }
   }
   return source as PublicCatalogueSource;
 }
@@ -179,6 +213,10 @@ function flagUsage(name: string, spec: { type: "boolean" | "string"; short?: str
 }
 
 export function renderCommandReference(commands: readonly CommandManifestEntry[]): string {
+  // Content validation must precede structural manifest validation: the latter's
+  // diagnostics can quote malformed usage strings, while public-doc rejection
+  // must never echo a credential-bearing mutation.
+  validateCommandPublicContent(commands);
   const errors = validateCommandManifest(commands, { reservedShellFlags: GLOBAL_FLAGS });
   if (errors.length) throw new Error(`command manifest is invalid: ${errors.join("; ")}`);
   const visible = commands.filter((entry) => !entry.hidden && entry.docs.visible);
@@ -195,14 +233,14 @@ export function renderCommandReference(commands: readonly CommandManifestEntry[]
     "",
     "Global shell flags accepted by the manifest:",
     "",
-    [...new Set(visible.filter((entry) => entry.surface === "shell").flatMap((entry) => entry.acceptedGlobalFlags))].sort().map((flag) => `\`--${flag}\``).join(", "),
+    [...new Set(visible.filter((entry) => entry.surface === "shell").flatMap((entry) => entry.acceptedGlobalFlags))].sort().map((flag) => inlineCode(`--${flag}`)).join(", "),
     "",
   ];
   for (const surface of ["shell", "slash"] as const satisfies readonly CommandSurface[]) {
     lines.push(`## ${surface === "shell" ? "Shell commands" : "Interactive slash commands"}`, "");
     const sections = [...new Set(visible.filter((entry) => entry.surface === surface).map((entry) => entry.section))];
     for (const section of sections) {
-      lines.push(`### ${section}`, "");
+      lines.push(`### ${escapeMarkdown(section)}`, "");
       for (const entry of visible.filter((candidate) => candidate.surface === surface && candidate.section === section)) {
         lines.push(`#### ${inlineCode(entry.docs.usage)}`, "", escapeMarkdown(entry.summary), "");
         const metadata = [
@@ -244,16 +282,16 @@ export function renderCatalogueMarkdown(catalogue: GeneratedCatalogue): string {
     `<!-- catalogue-digest: ${catalogue.digest} -->`,
     "# Public model catalogue snapshot",
     "",
-    catalogue.scopeNote,
+    escapeMarkdown(catalogue.scopeNote),
     "",
-    `- Snapshot time: \`${catalogue.generatedAt}\``,
+    `- Snapshot time: ${inlineCode(catalogue.generatedAt)}`,
     `- Provenance: ${escapeMarkdown(catalogue.source.citation)}`,
     `- Provenance digest: ${inlineCode(catalogue.source.digest)}`,
-    `- Digest: \`${catalogue.digest}\``,
+    `- Digest: ${inlineCode(catalogue.digest)}`,
     "",
     "| Model | ID | Provider | Modality | Tier | Hosting | Availability |",
     "|---|---|---|---|---|---|---|",
-    ...catalogue.models.map((model) => `| ${escapeMarkdown(model.label)} | ${inlineCode(model.id)} | ${escapeMarkdown(model.provider)} | ${model.modality} | ${model.tierMin} | ${model.hosting} | ${model.availability} |`),
+    ...catalogue.models.map((model) => `| ${escapeMarkdown(model.label)} | ${inlineCode(model.id)} | ${escapeMarkdown(model.provider)} | ${escapeMarkdown(model.modality)} | ${escapeMarkdown(model.tierMin)} | ${escapeMarkdown(model.hosting)} | ${escapeMarkdown(model.availability)} |`),
     "",
     "Runtime availability is account-scoped. Use `aether models` while signed in for the authoritative live result. This snapshot contains no prices, spend caps, internal routes, or credentials.",
   ];

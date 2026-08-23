@@ -2,7 +2,7 @@
 <!-- catalogue-digest: sha256:3df5e21142b6b5e21cca4483af927cb548958a9b538bad23fde4d8cbe8499977 -->
 # Public model catalogue snapshot
 
-This sanitized snapshot contains the six Pro/Team frontier-model additions explicitly announced in the public August 2026 release notes. It is a documented subset, not a live entitlement catalogue.
+This sanitized snapshot contains the six Pro/Team frontier\-model additions explicitly announced in the public August 2026 release notes\. It is a documented subset, not a live entitlement catalogue\.
 
 - Snapshot time: `2026-08-06T00:00:00.000Z`
 - Provenance: Aether Agent — August 2026 fleet update

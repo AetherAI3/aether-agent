@@ -54,19 +54,24 @@ test("bad command mutations fail before any output is written", () => {
   const root = fixtureRoot();
   const original = readFileSync(join(root, "COMMANDS.md"), "utf8");
   const bad = COMMAND_MANIFEST.map((entry, index) => index === 0 ? { ...entry, summary: "" } : entry) as readonly CommandManifestEntry[];
-  assert.throws(() => generateDocumentation({ root, commands: bad }), /command manifest is invalid.*missing summary/);
+  assert.throws(() => generateDocumentation({ root, commands: bad }), /command 0 summary is required/);
   assert.equal(readFileSync(join(root, "COMMANDS.md"), "utf8"), original);
 });
 
-test("command prose is escaped so manifest text cannot inject Markdown structure", () => {
-  const mutated = COMMAND_MANIFEST.map((entry, index) => index === 0 ? {
-    ...entry,
-    summary: "**bold** [link](https://example.test) # heading",
-  } : entry) as readonly CommandManifestEntry[];
-  const output = renderCommandReference(mutated);
-  assert.match(output, /\\\*\\\*bold\\\*\\\*/);
-  assert.match(output, /\\\[link\\\]\\\(https:\/\/example\\\.test\\\)/);
-  assert.doesNotMatch(output, /\*\*bold\*\* \[link\]\(/);
+test("command section, summary, and args reject hostile public content before manifest diagnostics", () => {
+  const mutations = [
+    { section: "**injected heading**" },
+    { summary: "password=hunter2" },
+    { args: "[click](https://evil.test) `code` --token=plain-secret-value" },
+  ] as const;
+  for (const mutation of mutations) {
+    const mutated = COMMAND_MANIFEST.map((entry, index) => index === 0 ? { ...entry, ...mutation } : entry) as readonly CommandManifestEntry[];
+    let message = "";
+    try { renderCommandReference(mutated); }
+    catch (error) { message = error instanceof Error ? error.message : String(error); }
+    assert.match(message, /contains (?:credential-shaped content|markdown injection)/);
+    assert.doesNotMatch(message, /hunter2|plain-secret-value|evil\.test/);
+  }
 });
 
 test("empty or invalid catalogue refresh preserves the last-known-good output set", () => {
@@ -81,7 +86,7 @@ test("empty or invalid catalogue refresh preserves the last-known-good output se
   for (const path of paths) assert.equal(readFileSync(join(root, path), "utf8"), before.get(path));
 });
 
-test("provenance must exist, match its digest, and literally evidence every model id", () => {
+test("provenance must exist, match its digest, and exactly evidence every non-generic model id", () => {
   const root = fixtureRoot();
   generateDocumentation({ root });
   const lastGood = readFileSync(join(root, "docs", "model-catalogue", "catalogue.json"), "utf8");
@@ -93,7 +98,21 @@ test("provenance must exist, match its digest, and literally evidence every mode
     ...source,
     models: [...source.models, { ...source.models[0], id: "invented", label: "Invented", evidence: "`invented`" }],
   };
-  assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify(invented) }), /invented has no literal evidence/);
+  assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify(invented) }), /invented has no exact backticked evidence/);
+  const generic = { ...source, models: [{ ...source.models[0], id: "model", evidence: "model" }] };
+  assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify(generic) }), /invalid or generic id/);
+  const substringText = "## Public release\n\nDocumented preview `model_a_preview` is hosted for Pro accounts.\n";
+  writeFileSync(join(root, "RELEASE_NOTES.md"), substringText, "utf8");
+  const substring = {
+    ...source,
+    source: { ...source.source, digest: sha256(substringText) },
+    models: [{ ...source.models[0], evidence: "model_a" }],
+  };
+  assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify(substring) }), /no exact backticked evidence/);
+  const fencedText = "## Public release\n\nA generic fenced value is not inline evidence: ```model_a```.\n";
+  writeFileSync(join(root, "RELEASE_NOTES.md"), fencedText, "utf8");
+  const fenced = { ...source, source: { ...source.source, digest: sha256(fencedText) } };
+  assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify(fenced) }), /no exact backticked evidence/);
   assert.equal(readFileSync(join(root, "docs", "model-catalogue", "catalogue.json"), "utf8"), lastGood);
 });
 
@@ -103,10 +122,19 @@ test("future timestamps and hostile public strings are rejected without leaking 
   assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify(future) }), /materially in the future/);
   const hostile = [
     ["Bearer top.secret.value", /credential-shaped/],
-    ["https://user:password@example.test/data", /credentialed URL/],
+    ["password=hunter2", /credential-shaped/],
+    ["token=plain-secret-value", /credential-shaped/],
+    ["glpat-abcdefghijklmnop", /credential-shaped/],
+    ["https://user:password@example.test/data", /credential-shaped/],
     ["Read \/api\/internal\/models", /internal route/],
+    ["Read http://[::1]:8080/models", /internal route/],
+    ["Read http://[fd00::1]/models", /internal route/],
     ["The cost per token is low", /pricing assertion/],
+    ["Only 9 cents per token", /pricing assertion/],
+    ["**injected emphasis**", /markdown injection/],
+    ["# injected heading", /markdown injection/],
     ["[click](https://evil.test)", /markdown injection/],
+    ["`injected code`", /markdown injection/],
     ["unsafe\u0000text", /control characters/],
   ] as const;
   for (const [scopeNote, expected] of hostile) {
@@ -114,7 +142,7 @@ test("future timestamps and hostile public strings are rejected without leaking 
     try { generateDocumentation({ root, catalogueSourceText: JSON.stringify({ ...source, scopeNote }) }); }
     catch (error) { message = error instanceof Error ? error.message : String(error); }
     assert.match(message, expected);
-    assert.doesNotMatch(message, /top\.secret\.value|user:password|evil\.test/);
+    assert.doesNotMatch(message, /top\.secret\.value|hunter2|plain-secret-value|abcdefghijklmnop|user:password|evil\.test/);
   }
 });
 
