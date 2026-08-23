@@ -91,6 +91,10 @@ CLI reports routing drift and exits with code `3` without falling back to server
 tool execution.
 
 Use `aether models` to inspect the catalogue returned for the signed-in account.
+
+<!-- MODEL-CATALOGUE:START -->
+A dated, sanitized public snapshot is available as [HTML](docs/model-catalogue/index.html), [JSON](docs/model-catalogue/catalogue.json), and [Markdown](docs/generated/model-catalogue.md). It was generated at `2026-08-06T00:00:00.000Z` from the repository's public release notes. Runtime availability remains account-scoped; use `aether models` while signed in.
+<!-- MODEL-CATALOGUE:END -->
 Model availability and service terms are server-owned and are intentionally not
 copied into a hand-maintained table here.
 

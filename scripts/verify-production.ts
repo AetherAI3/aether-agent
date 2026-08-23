@@ -40,6 +40,13 @@ const REQUIRED_ROOT_FILES = new Set([
   "package.json",
 ]);
 
+const ALLOWED_GENERATED_DOCS = new Set([
+  "docs/generated/commands.md",
+  "docs/generated/model-catalogue.md",
+  "docs/model-catalogue/catalogue.json",
+  "docs/model-catalogue/index.html",
+]);
+
 const MAX_UNPACKED_BYTES = 5_000_000;
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -98,7 +105,7 @@ export function validatePack(report: PackReport, manifest: PackageManifest): str
   }
 
   for (const path of paths) {
-    const allowed = REQUIRED_ROOT_FILES.has(path) || path.startsWith("dist/src/");
+    const allowed = REQUIRED_ROOT_FILES.has(path) || ALLOWED_GENERATED_DOCS.has(path) || path.startsWith("dist/src/");
     if (!allowed) errors.push(`unexpected package content: ${path}`);
     if (/(^|\/)(test|tests|_loopstate)(\/|$)/i.test(path) || /(^|\/)\.env(?:\.|$)/i.test(path)) {
       errors.push(`sensitive or non-runtime package content: ${path}`);

@@ -3,6 +3,10 @@
 Complete reference for every command, flag, slash command, and environment
 variable. For a quick tour, see the [README](README.md).
 
+<!-- GENERATED-COMMAND-REFERENCE:START -->
+The complete manifest-derived reference is [docs/generated/commands.md](docs/generated/commands.md). Regenerate it with `npm run docs:generate`; verify drift with `npm run docs:check`.
+<!-- GENERATED-COMMAND-REFERENCE:END -->
+
 ```
 aether [global flags] <command> [args]
 aether [global flags] "<prompt>"        # bare prompt = one-shot chat

@@ -1,7 +1,8 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { COMMAND_MANIFEST } from "../src/commands/command_manifest.js";
+import { buildGeneratedOutputs, sha256 } from "./generate-docs.js";
 
 export const RELEASE_TRUTH_SCHEMA = "aether-agent/release-truth@1" as const;
 export const NOT_APPLICABLE_CONTRACTS = {
@@ -345,7 +346,7 @@ export async function runReleaseTruth(root: string, evidence: ReleaseTruthEviden
   let paths = packedFiles; if (!paths) { try { const { createPackReport } = await import("./verify-production.js"); paths = createPackReport(root).files.map((file) => file.path); } catch (error) { return releaseTruthFailure("pack", error); } }
   try { return releaseTruthFromRepository(root, paths, evidence); } catch (error) { return releaseTruthFailure("collection", error); }
 }
-export function deterministicRepositoryEvidence(root: string): ReleaseTruthEvidence {
+export function deterministicRepositoryEvidence(root: string = process.cwd()): ReleaseTruthEvidence {
   const commands = [...manifestCommands("shell"), ...manifestCommands("slash")];
   let capabilities: Evidence<readonly CapabilityDisposition[]>;
   try {
@@ -360,19 +361,39 @@ export function deterministicRepositoryEvidence(root: string): ReleaseTruthEvide
   } catch (error) {
     capabilities = { state: "unavailable", reason: `capability evidence could not be read: ${safeFailureDetail(error)}` };
   }
-  return {
+  const evidence: ReleaseTruthEvidence = {
     capabilities,
-    generatedDocs: {
-      state: "not_applicable",
-      contract: NOT_APPLICABLE_CONTRACTS["generated-docs.digest"],
-      reason: "v0.3.0 has no generated command/model document contract; this lane becomes required when its generator lands",
-    },
-    catalogue: {
-      state: "not_applicable",
-      contract: NOT_APPLICABLE_CONTRACTS["catalogue.digest-freshness"],
-      reason: "v0.3.0 reads the live model catalogue and ships no generated catalogue snapshot",
-    },
   };
+  try {
+    const outputs = buildGeneratedOutputs({ root });
+    evidence.generatedDocs = {
+      state: "available",
+      value: outputs.map((output) => ({
+        id: output.path,
+        manifestDigest: sha256(output.content),
+        documentDigest: existsSync(join(root, output.path)) ? sha256(readFileSync(join(root, output.path), "utf8")) : "",
+      })),
+    };
+    const catalogue = parseJson(readFileSync(join(root, "docs", "model-catalogue", "catalogue.json"), "utf8"));
+    const digest = typeof catalogue?.["digest"] === "string" ? catalogue["digest"] : "";
+    const generatedAt = typeof catalogue?.["generatedAt"] === "string" ? catalogue["generatedAt"] : "";
+    const rendered = ["docs/model-catalogue/index.html", "docs/generated/model-catalogue.md"]
+      .every((path) => existsSync(join(root, path)) && readFileSync(join(root, path), "utf8").includes(digest));
+    evidence.catalogue = {
+      state: "available",
+      value: {
+        catalogueDigest: digest,
+        renderedDigest: rendered ? digest : "",
+        generatedAt,
+        observedAt: new Date().toISOString(),
+        maxAgeMs: 90 * 24 * 60 * 60 * 1_000,
+      },
+    };
+  } catch {
+    evidence.generatedDocs = { state: "unavailable", reason: "generated documentation evidence could not be collected; run npm run docs:generate" };
+    evidence.catalogue = { state: "unavailable", reason: "public catalogue evidence could not be collected; run npm run docs:generate" };
+  }
+  return evidence;
 }
 
 export async function observeNpmRegistry(root: string): Promise<Evidence<RegistryTruth>> {

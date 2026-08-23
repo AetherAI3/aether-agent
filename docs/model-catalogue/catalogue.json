@@ -1,0 +1,54 @@
+{
+  "schema": "aether-agent/public-model-catalogue@1",
+  "generatedAt": "2026-08-06T00:00:00.000Z",
+  "digest": "sha256:00d6ae25ec875258b9b03a6f7a27f64b76867adbe75e573d116b047f451bfdb7",
+  "source": {
+    "path": "RELEASE_NOTES.md",
+    "section": "Aether Agent — August 2026 fleet update"
+  },
+  "scopeNote": "This sanitized snapshot contains the six Pro/Team frontier-model additions explicitly announced in the public August 2026 release notes. It is a documented subset, not a live entitlement catalogue.",
+  "models": [
+    {
+      "id": "gemini36_flash",
+      "label": "Gemini 3.6 Flash",
+      "provider": "Google",
+      "kind": "model",
+      "tierMin": "pro"
+    },
+    {
+      "id": "gpt56_luna",
+      "label": "GPT-5.6 Luna",
+      "provider": "OpenAI",
+      "kind": "model",
+      "tierMin": "pro"
+    },
+    {
+      "id": "gpt56_sol",
+      "label": "GPT-5.6 Sol",
+      "provider": "OpenAI",
+      "kind": "model",
+      "tierMin": "pro"
+    },
+    {
+      "id": "gpt56_terra",
+      "label": "GPT-5.6 Terra",
+      "provider": "OpenAI",
+      "kind": "model",
+      "tierMin": "pro"
+    },
+    {
+      "id": "kimi_k3",
+      "label": "Kimi K3",
+      "provider": "Moonshot AI",
+      "kind": "model",
+      "tierMin": "pro"
+    },
+    {
+      "id": "opus5",
+      "label": "Claude Opus 5",
+      "provider": "Anthropic",
+      "kind": "model",
+      "tierMin": "pro"
+    }
+  ]
+}

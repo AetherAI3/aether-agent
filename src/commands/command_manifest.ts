@@ -158,7 +158,7 @@ function normalizeCommand(
     acceptedGlobalFlags: surface === "shell" ? Object.keys(globalFlags).sort() : [],
     ownedFlags: copyFlags(lazy?.flags),
     handler: handlerOf(surface, command.name, lazy),
-    docs: { kind: "registry-help", ...registry, target: command.name, usage, visible: command.hidden !== true, disposition: "registry-only" },
+    docs: { kind: "registry-help", ...registry, target: command.name, usage, visible: command.hidden !== true, disposition: "generated" },
     release: COMMAND_RELEASE_CONTRACT.get(key) ?? null,
   };
 }
