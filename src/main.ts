@@ -82,12 +82,13 @@ async function main(argv: string[]): Promise<number> {
     audit: Boolean(values["audit"]),
     yes: Boolean(values["yes"]),
     local: Boolean(values["local"]),
+    all: Boolean(values["all"]),
     // Globals a dispatched command may need to read. A command cannot declare
     // these itself — shadowing a global is a registry load error — and the
     // flags accessor only answers for what the command declared, so a global
     // reaches a dispatch-table entry through the context or not at all.
-    all: Boolean(values["all"]),
     testCmd: sf(values["test-cmd"]),
+    ...(typeof values["out"] === "string" ? { out: values["out"] as string } : {}),
     cwd: typeof values["cwd"] === "string" ? (values["cwd"] as string) : process.cwd(),
   };
   // y/N confirmation for destructive prompts (e.g. switching model mid-session).
@@ -221,7 +222,10 @@ async function main(argv: string[]): Promise<number> {
       });
     }
     case "resume": {
-      const { cmdResume, cmdResumeExport } = await import("./commands/resume.js");
+      const { cmdResume, cmdResumeExport, cmdResumeList } = await import("./commands/resume.js");
+      // `aether resume list` is an alias for `aether sessions` — one listing,
+      // reachable from the command people already know. (Lane AA-CONT-04.)
+      if (rest[0] === "list") return cmdResumeList(ctx, Boolean(values["all"]));
       return rest[0] === "export"
         ? cmdResumeExport(ctx, rest[1] ?? "", sf(values["out"]))
         : cmdResume(ctx, rest[0] ?? "");

@@ -14,7 +14,7 @@ aether                                  # no args = interactive REPL
 <!-- Registry markers are checked against the declarative command registries. -->
 
 <!-- CLI-COMMANDS:START -->
-`help`, `agent`, `chat`, `resume`, `run`, `review`, `ship`, `models`, `agents`, `auth`,
+`help`, `agent`, `chat`, `resume`, `sessions`, `run`, `review`, `ship`, `models`, `agents`, `auth`,
 `github`, `vault`, `workflow`, `memory`, `skills`, `capabilities`, `image`,
 `video`, `output`, `audit`, `receipt`, `doctor`, `support-bundle`, `mcp`,
 `config`
@@ -142,6 +142,54 @@ instruction — you never re-paste the conversation. See
 > Local-first: sessions are read from disk, so resume works offline. When you stop
 > a coding run with Ctrl-C, the exact `aether agent --resume <id>` command is printed.
 > A session id is workspace-scoped; a handoff file deliberately is not.
+
+### `aether sessions [...]` — the project session library
+
+Everything the agent has done in this project, and what can still be done with
+it. Reads a small index beside the session logs, so listing costs one file read
+however long your history is — it never opens a transcript.
+
+```bash
+aether sessions                        # this project's sessions, newest first
+aether sessions --all                  # every project on this machine
+aether sessions --json                 # machine-readable rows + continuity state
+aether sessions inspect <id>           # one session in full
+aether sessions continue <id>          # what it was, and the exact next command
+aether sessions export <id>            # write the portable handoff
+aether sessions archive <id>           # hide it from the default list
+aether sessions archive <id> --undo    # bring it back
+aether sessions clean                  # drop index rows whose session is gone
+aether resume list                     # the same listing, from the older command
+aether resume <file.json>              # show an imported handoff, not a local session
+```
+
+On a terminal, `aether sessions` opens an arrow-key picker (`/` filters, Enter
+inspects, Esc/q leaves); `--no-select` gives the flat table instead, and a pipe
+or `--json` always does. Piped output is tab-separated with a fixed field order
+(`SESSION STARTED STATUS STATE BRAIN MODEL FILES_WRITTEN BRANCH TASK`); a TTY gets a
+padded table.
+
+**Where a session can be continued** is computed, not assumed. A session id is
+scoped to the absolute working directory it ran in, so the listing labels each
+row: `ready`, `stale-branch` (this checkout moved to another branch),
+`moved` (same repository, different checkout), `elsewhere` (another project),
+`missing` (the directory is not on this disk), `archived`. A session that
+cannot be continued here is refused with the reason and pointed at
+`aether sessions export`, which is the form that crosses machines.
+
+**Unknown is never rendered as zero.** A file count nobody recorded prints as
+`unknown`, not `0`. A run whose manifest never closed prints as *never
+finished — running or interrupted, unknown which*, because nothing on this
+machine can tell those apart. A branch the record does not name is not assumed
+to be the branch you are on now. Pull-request state is not recorded by this
+build at all, and says so rather than reading as "no PR".
+
+**Nothing here deletes your work.** `archive` sets a flag; the session log,
+worktree and branch are untouched, and `--undo` reverses it. Archiving a
+session whose record never closed says so before asking. `clean` removes only
+index rows that point at sessions already gone from disk, after printing every
+row it will remove, and it is refusable. Neither command touches a worktree, a
+branch, or a file a run wrote.
 
 ### `aether models [use <id>]` — list / pick a model
 - `aether models` — list every model **and** orchestrator visible to your tier.

@@ -2,11 +2,12 @@
 // SessionLog already wrote under ~/.aether-agent/logs/<id>/ and rehydrates the
 // transcript. No backend, works offline. (Cross-device sync is Plan B.)
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { logsRoot, monologueLine } from "./session_log.js";
 import { decodeEvent, type BrainEvent } from "./brain_protocol.js";
 import { isCurrentWorkspace, resolveOpaqueChild } from "./workspace_scope.js";
+import { entriesForWorkspace, syncSessionIndex } from "./session_index.js";
 
 /**
  * Which rules and skills a session actually ran under.
@@ -76,27 +77,29 @@ export function loadSession(id: string, root: string = logsRoot(), cwd?: string)
     : [];
   return { dir, manifest, events };
 }
-/** The most recently started session, or null if none. */
+/**
+ * The most recently started session in this workspace, or null if none.
+ *
+ * Goes through the session index, which is already newest-first and scoped by
+ * workspace, so the common case reads ONE small file plus the one session it
+ * returns — instead of loading and parsing every session's events to answer
+ * "what was I last doing here". The index reconciles itself against the session
+ * directories on each read, so this is still correct on a fresh install, after
+ * the index is deleted, and for every session recorded before it existed.
+ */
 export function latestSession(cwd: string, root: string = logsRoot()): LoadedSession | null {
   if (!existsSync(root)) return null;
-  const ids = readdirSync(root).filter((n) => {
+  for (const entry of entriesForWorkspace(syncSessionIndex(root).entries, cwd)) {
+    if (entry.archived) continue;
     try {
-      return statSync(join(root, n)).isDirectory() && existsSync(join(root, n, "manifest.json"));
+      // The manifest is the authority: an index row whose session is gone or
+      // whose workspace no longer matches is skipped, not trusted.
+      return loadSession(entry.sessionId, root, cwd);
     } catch {
-      return false;
-    }
-  });
-  let best: LoadedSession | null = null;
-  for (const id of ids) {
-    try {
-      const s = loadSession(id, root);
-      if (!isCurrentWorkspace(s.manifest.cwd, cwd)) continue;
-      if (!best || s.manifest.started > best.manifest.started) best = s;
-    } catch {
-      /* skip unreadable */
+      /* stale or unreadable row — try the next one */
     }
   }
-  return best;
+  return null;
 }
 
 /** Render stored events back into transcript lines (reuses monologueLine). */

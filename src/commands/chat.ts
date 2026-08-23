@@ -472,6 +472,10 @@ async function repl(ctx: AppContext, skillOpts: TurnSkillOptions = {}): Promise<
       version: VERSION,
       model: model || "auto",
       effort: ctx.cfg.defaultEffort || "default",
+      // Single additive field (lane AA-CONT-04): passing the workspace turns on
+      // the PROJECT CONTINUITY block in ui/splash.ts. Omitting it renders the
+      // splash exactly as before, and reads nothing from disk.
+      cwd: ctx.flags.cwd,
     }) + "\n\n",
   );
   // One-line dim banner: which brain serves turns this session (local-first).
