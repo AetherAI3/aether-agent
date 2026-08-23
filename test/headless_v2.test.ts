@@ -229,6 +229,40 @@ test("checkpoints resume only under live authority and the exact repository/work
   );
 });
 
+test("checkpoint resume treats an access-denied owner process as alive", () => {
+  const root = repository();
+  const store = new HeadlessCheckpointStore(
+    root,
+    mkdtempSync(join(tmpdir(), "aether-headless-v2-eperm-")),
+  );
+  const checkpoint = store.create({
+    session: "eperm-session", task: "continue", driver: "selftest", model: null, modelTag: null,
+    effort: null, permission: "deny", allowedTools: [], capabilityPacks: [], agent: null,
+    verifyCommand: undefined, authorityTtlMs: 60_000,
+  });
+  const deniedPid = 2_147_483_646;
+  checkpoint.state = "paused";
+  checkpoint.owner_pid = deniedPid;
+  store.write(checkpoint);
+
+  const originalKill = process.kill;
+  Object.defineProperty(process, "kill", {
+    configurable: true,
+    writable: true,
+    value: (pid: number): never => {
+      assert.equal(pid, deniedPid);
+      const error = new Error("operation not permitted") as NodeJS.ErrnoException;
+      error.code = "EPERM";
+      throw error;
+    },
+  });
+  try {
+    assert.throws(() => store.loadForResume("eperm-session"), /owned by active process/);
+  } finally {
+    Object.defineProperty(process, "kill", { configurable: true, writable: true, value: originalKill });
+  }
+});
+
 test("malformed checkpoint mutations cannot widen authority or alter the recorded task", () => {
   const root = repository();
   const store = new HeadlessCheckpointStore(

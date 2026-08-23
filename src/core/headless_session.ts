@@ -276,7 +276,11 @@ export function confineWithAgentDefinition(
 function processAlive(pid: number): boolean {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; }
-  catch { return false; }
+  catch (error) {
+    // EPERM proves the process exists even though this account cannot signal
+    // it. Treating that as dead would permit a concurrent checkpoint resume.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 function validateCheckpoint(value: unknown, expectedSession: string): HeadlessCheckpoint {
