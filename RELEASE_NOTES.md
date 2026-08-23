@@ -36,7 +36,9 @@ either.
   diagnose Ollama without an account or a hosted request. `local models` lists
   namespaced `ollama:<tag>` ids; `local use` and `local pull` show their plans
   and require explicit approval. Neither operation silently switches the
-  backend, and a saved hosted model id is never forwarded to Ollama.
+  backend. Auto-local fallback refuses bare model ids, hosted paths refuse the
+  `ollama:` namespace, and the compatibility bare-tag form is accepted only
+  beside an explicit `--local`.
 - **A review → commit → pull request rail.** `aether review` reads the
   repository's real state, lets you pick what goes in, commits exactly that, and
   `aether ship` publishes the head branch and opens the pull request.

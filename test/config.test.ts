@@ -31,6 +31,14 @@ test("saveConfig then loadConfig round-trips", async () => {
   assert.equal(cfg.permissionMode, "skip");
 });
 
+test("legacy namespaced local selection migrates out of the hosted default in memory", async () => {
+  const { loadConfig, saveConfig, DEFAULT_CONFIG } = await import("../src/core/config.js");
+  saveConfig({ ...DEFAULT_CONFIG, defaultModel: "ollama:gemma3:4b", localModel: "" });
+  const cfg = loadConfig();
+  assert.equal(cfg.defaultModel, "");
+  assert.equal(cfg.localModel, "ollama:gemma3:4b");
+});
+
 // The env override must never leak into the persisted file: load-with-env
 // then save (what /effort and `models use` do) must keep the file's baseUrl.
 test("saveConfig does not persist the AETHER_BASE_URL override", async () => {

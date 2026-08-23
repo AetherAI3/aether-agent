@@ -54,6 +54,9 @@ commit added feature implementation to that range.
   #91, #103, #104, #105.
 - 3 test-only commits: #82, #85, #87.
 - 1 documentation/hygiene commit: #90.
+- Product-spine additions after that historical range: `aether setup` and
+  `aether local` carry explicit `changed` command dispositions, and their
+  `ollama.local` requirement is `announced` in the current release notes.
 
 Two of these carry **behaviour changes** — three changes in total, all named in
 the "Behaviour changes" section of the release notes. #105 adds exit code 3 for
@@ -70,8 +73,11 @@ review/ship rail, `aether sessions`, the skills wiring, the opener and token-sto
 fixes and finally #105 landed the same way. The notes and this packet were
 regenerated against each new base rather than tagged against the old one. #96
 then landed on `main`, and #106 corrected the stale 527-entry manifest that had
-survived beside its 575-entry header. This integration branch now has a
-597-entry dry-run inventory, but no matching archive. Any lane that lands before
+survived beside its 575-entry header. The current product-spine integration
+worktree includes later release-truth, command-manifest, and bounded local/Ollama
+lanes on top of that historical range. Those commits are not silently folded
+into the old 28-commit count: review the actual merge-base-to-HEAD range. The
+current tree has a 597-entry dry-run inventory, but no matching archive. Any lane that lands before
 the tag is created moves the evidence again — which is why step 2 of §6 re-runs
 the candidate on the merge commit rather than trusting a historical digest.
 `test/release_coherence.test.ts` fails the build if a
@@ -119,8 +125,9 @@ That runs `.github/workflows/release.yml`'s sequence against a detached
 prefix → CLI proofs run from the installed package.
 
 There are two evidence classes below. The current facts come from npm's
-**dry-run inventory** on the integration tree; they do not describe an archive
-or name a final merge commit.
+**dry-run inventory** of the checked-out product-spine candidate after the local
+setup fix cycle; they do not describe an archive. This packet does not embed a
+supposed self-referential commit id: committing the packet changes that id.
 The archive digest and installed-CLI proof come from the **historical candidate**
 at `fb96ee44b03f37a386954a32412728fa7e98a046`; they do not describe the current
 597-entry tree. Neither substitutes for the post-merge run required by §6.2.
@@ -179,7 +186,7 @@ guard — so the digest moved with it. A digest that had survived those changes
 would have meant the pack was not reading the tree.
 
 The historical `70a48aca…` digest belongs only to the 575-entry archive in the
-candidate block. The current dry run has seven more entries and no archive, so
+candidate block. The current dry run has more entries and no archive, so
 there is no honest digest to compare with it yet. The packet itself remains
 outside the tarball: the `files` allowlist is `dist/src`, the four generated public
 documents, README, COMMANDS, LICENSE, and NOTICE; `docs/releases/` remains excluded.
@@ -197,6 +204,9 @@ reports 65 pass / 0 fail; and `release:truth` reports
 result belonged to the historical candidate context and is not presented as
 current exact-head evidence. The full suite remains a required release workflow
 gate.
+The local-lane namespace, pull, config, session, handoff, command-manifest, and
+release-coherence selection independently reported 96 pass / 0 fail before
+integration; exact-head integration proof is rerun below before handoff.
 
 ### Historical mutation check on the load-bearing gate
 
@@ -268,8 +278,9 @@ than by hand:
   covered by the 2026-08-14 entry as "durable media output history". It only
   became visible here because the announcement matcher was tightened (below).
 
-The four commands this release DOES add — `aether review`, `aether ship`,
-`aether sessions`, and the already-announced `aether doctor` — are all announced
+The six commands this release DOES add — `aether review`, `aether ship`,
+`aether sessions`, the already-announced `aether doctor`, and the product-spine
+`aether setup` / `aether local` surfaces — are all announced
 in the v0.3.0 entry, so none of them appears above.
 
 `login` and `logout` are exempt by rule: the registry marks them `hidden`, so

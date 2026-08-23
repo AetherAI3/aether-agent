@@ -2,6 +2,10 @@ import { DEFAULT_OLLAMA_MODEL } from "./ollama.js";
 
 export const LOCAL_MODEL_PREFIX = "ollama:";
 
+export function isLocalModelId(value: string | null | undefined): boolean {
+  return (value ?? "").trim().startsWith(LOCAL_MODEL_PREFIX);
+}
+
 /** A local model id is namespaced so it can never be mistaken for a hosted id. */
 export function localModelId(tag: string): string {
   const normalized = normalizeOllamaTag(tag);
@@ -25,14 +29,43 @@ export function ollamaTagFromId(id: string | null | undefined): string | null {
  * because --local makes that intent unambiguous. A saved default is used only
  * when it carries the ollama: namespace; hosted defaults never become tags.
  */
-export function resolveLocalModel(explicit: string | undefined, savedDefault: string): string {
+export function resolveLocalModel(
+  explicit: string | undefined,
+  savedDefault: string,
+  options: { allowBareExplicit?: boolean } = {},
+): string {
   if (explicit?.trim()) {
     if (explicit.trim().startsWith(LOCAL_MODEL_PREFIX)) {
       return normalizeOllamaTag(explicit.trim().slice(LOCAL_MODEL_PREFIX.length));
     }
-    return normalizeOllamaTag(explicit);
+    if (options.allowBareExplicit) return normalizeOllamaTag(explicit);
+    throw new Error(
+      `Model ${JSON.stringify(explicit.trim())} is not a local model id. ` +
+        `Use ${LOCAL_MODEL_PREFIX}<tag>, or pass --local to opt into the legacy bare-tag form.`,
+    );
   }
   return ollamaTagFromId(savedDefault) ?? DEFAULT_OLLAMA_MODEL;
+}
+
+/** A cloud request must never carry a local Ollama namespace. */
+export function resolveHostedModel(explicit: string | undefined, hostedDefault = ""): string {
+  const selected = explicit?.trim() || hostedDefault.trim();
+  if (isLocalModelId(selected)) {
+    throw new Error(
+      `Model ${JSON.stringify(selected)} is local-only and cannot be sent to the hosted backend. ` +
+        "Run with --local or choose a hosted model id.",
+    );
+  }
+  return selected;
+}
+
+export function resolveLocalModelSelection(
+  explicit: string | undefined,
+  savedDefault: string,
+  options: { allowBareExplicit?: boolean } = {},
+): { tag: string; id: string } {
+  const tag = resolveLocalModel(explicit, savedDefault, options);
+  return { tag, id: localModelId(tag) };
 }
 
 /** Validate a tag before it reaches argv, config, a URL, or terminal output. */

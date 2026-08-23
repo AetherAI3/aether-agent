@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import type { AppContext } from "../core/context.js";
 import { saveConfig } from "../core/config.js";
 import { normalizeOllamaHost } from "../core/ollama.js";
@@ -6,15 +6,16 @@ import { localModelId, normalizeOllamaTag, resolveLocalModel } from "../core/loc
 
 export const LOCAL_EXIT = {
   ok: 0,
-  declined: 3,
   usage: 2,
-  binaryAbsent: 10,
-  serverDown: 11,
-  emptyModels: 12,
-  selectedMissing: 13,
-  timeout: 14,
-  malformedResponse: 15,
-  operationFailed: 16,
+  declined: 20,
+  binaryAbsent: 21,
+  serverDown: 22,
+  emptyModels: 23,
+  selectedMissing: 24,
+  timeout: 25,
+  malformedResponse: 26,
+  operationFailed: 27,
+  mutationFailed: 28,
 } as const;
 
 export interface LocalProcessResult {
@@ -27,13 +28,14 @@ export interface LocalProcessResult {
 
 export interface LocalRuntimeDeps {
   run(command: string, args: readonly string[], timeoutMs: number): LocalProcessResult;
+  pull(command: string, args: readonly string[], timeoutMs: number, onProgress: (chunk: string) => void): Promise<LocalProcessResult>;
   requestTags(host: string, timeoutMs: number): Promise<unknown>;
   save(ctx: AppContext): void;
 }
 
 interface LocalSnapshot {
   host: string;
-  binary: { present: boolean; version: string; timedOut: boolean };
+  binary: { present: boolean; version: string; timedOut: boolean; errorCode?: string };
   server: "up" | "down" | "timeout" | "malformed";
   models: string[];
   selectedTag: string;
@@ -45,13 +47,93 @@ interface LocalSnapshot {
 
 const PROBE_TIMEOUT_MS = 5_000;
 const PULL_TIMEOUT_MS = 30 * 60_000;
+const RECEIPT_BYTES = 8 * 1024;
+const PROGRESS_CHUNK_BYTES = 16 * 1024;
 
 class MalformedOllamaResponseError extends Error {
   override readonly name = "MalformedOllamaResponseError";
 }
 
+function isTimeoutError(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current = error;
+  for (let depth = 0; depth < 5 && current instanceof Error && !seen.has(current); depth += 1) {
+    seen.add(current);
+    if (current.name === "AbortError" || current.name === "TimeoutError" || /timed?\s*out|timeout/i.test(current.message)) return true;
+    const code = (current as NodeJS.ErrnoException).code;
+    if (code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT" || code === "UND_ERR_HEADERS_TIMEOUT" || code === "UND_ERR_BODY_TIMEOUT") return true;
+    current = (current as Error & { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 function cleanLine(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 200);
+}
+
+function progressText(value: string): string {
+  return value.replace(/\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001b\\))/g, "")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+    .slice(0, PROGRESS_CHUNK_BYTES);
+}
+
+function receiptTail(current: string, chunk: string): string {
+  const combined = current + chunk;
+  return combined.length <= RECEIPT_BYTES ? combined : combined.slice(-RECEIPT_BYTES);
+}
+
+/** Async argv-only runner used by pulls; output is streamed and receipts keep only a bounded tail. */
+export function runStreamingProcess(
+  command: string,
+  args: readonly string[],
+  timeoutMs: number,
+  onProgress: (chunk: string) => void,
+): Promise<LocalProcessResult> {
+  return new Promise<LocalProcessResult>((resolve) => {
+    const child = spawn(command, [...args], {
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let errorCode: string | undefined;
+    let timedOut = false;
+    let forceTimer: ReturnType<typeof setTimeout> | null = null;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      forceTimer = setTimeout(() => child.kill("SIGKILL"), 2_000);
+      forceTimer.unref();
+    }, timeoutMs);
+    timer.unref();
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout = receiptTail(stdout, chunk);
+      const safe = progressText(chunk);
+      if (safe) onProgress(safe);
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr = receiptTail(stderr, chunk);
+      const safe = progressText(chunk);
+      if (safe) onProgress(safe);
+    });
+    child.once("error", (error: NodeJS.ErrnoException) => {
+      errorCode = error.code;
+    });
+    child.once("close", (status) => {
+      clearTimeout(timer);
+      if (forceTimer) clearTimeout(forceTimer);
+      resolve({
+        status,
+        stdout,
+        stderr,
+        ...(errorCode ? { errorCode } : {}),
+        ...(timedOut ? { timedOut: true } : {}),
+      });
+    });
+  });
 }
 
 const productionDeps: LocalRuntimeDeps = {
@@ -72,6 +154,7 @@ const productionDeps: LocalRuntimeDeps = {
       ...(code === "ETIMEDOUT" ? { timedOut: true } : {}),
     };
   },
+  pull: runStreamingProcess,
   async requestTags(host, timeoutMs) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -123,6 +206,7 @@ async function snapshot(ctx: AppContext, deps: LocalRuntimeDeps): Promise<LocalS
     present: binaryResult.status === 0,
     version: binaryResult.status === 0 ? cleanLine(binaryResult.stdout || binaryResult.stderr) || "present" : "not found",
     timedOut: binaryResult.timedOut === true,
+    ...(binaryResult.errorCode ? { errorCode: binaryResult.errorCode } : {}),
   };
   const selectedTag = resolveLocalModel(undefined, ctx.cfg.localModel ?? "");
   const common = {
@@ -138,7 +222,7 @@ async function snapshot(ctx: AppContext, deps: LocalRuntimeDeps): Promise<LocalS
   try {
     raw = await deps.requestTags(host, PROBE_TIMEOUT_MS);
   } catch (error) {
-    const timedOut = error instanceof Error && (error.name === "AbortError" || /timed?\s*out/i.test(error.message));
+    const timedOut = isTimeoutError(error);
     return {
       ...common,
       server: error instanceof MalformedOllamaResponseError ? "malformed" : timedOut ? "timeout" : "down",
@@ -153,7 +237,7 @@ async function snapshot(ctx: AppContext, deps: LocalRuntimeDeps): Promise<LocalS
 
 function snapshotExit(state: LocalSnapshot): number {
   if (state.binary.timedOut) return LOCAL_EXIT.timeout;
-  if (!state.binary.present) return LOCAL_EXIT.binaryAbsent;
+  if (!state.binary.present) return state.binary.errorCode === "ENOENT" ? LOCAL_EXIT.binaryAbsent : LOCAL_EXIT.operationFailed;
   if (state.server === "timeout") return LOCAL_EXIT.timeout;
   if (state.server === "down") return LOCAL_EXIT.serverDown;
   if (state.server === "malformed") return LOCAL_EXIT.malformedResponse;
@@ -168,8 +252,12 @@ function runtimeFailure(state: LocalSnapshot, requireBinary: boolean): number | 
     return LOCAL_EXIT.timeout;
   }
   if (requireBinary && !state.binary.present) {
-    process.stderr.write("Ollama binary not found on PATH. Install Ollama and retry.\n");
-    return LOCAL_EXIT.binaryAbsent;
+    if (state.binary.errorCode === "ENOENT") {
+      process.stderr.write("Ollama binary not found on PATH. Install Ollama and retry.\n");
+      return LOCAL_EXIT.binaryAbsent;
+    }
+    process.stderr.write(`Ollama binary could not run${state.binary.errorCode ? ` (${state.binary.errorCode})` : ""}; repair the installation and retry.\n`);
+    return LOCAL_EXIT.operationFailed;
   }
   if (state.server === "timeout") {
     process.stderr.write("Ollama did not answer in 5s; check OLLAMA_HOST and the server.\n");
@@ -204,7 +292,7 @@ function writeSnapshot(ctx: AppContext, state: LocalSnapshot): void {
   process.stdout.write(
     `Local Ollama\n` +
       `  host             ${state.host}\n` +
-      `  binary           ${state.binary.present ? state.binary.version : "not found on PATH"}\n` +
+      `  binary           ${state.binary.present ? state.binary.version : state.binary.errorCode === "ENOENT" ? "not found on PATH" : "could not execute"}\n` +
       `  server           ${state.server}\n` +
       `  installed models ${state.models.length}\n` +
       `  selected model   ${state.selectedId}${state.selectedPresent ? "" : " (not installed)"}\n` +
@@ -212,7 +300,8 @@ function writeSnapshot(ctx: AppContext, state: LocalSnapshot): void {
       `  hosted auth      ${state.hostedAuth}\n`,
   );
   if (state.binary.timedOut) process.stderr.write("The Ollama binary check timed out; inspect the local installation and retry.\n");
-  else if (!state.binary.present) process.stderr.write("Install Ollama, then run: aether local doctor\n");
+  else if (!state.binary.present && state.binary.errorCode === "ENOENT") process.stderr.write("Install Ollama, then run: aether local doctor\n");
+  else if (!state.binary.present) process.stderr.write(`Ollama binary could not run${state.binary.errorCode ? ` (${state.binary.errorCode})` : ""}; repair the installation.\n`);
   else if (state.server === "down") process.stderr.write("Start Ollama separately, then run: aether local doctor\n");
   else if (state.server === "timeout") process.stderr.write("Ollama did not answer in 5s; check OLLAMA_HOST and the server.\n");
   else if (state.server === "malformed") process.stderr.write("Ollama returned malformed model metadata; upgrade or restart Ollama.\n");
@@ -231,6 +320,10 @@ async function diagnose(ctx: AppContext, deps: LocalRuntimeDeps): Promise<{ code
 }
 
 export async function cmdSetup(ctx: AppContext, _argv: string[], _flags: unknown, deps: LocalRuntimeDeps = productionDeps): Promise<number> {
+  if (_argv.length !== 0) {
+    process.stderr.write("usage: aether setup --local\n");
+    return LOCAL_EXIT.usage;
+  }
   if (!ctx.flags.local) {
     process.stderr.write("usage: aether setup --local\nThis bounded setup path diagnoses local Ollama only; it does not switch backends.\n");
     return LOCAL_EXIT.usage;
@@ -242,9 +335,19 @@ export async function cmdSetup(ctx: AppContext, _argv: string[], _flags: unknown
 
 export async function cmdLocal(ctx: AppContext, argv: string[], _flags: unknown, deps: LocalRuntimeDeps = productionDeps): Promise<number> {
   const sub = argv[0] ?? "doctor";
-  if (sub === "doctor") return (await diagnose(ctx, deps)).code;
+  if (sub === "doctor") {
+    if (argv.length !== 1) {
+      process.stderr.write("usage: aether local doctor\n");
+      return LOCAL_EXIT.usage;
+    }
+    return (await diagnose(ctx, deps)).code;
+  }
 
   if (sub === "models") {
+    if (argv.length !== 1) {
+      process.stderr.write("usage: aether local models\n");
+      return LOCAL_EXIT.usage;
+    }
     const result = await snapshot(ctx, deps);
     if ("message" in result) {
       process.stderr.write(result.message + "\n");
@@ -297,8 +400,15 @@ export async function cmdLocal(ctx: AppContext, argv: string[], _flags: unknown,
       process.stderr.write("No changes made.\n");
       return LOCAL_EXIT.declined;
     }
+    const previous = ctx.cfg.localModel;
     ctx.cfg.localModel = id;
-    deps.save(ctx);
+    try {
+      deps.save(ctx);
+    } catch (error) {
+      ctx.cfg.localModel = previous;
+      process.stderr.write(`Could not save the local model selection: ${cleanLine(error instanceof Error ? error.message : String(error))}\n`);
+      return LOCAL_EXIT.mutationFailed;
+    }
     process.stdout.write(`local model → ${id}\nBackend was not changed. Use --local when you want Ollama.\n`);
     return LOCAL_EXIT.ok;
   }
@@ -322,12 +432,22 @@ export async function cmdLocal(ctx: AppContext, argv: string[], _flags: unknown,
       return LOCAL_EXIT.declined;
     }
     const binary = deps.run("ollama", ["--version"], PROBE_TIMEOUT_MS);
-    if (binary.status !== 0) {
-      process.stderr.write("Ollama binary not found on PATH. Install Ollama and retry.\n");
-      return LOCAL_EXIT.binaryAbsent;
+    if (binary.timedOut || binary.errorCode === "ETIMEDOUT") {
+      process.stderr.write("The Ollama binary check timed out; inspect the installation and retry.\n");
+      return LOCAL_EXIT.timeout;
     }
-    const pulled = deps.run("ollama", ["pull", tag], PULL_TIMEOUT_MS);
-    if (pulled.timedOut) {
+    if (binary.status !== 0) {
+      if (binary.errorCode === "ENOENT") {
+        process.stderr.write("Ollama binary not found on PATH. Install Ollama and retry.\n");
+        return LOCAL_EXIT.binaryAbsent;
+      }
+      process.stderr.write(`Ollama binary could not run${binary.errorCode ? ` (${binary.errorCode})` : ""}; repair the installation and retry.\n`);
+      return LOCAL_EXIT.operationFailed;
+    }
+    const pulled = await deps.pull("ollama", ["pull", tag], PULL_TIMEOUT_MS, (chunk) => {
+      process.stderr.write(chunk);
+    });
+    if (pulled.timedOut || pulled.errorCode === "ETIMEDOUT") {
       process.stderr.write("Ollama pull timed out after 30 minutes; retry when the connection is stable.\n");
       return LOCAL_EXIT.timeout;
     }

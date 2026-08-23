@@ -157,10 +157,17 @@ No token value is printed and no hosted API is called.
 | `aether local use <model>` | Plan and, after confirmation or `--yes`, save a namespaced local default. Does not switch the backend. |
 | `aether local pull <model>` | Plan and, after confirmation or `--yes`, run `ollama pull` with argv-only process launch. Does not select it. |
 
-Stable local setup exit codes are `10` binary absent, `11` server down, `12`
-no installed models, `13` selected model missing, `14` timeout, `15` malformed
-host/response, and `16` failed mutation. Usage remains `2`; declining a shown
-plan is `3`.
+Stable local setup exit codes are `21` binary absent, `22` server down, `23`
+no installed models, `24` selected model missing, `25` timeout, `26` malformed
+host/response, `27` failed Ollama operation, and `28` failed configuration
+mutation. Usage remains `2`; declining a shown plan is `20`. These values do
+not collide with the hosted routing-refusal code `3`.
+
+A bare `--model <tag>` is accepted for backward compatibility only when
+`--local` explicitly selects Ollama. Auto-local fallback requires the
+`ollama:<tag>` namespace, so a hosted model id cannot silently become an Ollama
+pull/chat tag. Conversely, an `ollama:` id is rejected before any hosted
+request.
 
 ### `aether resume [id | export [id]]` — replay or carry a session
 Replays a prior local coding session's transcript from `~/.aether-agent/logs/`.

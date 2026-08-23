@@ -1,15 +1,28 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AppContext } from "../src/core/context.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import {
   LOCAL_EXIT,
   cmdLocal,
   cmdSetup,
+  runStreamingProcess,
   type LocalProcessResult,
   type LocalRuntimeDeps,
 } from "../src/commands/local.js";
-import { localModelId, normalizeOllamaTag, ollamaTagFromId, resolveLocalModel } from "../src/core/local_ollama.js";
+import {
+  localModelId, normalizeOllamaTag, ollamaTagFromId, resolveHostedModel,
+  resolveLocalModel, resolveLocalModelSelection,
+} from "../src/core/local_ollama.js";
+import { SessionLog } from "../src/core/session_log.js";
+import { loadSession } from "../src/core/session_resume.js";
+import { buildHandoff } from "../src/core/handoff.js";
+import { cmdModels } from "../src/commands/models.js";
+import { runLocalTurn } from "../src/commands/chat.js";
+import type { Brain } from "../src/core/brain.js";
 
 function context(overrides: Partial<AppContext["flags"]> = {}, token: string | null = null): AppContext {
   return {
@@ -28,6 +41,7 @@ function okRun(stdout = "ollama version 1.0.0\n"): LocalProcessResult {
 function deps(overrides: Partial<LocalRuntimeDeps> = {}): LocalRuntimeDeps {
   return {
     run: () => okRun(),
+    pull: async () => okRun(),
     requestTags: async () => ({ models: [{ name: "qwen2.5-coder:7b" }, { name: "gemma3:4b" }] }),
     save: () => {},
     ...overrides,
@@ -55,21 +69,67 @@ test("local ids are namespaced and hosted defaults never become Ollama tags", ()
   assert.equal(ollamaTagFromId("gpt-5.6-sol"), null);
   assert.equal(resolveLocalModel(undefined, "gpt-5.6-sol"), "qwen2.5-coder:7b");
   assert.equal(resolveLocalModel(undefined, "ollama:gemma3:4b"), "gemma3:4b");
-  assert.equal(resolveLocalModel("legacy-bare:7b", "gpt-5.6-sol"), "legacy-bare:7b");
+  assert.throws(() => resolveLocalModel("legacy-bare:7b", "gpt-5.6-sol"), /--local/);
+  assert.equal(resolveLocalModel("legacy-bare:7b", "", { allowBareExplicit: true }), "legacy-bare:7b");
   assert.throws(() => resolveLocalModel("ollama:", ""));
+  assert.deepEqual(resolveLocalModelSelection(undefined, "ollama:gemma3:4b"), {
+    tag: "gemma3:4b",
+    id: "ollama:gemma3:4b",
+  });
+  assert.throws(() => resolveHostedModel("ollama:gemma3:4b"), /local-only/);
   assert.throws(() => normalizeOllamaTag("--bad"));
   assert.throws(() => normalizeOllamaTag("bad tag"));
 });
 
-test("signed-out doctor normalizes OLLAMA_HOST and never emits a credential", async () => {
+test("resolved local model survives session and handoff provenance with its namespace", () => {
+  const root = mkdtempSync(join(tmpdir(), "aether-local-provenance-"));
+  try {
+    const selected = resolveLocalModelSelection(undefined, "ollama:gemma3:4b");
+    const log = new SessionLog(
+      { task: "fix it", model: selected.id, poolGb: 5, brain: "local", cwd: root },
+      "2026-08-23T12:00:00.000Z",
+      root,
+      () => undefined,
+    );
+    log.close("unverified", "2026-08-23T12:01:00.000Z");
+    const loaded = loadSession(log.sessionId, root, root);
+    assert.equal(loaded.manifest.model, "ollama:gemma3:4b");
+    assert.equal(buildHandoff(loaded).model, "ollama:gemma3:4b");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("hosted model selection rejects an Ollama namespace before network or config writes", async () => {
+  const ctx = context();
+  ctx.api = new Proxy({} as AppContext["api"], { get: () => { throw new Error("hosted API touched"); } });
+  const result = await capture(() => cmdModels(ctx, ["use", "ollama:gemma3:4b"]));
+  assert.equal(result.code, LOCAL_EXIT.usage);
+  assert.match(result.stderr, /local-only/);
+  assert.equal(ctx.cfg.defaultModel, "");
+});
+
+test("auto-local rejects a bare explicit model before starting a brain", async () => {
+  const ctx = context({ model: "gpt-5.6-sol", local: false });
+  await assert.rejects(
+    runLocalTurn(ctx, "hello", undefined, { brain: {} as Brain }),
+    /not a local model id/,
+  );
+});
+
+test("truly signed-out doctor normalizes OLLAMA_HOST without hosted API access", async () => {
   const previous = process.env["OLLAMA_HOST"];
   process.env["OLLAMA_HOST"] = "0.0.0.0:11434/";
   try {
-    const result = await capture(() => cmdLocal(context({}, "top-secret-token"), ["doctor"], {}, deps()));
+    let tokenReads = 0;
+    const ctx = context({}, null);
+    ctx.tokens.get = async () => { tokenReads += 1; return null; };
+    ctx.api = new Proxy({} as AppContext["api"], { get: () => { throw new Error("hosted API touched"); } });
+    const result = await capture(() => cmdLocal(ctx, ["doctor"], {}, deps()));
     assert.equal(result.code, LOCAL_EXIT.ok);
     assert.match(result.stdout, /http:\/\/127\.0\.0\.1:11434/);
-    assert.match(result.stdout, /hosted auth\s+signed-in/);
-    assert.doesNotMatch(result.stdout + result.stderr, /top-secret-token/);
+    assert.match(result.stdout, /hosted auth\s+signed-out/);
+    assert.equal(tokenReads, 1);
   } finally {
     if (previous === undefined) delete process.env["OLLAMA_HOST"];
     else process.env["OLLAMA_HOST"] = previous;
@@ -95,6 +155,12 @@ test("doctor has stable exit codes for absent binary, down server, empty and mis
   assert.equal(absent.code, LOCAL_EXIT.binaryAbsent);
   assert.match(absent.stderr, /Install Ollama/);
 
+  const denied = await capture(() => cmdLocal(context(), ["doctor"], {}, deps({
+    run: () => ({ status: null, stdout: "", stderr: "", errorCode: "EACCES" }),
+  })));
+  assert.equal(denied.code, LOCAL_EXIT.operationFailed);
+  assert.match(denied.stderr, /could not run.*EACCES/);
+
   const down = await capture(() => cmdLocal(context(), ["doctor"], {}, deps({
     requestTags: async () => { throw new Error("ECONNREFUSED"); },
   })));
@@ -117,6 +183,14 @@ test("timeout, malformed response, and invalid host are distinct failures", asyn
     requestTags: async () => { const error = new Error("request timed out"); error.name = "AbortError"; throw error; },
   })));
   assert.equal(timeout.code, LOCAL_EXIT.timeout);
+
+  const causeTimeout = await capture(() => cmdLocal(context(), ["doctor"], {}, deps({
+    requestTags: async () => {
+      const cause = Object.assign(new Error("connect"), { code: "UND_ERR_CONNECT_TIMEOUT" });
+      throw new Error("fetch failed", { cause });
+    },
+  })));
+  assert.equal(causeTimeout.code, LOCAL_EXIT.timeout);
 
   const binaryTimeout = await capture(() => cmdLocal(context(), ["doctor"], {}, deps({
     run: () => ({ status: null, stdout: "", stderr: "", timedOut: true, errorCode: "ETIMEDOUT" }),
@@ -183,6 +257,11 @@ test("local pull uses argv-only runner, displays plan, and does not download wit
       calls.push({ command, args });
       return okRun();
     },
+    pull: async (command, args, _timeout, progress) => {
+      calls.push({ command, args });
+      progress("pulling layers 50%\n");
+      return okRun("pull complete\n");
+    },
   });
   const ctx = context();
   const declined = await capture(() => cmdLocal(ctx, ["pull", "qwen2.5-coder:7b"], {}, fake));
@@ -197,7 +276,53 @@ test("local pull uses argv-only runner, displays plan, and does not download wit
     { command: "ollama", args: ["--version"] },
     { command: "ollama", args: ["pull", "qwen2.5-coder:7b"] },
   ]);
+  assert.match(accepted.stderr, /pulling layers 50%/);
   assert.match(accepted.stdout, /Selection and backend were not changed/);
+
+  const timed = await capture(() => cmdLocal(ctx, ["pull", "qwen2.5-coder:7b"], {}, deps({
+    pull: async () => ({ status: null, stdout: "", stderr: "", errorCode: "ETIMEDOUT" }),
+  })));
+  assert.equal(timed.code, LOCAL_EXIT.timeout);
+  assert.match(timed.stderr, /timed out/);
+});
+
+test("streaming runner retains bounded receipts and classifies timeout", async () => {
+  let progress = "";
+  const completed = await runStreamingProcess(
+    process.execPath,
+    ["-e", "process.stdout.write('x'.repeat(50000)); process.stderr.write('done\\n')"],
+    5_000,
+    (chunk) => { progress += chunk; },
+  );
+  assert.equal(completed.status, 0);
+  assert.ok(completed.stdout.length <= 8 * 1024);
+  assert.match(progress, /done/);
+
+  const timed = await runStreamingProcess(
+    process.execPath,
+    ["-e", "setTimeout(() => {}, 10000)"],
+    25,
+    () => {},
+  );
+  assert.equal(timed.timedOut, true);
+});
+
+test("exit codes are unique and config write failure rolls state back", async () => {
+  const values = Object.values(LOCAL_EXIT);
+  assert.equal(new Set(values).size, values.length);
+  const ctx = context({ yes: true });
+  const failed = await capture(() => cmdLocal(ctx, ["use", "gemma3:4b"], {}, deps({
+    save: () => { throw new Error("disk full"); },
+  })));
+  assert.equal(failed.code, LOCAL_EXIT.mutationFailed);
+  assert.equal(ctx.cfg.localModel, "");
+  assert.match(failed.stderr, /Could not save.*disk full/);
+});
+
+test("read-only commands reject trailing arguments", async () => {
+  assert.equal((await capture(() => cmdSetup(context({ local: true }), ["extra"], {}, deps()))).code, LOCAL_EXIT.usage);
+  assert.equal((await capture(() => cmdLocal(context(), ["doctor", "extra"], {}, deps()))).code, LOCAL_EXIT.usage);
+  assert.equal((await capture(() => cmdLocal(context(), ["models", "extra"], {}, deps()))).code, LOCAL_EXIT.usage);
 });
 
 test("setup is explicitly local and remains read-only", async () => {

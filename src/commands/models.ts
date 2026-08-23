@@ -18,6 +18,7 @@ import { MODELS_PATH } from "../core/transport.js";
 import { saveConfig } from "../core/config.js";
 import { theme } from "../ui/theme.js";
 import { visibleWidth } from "../ui/text.js";
+import { resolveHostedModel } from "../core/local_ollama.js";
 
 export async function cmdModels(ctx: AppContext, argv: string[]): Promise<number> {
   const sub = argv[0];
@@ -27,7 +28,14 @@ export async function cmdModels(ctx: AppContext, argv: string[]): Promise<number
       process.stderr.write("usage: aether models use <id>\n");
       return 2;
     }
-    ctx.cfg.defaultModel = id;
+    let hostedId: string;
+    try {
+      hostedId = resolveHostedModel(id);
+    } catch (error) {
+      process.stderr.write((error instanceof Error ? error.message : String(error)) + "\n");
+      return 2;
+    }
+    ctx.cfg.defaultModel = hostedId;
     saveConfig(ctx.cfg);
     process.stdout.write(`default model → ${id}\n`);
     return 0;
