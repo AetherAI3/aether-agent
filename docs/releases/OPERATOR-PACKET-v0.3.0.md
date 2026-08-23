@@ -282,9 +282,9 @@ release_coherence -> FAIL: no user-visible command ships without either a
 ```
 
 The production manifest and pack validators reported no errors at 575 files and
-3,022,363 unpacked bytes. `release_coherence` failed both the changed packet
-measurement and the unannounced `teleport` command. Removed: 12/12 pass, and
-the restored package returned byte-for-byte to 3,022,168 unpacked bytes.
+3,022,363 unpacked bytes. `release_coherence` failed the unannounced `teleport`
+command. Removed: 12/12 pass, and the restored package returned byte-for-byte
+to 3,022,168 unpacked bytes.
 
 ## 5. What is NOT proven
 

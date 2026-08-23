@@ -114,17 +114,12 @@ test("an operator packet exists for this version and binds a commit", () => {
 });
 
 test(
-  "the operator packet's current package measurements match npm pack",
+  "the operator packet's current manifest agrees with npm pack without claiming cross-machine byte identity",
   { timeout: 120_000 },
   () => {
     const packet = read("docs", "releases", `OPERATOR-PACKET-v${VERSION}.md`);
     const packed = currentPackReport();
     const headerEntries = packetNumber(packet, /\| Packed entries \| ([\d,]+) \|/, "the header entry count");
-    const headerPackedBytes = packetNumber(
-      packet,
-      /\| Tarball size \| ([\d,]+) bytes packed \/ [\d,]+ unpacked \|/,
-      "the header packed byte count",
-    );
     const headerBytes = packetNumber(
       packet,
       /\| Tarball size \| [\d,]+ bytes packed \/ ([\d,]+) unpacked \|/,
@@ -135,16 +130,17 @@ test(
     const manifestEntries = Number.parseInt(manifest[1]!.replaceAll(",", ""), 10);
     const manifestBytes = Number.parseInt(manifest[2]!.replaceAll(",", ""), 10);
 
-    assert.deepEqual(
-      { headerEntries, headerPackedBytes, headerBytes, manifestEntries, manifestBytes },
-      {
-        headerEntries: packed.entryCount,
-        headerPackedBytes: packed.size,
-        headerBytes: packed.unpackedSize,
-        manifestEntries: packed.entryCount,
-        manifestBytes: packed.unpackedSize,
-      },
-      "the operator packet mixes package measurements from different release bases",
+    // npm's packed and unpacked byte totals move with checkout line endings;
+    // the packet explicitly records one machine's result, not cross-machine
+    // reproducibility. Entry membership is portable. The two byte claims in
+    // the packet must still agree with each other so an old manifest cannot
+    // survive beside a newly measured header.
+    assert.equal(headerEntries, packed.entryCount, "the packet header entry count does not match npm pack");
+    assert.equal(manifestEntries, packed.entryCount, "the packet manifest entry count does not match npm pack");
+    assert.equal(
+      manifestBytes,
+      headerBytes,
+      "the packet mixes unpacked byte measurements from different release bases",
     );
   },
 );
