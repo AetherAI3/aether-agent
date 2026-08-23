@@ -91,6 +91,27 @@ export type ControlResult =
   | { kind: "ok"; state: PreviewState }
   | { kind: "unreachable" };
 
+function processAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM proves a process exists even though this account cannot signal it.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function removeOwnedState(path: string, instanceId: string): boolean {
+  try {
+    const stable = readStablePreviewFile(path, 32_768);
+    const state = parsePreviewState(JSON.parse(stable.bytes.toString("utf8")));
+    if (state?.instanceId !== instanceId || !previewPathStillNames(path, stable.identity)) return false;
+    unlinkSync(path);
+    return true;
+  } catch { return false; }
+}
+
 function removeOwnedControlRequest(path: string, requestId: string): void {
   try {
     if (!existsSync(path)) return;
@@ -135,14 +156,22 @@ export async function previewControlRequest(
 async function currentState(
   projectRoot: string,
   statePath: string,
-): Promise<{ state: PreviewState | null; ownership: "absent" | "verified" | "unreachable" }> {
+): Promise<{ state: PreviewState | null; ownership: "absent" | "verified" | "unreachable" | "stale" }> {
   const state = readState(statePath);
   if (!state) return { state: null, ownership: "absent" };
   if (realpathSync(resolve(state.projectRoot)) !== projectRoot) throw new Error("preview state belongs to a different project");
   const live = await previewControlRequest(state, statePath, "GET", "/status");
-  return live.kind === "ok"
-    ? { state: live.state, ownership: "verified" }
-    : { state, ownership: "unreachable" };
+  if (live.kind === "ok") return { state: live.state, ownership: "verified" };
+  // A challenge miss alone proves nothing: the supervisor may be slow or its
+  // control listener may be momentarily unavailable. A supervisor-authored
+  // terminal failure plus two dead recorded processes is different. It grants
+  // authority to remove only the state file, never to signal a PID. Ready,
+  // starting and stopping records remain unverified even when their PIDs look
+  // dead because an abrupt crash may have left untracked descendants behind.
+  if (state.phase === "failed" && !processAlive(state.supervisorPid) && !processAlive(state.childPid)) {
+    return { state, ownership: "stale" };
+  }
+  return { state, ownership: "unreachable" };
 }
 
 function showOpen(state: PreviewState, noOpen: boolean, out: Writable, err: Writable, opener = openBrowserChecked): number {
@@ -196,6 +225,13 @@ export async function cmdPreview(ctx: AppContext, argv: string[], options: Previ
         "State was preserved and no duplicate was started; retry status or stop.\n",
       );
       return PREVIEW_EXIT.controlFailed;
+    }
+    if (existing.state && existing.ownership === "stale") {
+      if (!removeOwnedState(paths.statePath, existing.state.instanceId)) {
+        err.write("Failed to remove the identity-bound failed preview state; no replacement was started.\n");
+        return PREVIEW_EXIT.unsafe;
+      }
+      err.write("Removed a terminal failed preview state after both recorded processes were confirmed absent.\n");
     }
     if (existing.state && existing.ownership === "verified") {
       if (existing.state.commandDigest !== digest) {
@@ -259,7 +295,7 @@ export async function cmdPreview(ctx: AppContext, argv: string[], options: Previ
   }
 
   let live: PreviewState | null;
-  let ownership: "absent" | "verified" | "unreachable";
+  let ownership: "absent" | "verified" | "unreachable" | "stale";
   try {
     ({ state: live, ownership } = await currentState(projectRoot, paths.statePath));
   } catch (error) {
@@ -267,6 +303,10 @@ export async function cmdPreview(ctx: AppContext, argv: string[], options: Previ
     return PREVIEW_EXIT.unsafe;
   }
   if (!live) { err.write("No managed preview is recorded for this project.\n"); return PREVIEW_EXIT.notRunning; }
+  if (ownership === "stale") {
+    err.write(`Preview state is terminal and stale (${live.instanceId}); no process was signalled.\n`);
+    return PREVIEW_EXIT.notRunning;
+  }
   if (ownership === "unreachable") {
     err.write(
       `Preview ownership is unverified (${live.instanceId}); state was preserved and no process was signalled. ` +

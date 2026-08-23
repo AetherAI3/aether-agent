@@ -351,3 +351,29 @@ test("launch failure is explicit and stale state never causes a PID signal", { t
   assert.equal(existsSync(paths.statePath), true);
   assert.doesNotThrow(() => process.kill(process.pid, 0));
 });
+
+test("only a terminal failed state with dead recorded processes permits identity-bound replacement", { timeout: 15_000 }, async () => {
+  const root = tempProject(); const out = sink(); const err = sink();
+  const paths = previewPaths(root);
+  const failedId = randomUUID();
+  const failed: PreviewState = {
+    schema: PREVIEW_SCHEMA, instanceId: failedId, projectRoot: root, commandDigest: "b".repeat(64),
+    phase: "failed", supervisorPid: 2_147_483_646, childPid: 0, controlPort: 9,
+    startedAt: new Date().toISOString(), error: "child exited before readiness",
+  };
+  writeFileSync(paths.statePath, JSON.stringify(failed), { mode: 0o600 });
+
+  const code = await cmdPreview(context(root), ["start"], {
+    command: join(root, "absent-replacement"), timeoutMs: "2000", noOpen: true,
+    out: out.stream, err: err.stream,
+  });
+  assert.equal(code, PREVIEW_EXIT.launchFailed);
+  assert.match(err.text(), /both recorded processes were confirmed absent/);
+  let replacement = JSON.parse(readFileSync(paths.statePath, "utf8")) as PreviewState;
+  assert.notEqual(replacement.instanceId, failedId, "the proven-stale record still blocked replacement");
+  for (let i = 0; i < 20 && replacement.phase === "starting"; i += 1) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+    replacement = JSON.parse(readFileSync(paths.statePath, "utf8")) as PreviewState;
+  }
+  assert.equal(replacement.phase, "failed");
+});
