@@ -196,24 +196,26 @@ test("close resolves an outstanding waiter so the run cannot hang", async () => 
 
 // ── control honesty ─────────────────────────────────────────────────────────
 
-test("control() reports that steering is unsupported instead of silently succeeding", async () => {
-  const { chat } = fakeChat(toolThenAnswer());
+test("control() acknowledges steering only when it reaches a fresh model turn", async () => {
+  const { chat, calls } = fakeChat(toolThenAnswer());
   const brain = new OllamaBrain({ chat });
   const events: BrainEvent[] = [];
+  let acknowledgement: ReturnType<OllamaBrain["control"]> | undefined;
   for await (const ev of brain.run(task)) {
     events.push(ev);
     if (ev.type === "tool_call") {
-      brain.control("steer", "actually, do something else");
+      acknowledgement = brain.control("steer", "actually, do something else");
       brain.sendToolResult(ev.id, { output: "ok", exitCode: 0 });
     }
   }
   brain.close();
-  const said = events
-    .filter((ev): ev is Extract<BrainEvent, { type: "monologue" }> => ev.type === "monologue")
-    .map((ev) => ev.text)
-    .join(" ");
-  assert.match(said, /steer/i, "a steer this brain cannot honour must be visible to the user");
-  assert.match(said, /not supported|unsupported|cannot/i);
+  assert.deepEqual(acknowledgement, { accepted: true, state: "running" });
+  assert.equal(
+    calls().at(-1)?.some((message) => message.role === "user" && message.content.includes("[Operator steering]\nactually, do something else")),
+    true,
+    "an acknowledged steer must reach the next model request",
+  );
+  assert.equal(events.some((ev) => ev.type === "done"), true, "the steered run still terminates");
 });
 
 // ── advertised tool schemas ─────────────────────────────────────────────────

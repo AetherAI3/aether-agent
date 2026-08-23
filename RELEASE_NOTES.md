@@ -112,13 +112,13 @@ either.
   build does not have reads as absent, not as unchecked.
 - **`aether support-bundle`** — a redacted diagnostic bundle you can hand to
   someone without handing over your credentials or your file contents.
-- **A command-registration seam.** A command now carries its own help text, its
-  own flag table and its own loader in one entry, so adding one is a single edit
-  instead of three that have to agree. Flag collisions are load-time errors
-  rather than last-writer-wins, and reachability is structural rather than
-  asserted by a regex over the source. You feel this as the three `doctor` fixes
-  below — those flags were lost precisely because the old shape let a command's
-  flags and its dispatch drift apart.
+- **An authoritative command-registration seam.** The versioned manifest owns
+  public help, flags, permissions, availability, documentation, and release
+  disposition; the runtime registry owns only handler names and loaders. CI
+  reconciles both sides, so missing/orphan handlers and flag collisions fail at
+  load time instead of drifting across separate hand-maintained surfaces. You
+  feel this as the three `doctor` fixes below — those flags were lost precisely
+  because the old shape let a command's public contract and dispatch diverge.
 
 ## Carried forward from the unpublished 0.2.0
 
