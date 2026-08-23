@@ -1,5 +1,5 @@
 <!-- GENERATED FILE: run `npm run docs:generate`; do not edit by hand. -->
-<!-- manifest-digest: sha256:816d1bc9b8b476feafa09e05702f22fd0b87a46f22646e5d7a0d8ee42fdc432f -->
+<!-- manifest-digest: sha256:d2ae53b89767b2dd4763e957e4851d97fb953d305304b3a581a3596c82bbf6c4 -->
 # Generated command reference
 
 This reference is generated from the validated, versioned command manifest. Availability is evaluated at runtime; a listed command may still require authentication, a hosted capability, or local tooling.
@@ -54,11 +54,11 @@ list available orchestrators
 
 Permission: `read-only` · Availability: `runtime-dependent` · Telemetry: `shell.agents` · Requires: `aether.hosted`
 
-#### `aether exec [flags] "task"`
+#### `aether exec [--exec-driver ollama|cloud|selftest] [flags] "task"`
 
-run the local coding agent over versioned JSONL
+run the packaged coding agent over versioned JSONL
 
-Permission: `local-write` · Availability: `runtime-dependent` · Telemetry: `shell.exec` · Requires: `aether.local-child`, `aether.headless.v1`, `aether.headless.v2`
+Permission: `local-write` · Availability: `runtime-dependent` · Telemetry: `shell.exec` · Requires: `aether.hosted`, `aether.local-child`, `aether.headless.v1`, `aether.headless.v2`
 
 Command flags:
 

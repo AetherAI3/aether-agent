@@ -38,8 +38,11 @@ either.
   runs print the URL without claiming a browser opened. This is a separate
   local capability and does not relax web-fetch SSRF rules.
 
-- **`aether exec` — a local, agent-driven JSONL interface.** It starts the
-  packaged Node/Ollama brain child and emits `aether.exec/1` frames by default, with
+- **`aether exec` — a packaged, agent-driven JSONL interface.** It starts the
+  packaged Node/Ollama brain child by default; explicit `--exec-driver cloud` uses an
+  authenticated Aether dev session with required local tool authority and no server-side
+  downgrade. Cloud runs require explicit `--model`, binding v2 resume to the same model
+  instead of a mutable server default. It emits `aether.exec/1` frames by default, with
   an opt-in `aether.exec/2` session protocol for durable repository/workspace-bound
   checkpoints, authority-expiring resume, confined `aether.exec.agent/1` definitions,
   and session-correlated pause, resume, steer, and cancellation acknowledgements. It retains
@@ -47,10 +50,10 @@ either.
   receipts, structured stdin controls, and exactly one terminal result. Network
   agent shell, Git, and network tools are disabled; host-run verification is authoritative,
   so a model claim can never turn a failing, absent, or workspace-mutating gate into exit 0.
-  The packaged Aether-model v2 dogfood is still an acceptance dependency: the current
-  hosted brain contract may downgrade to server-side execution and does not return awaited
-  control acknowledgements. It must not be presented as local-authority v2 until the production
-  contract exposes both guarantees; Ollama and the model-free installation selftest are not
+  Cloud pause, resume, and steer are accepted only after the dev-session endpoint returns a
+  valid acknowledgement; transport loss or malformed state fails closed. The packaged
+  Aether-model production dogfood remains an acceptance dependency and has not been run by
+  this implementation change. Ollama and the model-free installation selftest are not
   substitutes for that acceptance run.
 - **Bounded local setup.** `aether setup --local` and `aether local doctor`
   diagnose Ollama without an account or a hosted request. `local models` lists

@@ -126,10 +126,13 @@ skill matched *automatically* from a trigger phrase contributes its instructions
 but never its policy — only a skill you name with `--skill` narrows.
 Both flags work on `aether chat` and the REPL too.
 
-### `aether exec "<task>"` — headless local agent
+### `aether exec "<task>"` — headless packaged agent
 
-Runs the packaged Node/Ollama child brain without a TTY or hosted API dependency. Stdout
-contains only versioned JSONL protocol frames; diagnostics use stderr. Protocol v1 remains
+Runs the packaged Ollama child by default, or an authenticated Aether dev session with
+`--exec-driver cloud`. The cloud path keeps tool authority in this host and refuses any
+legacy server-executed downgrade; it requires explicit `--model <id>` so resumable authority
+cannot drift with a changed server default. Stdout contains only versioned JSONL protocol frames;
+diagnostics use stderr. Protocol v1 remains
 the default. Select `--exec-protocol 2` for repository-bound checkpoints, pause/resume/steer,
 bounded idempotent controls, and confined reusable agent definitions. The default tool envelope
 is read-only. Agent shell, Git, and network tools are disabled in both versions. A successful
@@ -139,7 +142,7 @@ requires the verification result to remain bound to the same commit and workspac
 | Flag | Meaning |
 |---|---|
 | `--exec-protocol <1\|2>` | Select the headless protocol; v1 remains the compatibility default. |
-| `--exec-driver <ollama\|selftest>` | Use the local model child, or the model-free installation selftest. |
+| `--exec-driver <ollama\|cloud\|selftest>` | Use the local model child, local-authority Aether dev session (with explicit `--model`), or model-free installation selftest. |
 | `--permission <deny\|read-only\|workspace-write>` | Set the host-enforced permission ceiling. |
 | `--allow-tool <name>` | Declare a safe file/search tool; repeat to declare more than one. |
 | `--capability-pack <id>` | Record a bounded capability-pack identifier; repeatable. |

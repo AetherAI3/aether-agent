@@ -20,7 +20,7 @@
 // authority (`aether agent`, or an explicit --model) refuses to take it at all
 // rather than hand the user a transcript that changed nothing on disk.
 
-import type { Brain, TaskCommand } from "./brain.js";
+import type { Brain, BrainControlResult, TaskCommand } from "./brain.js";
 import { EventQueue } from "./brain.js";
 import type { BrainEvent, RoutingDriftFrame } from "./brain_protocol.js";
 import { TOOLS } from "./brain_protocol.js";
@@ -191,12 +191,15 @@ export interface CloudBrainOptions {
    * embedders) keep the old fail-soft behavior.
    */
   requireLocalAuthority?: boolean;
+  /** Advertise only tools the local host is prepared to authorize. */
+  localToolCapabilities?: readonly string[];
 }
 
 export class CloudBrain implements Brain {
   private aborted = false;
   private net: AbortController | null = null;
   private sessionId: string | null = null;
+  private controlState: BrainControlResult["state"] = "closed";
   private lastSeq = 0;
   /** Serializes upstream result POSTs so they arrive in execution order. */
   private upstream: Promise<void> = Promise.resolve();
@@ -234,7 +237,7 @@ export class CloudBrain implements Brain {
             task: task.text,
             model: task.model,
             effort: task.effort,
-            capabilities: TOOLS,
+            capabilities: this.opts.localToolCapabilities ?? TOOLS,
             protocolVersion: DEV_PROTOCOL_VERSION,
           }),
         );
@@ -274,11 +277,13 @@ export class CloudBrain implements Brain {
       const refusal = checkDevSession(created, this.speaks);
       if (refusal) throw new Error(refusal);
       this.sessionId = created.session_id;
+      this.controlState = "running";
       queue.push({ type: "stage", name: "execute", face: "⟨◉⟩" }); // uplink face
       await this.devPump(queue);
     } catch (err) {
       queue.push({ type: "error", msg: withHint(err) });
     } finally {
+      this.controlState = "closed";
       queue.end();
     }
   }
@@ -434,16 +439,40 @@ export class CloudBrain implements Brain {
     });
   }
 
-  control(action: "pause" | "resume" | "steer", note?: string): void {
+  async control(action: "pause" | "resume" | "steer", note?: string): Promise<BrainControlResult> {
     const sessionId = this.sessionId;
-    if (!sessionId) return; // legacy path: no server session to control
-    void this.api
-      .postJson(devSessionControlPath(sessionId), { action, note: note ?? null })
-      .catch(() => {}); // fire-and-forget; a lost steer is re-typeable
+    if (!sessionId || this.controlState === "closed") {
+      return { accepted: false, state: "closed", error: "cloud dev session is not running" };
+    }
+    try {
+      const response = await this.api.postJson<{ ok?: unknown; state?: unknown }>(
+        devSessionControlPath(sessionId),
+        { action, note: note ?? null },
+      );
+      const state = response.state;
+      const validState = state === "running" || state === "paused";
+      const expectedState = action === "pause" ? "paused" : action === "resume" ? "running" : this.controlState;
+      if (response.ok !== true || !validState || state !== expectedState) {
+        return {
+          accepted: false,
+          state: this.controlState,
+          error: "cloud dev session returned an invalid control acknowledgement",
+        };
+      }
+      this.controlState = state;
+      return { accepted: true, state };
+    } catch (error) {
+      return {
+        accepted: false,
+        state: this.controlState,
+        error: sanitizeServerText(withHint(error)),
+      };
+    }
   }
 
   close(): void {
     this.aborted = true;
+    this.controlState = "closed";
     this.net?.abort();
     const sessionId = this.sessionId;
     if (sessionId) {

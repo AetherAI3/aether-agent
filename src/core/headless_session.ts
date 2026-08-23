@@ -36,6 +36,7 @@ const CHECKPOINT_STATES = new Set([
 const VERIFICATION_STATES = new Set(["pending", "ok", "failed", "unverified", "unattributable", "cancelled"]);
 
 export type HeadlessPermission = "deny" | "read-only" | "workspace-write";
+export type HeadlessDriver = "ollama" | "selftest" | "cloud";
 export type HeadlessCheckpointState =
   | "running"
   | "paused"
@@ -92,7 +93,7 @@ export interface HeadlessCheckpoint {
   state: HeadlessCheckpointState;
   task: string;
   task_digest: string;
-  driver: "ollama" | "selftest";
+  driver: HeadlessDriver;
   model: string | null;
   model_tag: string | null;
   effort: string | null;
@@ -113,7 +114,7 @@ export interface HeadlessCheckpoint {
 export interface CreateCheckpointInput {
   session: string;
   task: string;
-  driver: "ollama" | "selftest";
+  driver: HeadlessDriver;
   model: string | null;
   modelTag: string | null;
   effort: string | null;
@@ -308,12 +309,21 @@ function validateCheckpoint(value: unknown, expectedSession: string): HeadlessCh
   if (!SHA256.test(checkpoint.task_digest) || checkpoint.task_digest !== digest(checkpoint.task)) {
     throw new Error("checkpoint task digest mismatch");
   }
-  if (checkpoint.driver !== "ollama" && checkpoint.driver !== "selftest") throw new Error("checkpoint driver is invalid");
+  if (checkpoint.driver !== "ollama" && checkpoint.driver !== "selftest" && checkpoint.driver !== "cloud") {
+    throw new Error("checkpoint driver is invalid");
+  }
   if (
     (checkpoint.model !== null && typeof checkpoint.model !== "string")
     || (checkpoint.model_tag !== null && typeof checkpoint.model_tag !== "string")
     || (checkpoint.driver === "ollama" && (!checkpoint.model || !checkpoint.model_tag))
     || (checkpoint.driver === "selftest" && (checkpoint.model !== null || checkpoint.model_tag !== null))
+    || (checkpoint.driver === "cloud" && (
+      checkpoint.model_tag !== null
+      || checkpoint.model === null
+      || !checkpoint.model.trim()
+      || checkpoint.model.startsWith("ollama:")
+      || Buffer.byteLength(checkpoint.model, "utf8") > 256
+    ))
   ) {
     throw new Error("checkpoint model binding is invalid");
   }

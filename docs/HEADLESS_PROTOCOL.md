@@ -1,6 +1,6 @@
 # Headless agent protocol
 
-`aether exec [flags] "task"` is the non-interactive, local-only agent surface. The name is deliberately separate from the existing hosted-orchestrator `aether run` and human TUI `aether agent` commands. It starts a Node child shipped inside the npm package; that child drives local Ollama. It never opens a TTY, invokes the hosted Aether API, or exposes a shell tool.
+`aether exec [flags] "task"` is the non-interactive agent surface. The name is deliberately separate from the hosted-orchestrator `aether run` and human TUI `aether agent` commands. The default `ollama` driver starts the Node/Ollama child shipped inside the npm package. The explicit `cloud` driver uses the authenticated Aether dev-session protocol while keeping every tool decision and execution in this host; it refuses the legacy server-executed downgrade. No driver opens a TTY or exposes an agent shell tool.
 
 Stdout is newline-delimited JSON. Protocol v1 (`aether.exec/1`) remains the default; v2 (`aether.exec/2`) is opt-in with `--exec-protocol 2`. In either version the first frame is `session`, every frame has a monotonically increasing `sequence` and `correlation_id`, and exactly one `terminal` frame ends a session that initialized. Human diagnostics use stderr. Payloads larger than 16 KiB are redacted and written below `.aether/artifacts/<session>/`; the event carries a workspace-relative path, byte count, and SHA-256 digest.
 
@@ -12,7 +12,7 @@ aether exec --test-cmd "npm test" --permission workspace-write \
 
 The default permission is `read-only`, with `read_file` and `repo_search` declared. `workspace-write` permits only declared file writes. Agent-requested shell, test-shell, Git, and network tools are unavailable in both versions and are rejected at argument parsing as well as the execution gate. The operator-supplied `--test-cmd` is a separate final verification gate. Every model tool request produces a `permission_decision` and `tool_receipt`; undeclared tools and permission escalation fail closed.
 
-`--exec-driver selftest` is a packaged deterministic installation check. It proves the installed child process, JSONL transport, and verification gate from outside the source tree; it performs no model work and the initial frame says so. Normal runs use `--exec-driver ollama`.
+`--exec-driver ollama` is the default local model child. `--exec-driver cloud` selects an actual Aether model through a dev session that is required to preserve local tool authority; it also requires explicit `--model <id>`, so a v2 checkpoint cannot resume under a changed server default. `--exec-driver selftest` is a deterministic installation check: it proves the installed child process, JSONL transport, and verification gate from outside the source tree, performs no model work, and says so in the initial frame.
 
 ## Controls
 
@@ -48,7 +48,7 @@ V2 controls use `aether.exec.control/2`, and `correlation_id` must equal the ses
 {"protocol":"aether.exec.control/2","sequence":2,"correlation_id":"<session-id>","action":"resume"}
 ```
 
-Controls are serialized. An identical in-process retry returns the original outcome, a conflicting duplicate is rejected, and a future sequence is rejected without consuming the missing slot. A resumed checkpoint rejects sequences older than its durable control position as stale. Each session accepts at most 256 controls, 16 steer instructions, and 16 KiB of steer text. Pause, resume, and steer are reported as accepted only after the bundled child and its local Ollama brain acknowledge the state change. Cancellation and authority expiry close the brain and tear down its process tree.
+Controls are serialized. An identical in-process retry returns the original outcome, a conflicting duplicate is rejected, and a future sequence is rejected without consuming the missing slot. A resumed checkpoint rejects sequences older than its durable control position as stale. Each session accepts at most 256 controls, 16 steer instructions, and 16 KiB of steer text. Pause, resume, and steer are reported as accepted only after the selected brain acknowledges the state change. The cloud driver awaits and validates the Aether control response; a lost or malformed acknowledgement is `accepted:false`. Cancellation and authority expiry close the brain and, for child drivers, tear down the process tree.
 
 Optional agent files use this workspace-confined, versioned shape:
 
@@ -69,7 +69,7 @@ Load it with `--agent-definition <workspace-relative-path>`. Real-path confineme
 
 V2 verification records the commit and workspace digest immediately before and after the host-run command. Exit 0 is possible only when the command succeeds and that identity does not change; verification that generates or modifies workspace files is `unattributable` and fails closed.
 
-The currently packaged v2 model driver is local Ollama. The deterministic `selftest` proves child transport and control wiring but performs no model work. A packaged Aether-model acceptance run remains blocked until the production hosted-brain contract guarantees local execution authority (without server-side downgrade) and awaited control acknowledgements; neither selftest nor Ollama is evidence for that hosted path.
+Packaged v2 model drivers are local Ollama and the explicit Aether `cloud` dev-session driver. The cloud path requires local execution authority, refuses server-side downgrade, and awaits control acknowledgements. The deterministic `selftest` proves child transport and control wiring but performs no model work. A production Aether-model dogfood run remains a separate acceptance gate and has not been performed by this implementation change; neither selftest nor Ollama is evidence for that hosted path.
 
 ## Exit codes
 

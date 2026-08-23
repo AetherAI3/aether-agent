@@ -1843,15 +1843,16 @@ export const COMMAND_MANIFEST_SOURCE: readonly CommandManifestEntry[] = [
     "aliases": [],
     "compatibilityAliases": [],
     "deprecatedAliases": [],
-    "args": "[flags] \"task\"",
-    "summary": "run the local coding agent over versioned JSONL",
-    "detailedHelp": "aether exec [flags] \"task\"\nrun the local coding agent over versioned JSONL",
+    "args": "[--exec-driver ollama|cloud|selftest] [flags] \"task\"",
+    "summary": "run the packaged coding agent over versioned JSONL",
+    "detailedHelp": "aether exec [--exec-driver ollama|cloud|selftest] [flags] \"task\"\nrun the packaged coding agent over versioned JSONL",
     "section": "Start",
     "hidden": false,
     "permissionClass": "local-write",
     "availability": {
       "state": "runtime-dependent",
       "capabilityRequirements": [
+        "aether.hosted",
         "aether.local-child",
         "aether.headless.v1",
         "aether.headless.v2"
@@ -1933,13 +1934,13 @@ export const COMMAND_MANIFEST_SOURCE: readonly CommandManifestEntry[] = [
       "module": "src/commands/command_manifest_data.ts",
       "symbol": "COMMAND_MANIFEST_SOURCE",
       "target": "exec",
-      "usage": "aether exec [flags] \"task\"",
+      "usage": "aether exec [--exec-driver ollama|cloud|selftest] [flags] \"task\"",
       "visible": true,
       "disposition": "generated"
     },
     "release": {
       "disposition": "new",
-      "note": "Local child-process agent driver with compatible aether.exec/1 and repository-bound aether.exec/2 JSONL sessions."
+      "note": "Packaged Ollama, Aether cloud-dev-session, and model-free selftest drivers with compatible aether.exec/1 and repository-bound aether.exec/2 JSONL sessions."
     }
   },
   {

@@ -223,7 +223,7 @@ test("dev session: done ok:false from the server stays ok:false", async () => {
   });
 });
 
-test("dev session: control() posts pause/steer to the control route", async () => {
+test("dev session: control() fails closed after the server session has ended", async () => {
   const { fetchImpl, calls } = devServer([
     [frame({ type: "done", seq: 1, ok: true, uvt: 1, cents: 0 })],
   ]);
@@ -231,13 +231,12 @@ test("dev session: control() posts pause/steer to the control route", async () =
     const brain = new CloudBrain(new ApiClient("https://stub.test", tokens));
     const out: BrainEvent[] = [];
     for await (const ev of brain.run(TASK)) out.push(ev);
-    brain.control("steer", "skip the billing code");
-    await new Promise((r) => setTimeout(r, 20));
-    const ctl = calls.find((c) => c.url.includes("/control"));
-    assert.ok(ctl, "control was never POSTed");
-    const body = ctl.body as Record<string, unknown>;
-    assert.equal(body["action"], "steer");
-    assert.equal(body["note"], "skip the billing code");
+    assert.deepEqual(await brain.control("steer", "skip the billing code"), {
+      accepted: false,
+      state: "closed",
+      error: "cloud dev session is not running",
+    });
+    assert.ok(!calls.some((c) => c.url.includes("/control")));
   });
 });
 
@@ -326,7 +325,7 @@ test("legacy fallback: a 404 on session create degrades to the one-way chat stre
     assert.ok(done && done.type === "done" && done.ok === true);
     // legacy path: no server session, so tool results/control are no-ops
     brain.sendToolResult("tc_x", { output: "x", exitCode: 0 });
-    brain.control("pause");
+    assert.equal((await brain.control("pause")).accepted, false);
     await new Promise((r) => setTimeout(r, 20));
     assert.ok(!calls.some((c) => c.url.includes("/tool-results")));
     assert.ok(!calls.some((c) => c.url.includes("/control")));

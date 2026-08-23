@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import type { AppContext } from "../core/context.js";
 import { BundledChildBrain, type BundledChildMode } from "../core/brain_bundled_child.js";
+import { CloudBrain } from "../core/brain_cloud.js";
 import type { Brain, BrainControlResult, TaskCommand } from "../core/brain.js";
 import type { BrainDone, VerifyOutcome } from "../core/verify_gate.js";
 import { ToolExecutor, type ToolResult } from "../core/tool_executor.js";
@@ -32,6 +33,7 @@ import {
   confineWithAgentDefinition,
   loadHeadlessAgentDefinition,
   type HeadlessCheckpoint,
+  type HeadlessDriver,
   type LoadedHeadlessAgentDefinition,
 } from "../core/headless_session.js";
 
@@ -57,7 +59,7 @@ export interface ExecOptions {
   writeLine?: (line: string) => void;
   sessionId?: string;
   resume?: string;
-  driver?: BundledChildMode;
+  driver?: HeadlessDriver;
   protocol?: HeadlessProtocol;
   agentDefinition?: string;
   authorityTtlMs?: number;
@@ -142,6 +144,7 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
   let capabilityPacks = [...opts.capabilityPacks];
   let effort = (ctx.flags.effort ?? ctx.cfg.defaultEffort) || null;
   let localModel: { tag: string; id: string } | null = null;
+  let cloudModel: string | null = null;
   let agentDefinition: LoadedHeadlessAgentDefinition | null = null;
   let checkpointStore: HeadlessCheckpointStore | null = null;
   let checkpoint: HeadlessCheckpoint | null = null;
@@ -170,6 +173,8 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
         if (driver === "ollama") {
           if (!checkpoint.model || !checkpoint.model_tag) throw new Error("checkpoint model binding is invalid");
           localModel = { id: checkpoint.model, tag: checkpoint.model_tag };
+        } else if (driver === "cloud") {
+          cloudModel = checkpoint.model;
         }
       } else if (opts.agentDefinition) {
         agentDefinition = loadHeadlessAgentDefinition(cwd, opts.agentDefinition, now());
@@ -181,6 +186,16 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
         throw new Error("--model is unavailable with the selftest driver; selftest performs no model work");
       }
       if (driver === "ollama") localModel = resolveLocalModelSelection(ctx.flags.model, ctx.cfg.localModel ?? "");
+      if (driver === "cloud") {
+        const requestedModel = ctx.flags.model?.trim();
+        if (!requestedModel) {
+          throw new Error("--exec-driver cloud requires an explicit --model so checkpoints cannot drift with the server default");
+        }
+        if (requestedModel.startsWith("ollama:")) {
+          throw new Error("an ollama: model cannot be sent to the Aether cloud driver");
+        }
+        cloudModel = requestedModel;
+      }
     }
   } catch (error) {
     const explicit = ctx.flags.model?.trim();
@@ -198,7 +213,7 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
         session: writer.sessionId,
         task: taskText,
         driver,
-        model: localModel?.id ?? null,
+        model: driver === "cloud" ? cloudModel : localModel?.id ?? null,
         modelTag: localModel?.tag ?? null,
         effort,
         permission,
@@ -221,12 +236,18 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
   if (!opts.verifyCommand) warnings.push("no verification command configured; successful agent completion remains non-zero/unverified");
   if (!v2 && opts.resume) warnings.push("resume is not supported by aether.exec/1; the request will be rejected without starting a brain");
   if (driver === "selftest") warnings.push("selftest driver validates installed child/protocol wiring only; it performs no model work");
+  if (driver === "cloud") warnings.push("cloud driver requires an Aether dev session and refuses any server-side execution downgrade");
   if (v2 && opts.resume) warnings.push("resumed from a workspace checkpoint; model conversation state is not replayed");
-  const brain = opts.brain ?? new BundledChildBrain({
-    mode: driver,
-    allowedTools: [...declared] as (typeof EXEC_V1_TOOLS)[number][],
-    diagnostic: (text) => process.stderr.write(String(redactHeadless(text))),
-  });
+  const brain = opts.brain ?? (driver === "cloud"
+    ? new CloudBrain(ctx.api, undefined, {
+        requireLocalAuthority: true,
+        localToolCapabilities: [...declared],
+      })
+    : new BundledChildBrain({
+        mode: driver as BundledChildMode,
+        allowedTools: [...declared] as (typeof EXEC_V1_TOOLS)[number][],
+        diagnostic: (text) => process.stderr.write(String(redactHeadless(text))),
+      }));
   const exec = new ToolExecutor(cwd, opts.verifyCommand);
   const abort = new AbortController();
   let cancelled = false;
@@ -249,8 +270,9 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
     session: writer.sessionId,
     bridge_protocol: PROTOCOL_VERSION,
     repository: repositoryIdentity(cwd),
-    backend: driver === "selftest" ? "bundled-selftest-child" : "bundled-ollama-child",
-    model: localModel?.id ?? null,
+    backend: driver === "selftest" ? "bundled-selftest-child"
+      : driver === "cloud" ? "aether-cloud-dev-session" : "bundled-ollama-child",
+    model: driver === "cloud" ? cloudModel : localModel?.id ?? null,
     effort,
     permissions: {
       mode: permission, explicit_decisions: true,
@@ -446,7 +468,8 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
       : taskText;
     const taskCommand: TaskCommand = {
       type: "task", text: confinedTask, cwd, poolGb: 5,
-      model: localModel?.tag, effort: effort || undefined, testCmd: opts.verifyCommand,
+      model: driver === "cloud" ? cloudModel ?? undefined : localModel?.tag,
+      effort: effort || undefined, testCmd: opts.verifyCommand,
     };
     for await (const event of brain.run(taskCommand)) {
       if (cancelled) break;
@@ -609,8 +632,8 @@ export async function cmdExec(ctx: AppContext, argv: string[], flags: {
     return EXEC_EXIT.usage;
   }
   const driver = flags.str("exec-driver") ?? "ollama";
-  if (driver !== "ollama" && driver !== "selftest") {
-    process.stderr.write("aether exec: --exec-driver must be ollama or selftest\n");
+  if (driver !== "ollama" && driver !== "selftest" && driver !== "cloud") {
+    process.stderr.write("aether exec: --exec-driver must be ollama, cloud, or selftest\n");
     return EXEC_EXIT.usage;
   }
   const ttl = Number(flags.str("authority-ttl-ms") ?? "3600000");
