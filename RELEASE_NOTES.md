@@ -10,7 +10,7 @@ top of the version that was already spoken for. Rather than quietly widen 0.2.0
 to mean two different things, this release takes the next number and describes
 everything actually on `main`.
 
-Covers `477f0fc..2769778` — every commit merged after the v0.2.0 notes were
+Covers `477f0fc..a845479` — every commit merged after the v0.2.0 notes were
 written, and everything the v0.2.0 notes described, which was never shipped
 either.
 
@@ -99,6 +99,17 @@ either.
 
 ## Fixed
 
+- **A coding run no longer turns into a chat about your code without saying so.**
+  When the server answers 403/404 to a dev-session request — which is what
+  `api.aethersystems.net` does today, with agent dev sessions disabled — CloudBrain
+  treated it as "legacy server" and rerouted the run onto the one-way chat
+  stream. That path runs its tools **server-side against the cloud vault**, so a
+  session asked to work in your checkout quietly became a conversation about it:
+  normal header, plausible reply, **exit 0**, and nothing anywhere saying the
+  transport had changed. A `ROUTING_DRIFT` banner now prints before any model
+  output, carrying the status, the server's own sanitized detail, the
+  consequence in plain words, and what to do about it; `--json` carries it
+  structurally as `kind:"routing_drift"` (#105).
 - **`aether auth login` opens the approval page on Windows.** The win32 launcher
   used `explorer.exe` for URLs as well as file paths, which opens a File Explorer
   window rather than the default browser — so the device-approval page never
@@ -157,6 +168,14 @@ either.
 
 ## Behaviour changes
 
+- **A run that needs local authority now fails closed, with the new exit code
+  3.** `aether agent`, and any run that pinned `--model`, will no longer fall back
+  to the chat stream when the dev session is refused: no chat-stream request is
+  issued at all and the process exits **3**, a newly documented code in
+  `COMMANDS.md`. This is a deliberate exit-status change — a script that treated
+  a degraded run as success will now see a failure, which is the point. Chat-shaped
+  runs that pinned nothing still degrade, but they announce it. `--local` (Ollama)
+  and the auth paths are untouched (#105).
 - **A symlinked config directory is now refused when writing the token.** Saving
   a credential validates the config directory first: it must be a real
   directory, not a link, owned by you, and not group- or world-writable. If you
