@@ -14,7 +14,7 @@ to npm are founder-owned and are listed at the end, unrun.
 | Evidence commit | `fb96ee44b03f37a386954a32412728fa7e98a046` |
 | Tarball | `aether-agents-0.3.0.tgz` |
 | Tarball sha256 | `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` |
-| Tarball size | 740,014 bytes packed / 3,022,168 unpacked |
+| Tarball size | 739,977 bytes packed / 3,022,168 unpacked |
 | Packed entries | 575 |
 
 ## 1. Semantic version decision
