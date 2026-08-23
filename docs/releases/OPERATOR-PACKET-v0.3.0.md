@@ -9,13 +9,14 @@ to npm are founder-owned and are listed at the end, unrun.
 |---|---|
 | Package | `aether-agents` |
 | Proposed tag | `v0.3.0` |
-| Branch base | `84d8767da341ac7305fd9156bdfb3bdbdde4f614` (`origin/main`, after #96) |
-| Release commit | the merge commit of this repair PR into `main` — **re-run the candidate on it before tagging** (§6.2) |
-| Last packet-embedded candidate | `fb96ee44b03f37a386954a32412728fa7e98a046` (ancestor of #96; final-head evidence belongs on the PR and must be re-run after merge) |
-| Tarball | `aether-agents-0.3.0.tgz` |
-| Tarball sha256 | **PENDING exact-head candidate** |
-| Tarball size | 745,950 bytes packed / 3,055,776 unpacked |
-| Packed entries | 578 |
+| Branch base | `85a75645e8b94e8542bcf6ee0f384037a2915a5e` (`origin/main`, after #106) |
+| Release commit | the merge commit of this integration PR into `main` — **re-run the candidate on it before tagging** (§6.2) |
+| Historical candidate | `fb96ee44b03f37a386954a32412728fa7e98a046` (PR-local evidence commit; historical only, not reachable from current `main`) |
+| Historical archive | `aether-agents-0.3.0.tgz` — 739,977 bytes packed / 3,022,168 unpacked / 575 entries |
+| Historical archive sha256 | `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` |
+| Current exact-head dry run | 578 entries / 3,055,776 unpacked bytes / 4 workflows |
+| Current archive | **PENDING — no exact-head archive has been produced** |
+| Current archive sha256 | **PENDING — record only after producing that archive** |
 
 ## 1. Semantic version decision
 
@@ -41,7 +42,8 @@ artifacts answer to one name — the identity defect this release exists to clos
 Feature range `477f0fc..a845479` — 28 commits, 2026-08-19 08:39 EDT through
 2026-08-22 21:48 EDT — plus everything the unpublished v0.2.0 notes described.
 PR #96 then landed the release-owned notes, coherence gate and candidate tooling
-as `84d8767`; it added no feature implementation to that range.
+as `84d8767`; PR #106 reconciled the package manifest as `85a75645`. Neither
+commit added feature implementation to that range.
 
 - 4 feature waves: #72 (skills runtime and its three commands), #98
   (command-registration seam), #93/#94/#95/#97/#101/#102 (the review → commit →
@@ -67,10 +69,11 @@ normal case.** #98 was squash-merged to `main` while PR #96 was open; then the
 review/ship rail, `aether sessions`, the skills wiring, the opener and token-store
 fixes and finally #105 landed the same way. The notes and this packet were
 regenerated against each new base rather than tagged against the old one. #96
-then landed on `main`; this repair corrects the stale 527-entry manifest that
-survived beside the final 575-entry header. Any lane that lands before the tag
-is created moves the evidence again — which is why step 2 of §6 re-runs the
-candidate on the merge commit rather than trusting this packet's digest.
+then landed on `main`, and #106 corrected the stale 527-entry manifest that had
+survived beside its 575-entry header. This integration branch now has a
+578-entry dry-run inventory, but no matching archive. Any lane that lands before
+the tag is created moves the evidence again — which is why step 2 of §6 re-runs
+the candidate on the merge commit rather than trusting a historical digest.
 `test/release_coherence.test.ts` fails the build if a
 user-visible command reaches the registry without either a release note or a
 named exemption (§4), so the next lane to land cannot repeat this silently.
@@ -115,10 +118,28 @@ That runs `.github/workflows/release.yml`'s sequence against a detached
 --tag v0.3.0` → `npm pack` → global install of **that tarball** into a clean
 prefix → CLI proofs run from the installed package.
 
-Last packet-embedded run — commit `fb96ee44b03f37a386954a32412728fa7e98a046`,
-`commitBound: true`, `ok: true`, process exit 0. This is the measured ancestor
-whose package bytes are unchanged by this packet because `docs/` is excluded;
-it is not a substitute for the final-head and post-merge runs required below.
+There are two evidence classes below. The current facts come from npm's
+**dry-run inventory** at integration commit
+`970da1a60b48cc803059105be2fd9268f4b833e1`; they do not describe an archive.
+The archive digest and installed-CLI proof come from the **historical candidate**
+at `fb96ee44b03f37a386954a32412728fa7e98a046`; they do not describe the current
+578-entry tree. Neither substitutes for the post-merge run required by §6.2.
+
+### Current exact-head dry-run
+
+At `970da1a60b48cc803059105be2fd9268f4b833e1`, `verify:production` exited 0 and
+reported 578 entries, 3,055,776 unpacked bytes, and 4 workflows. This was an
+`npm pack --dry-run` inventory. It did not produce `aether-agents-0.3.0.tgz`, so
+the current archive size and sha256 are pending rather than borrowed from an
+older candidate.
+
+### Historical candidate archive
+
+The prior candidate report records commit
+`fb96ee44b03f37a386954a32412728fa7e98a046`, `commitBound: true`, `ok: true`,
+and process exit 0. That PR-local evidence commit is not present in the
+reachable history of current `main`; the block is retained only as provenance
+for the historical 575-entry archive it actually measured.
 
 ```
 PASS     commit-identity — fb96ee44b03f37a386954a32412728fa7e98a046
@@ -131,7 +152,7 @@ PASS     release-tests — 4 release test files, exit 0
 NOT-RUN  npm-test — NOT RUN here — the full suite is release.yml's gate.
                     This report says nothing about it.
 PASS     verify-production — {"ok":true,"package":"aether-agents","version":"0.3.0",
-                             "packedFiles":578,"packedBytes":3055776,"workflows":4}
+                             "packedFiles":575,"packedBytes":3022168,"workflows":3}
 PASS     pack — aether-agents-0.3.0.tgz
                 sha256:70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d
 PASS     install-tarball — <prefix>/node_modules/aether-agents
@@ -145,22 +166,23 @@ RELEASE CANDIDATE OK
 ```
 
 The last five lines all ran the CLI that `npm install --global` placed on disk
-from that exact tarball, in a clean prefix — not `dist/` in a source checkout.
+from that historical tarball, in a clean prefix — not `dist/` in a source
+checkout. They must not be presented as exact-head CLI evidence.
 
 **The digest changed when the base moved, and that is the point.** This packet
-has now recorded three different digests for the same version number, one per
-base: `25f33524…` at `a63e1c6e` over 524 entries, `8c5c119d…` at `426b124` over
-527, and `70a48aca…` at the head that merges `a845479` over 575. Each lane that
+has now recorded three historical digests for the same version number:
+`25f33524…` at `a63e1c6e` over 524 entries, `8c5c119d…` at `426b124` over 527,
+and `70a48aca…` for the PR-local `fb96ee44…` candidate over 575. Each lane that
 landed genuinely changed the packed content — #98 added the dispatch table,
 #93–#102 added the review/ship rail, #99 the session library, #105 the routing
 guard — so the digest moved with it. A digest that had survived those changes
 would have meant the pack was not reading the tree.
 
-One thing the digest is deliberately insensitive to: **this packet is not in the
-tarball.** The `files` allowlist is `dist/src` plus README, COMMANDS, LICENSE and
-NOTICE, so `docs/` ships to nobody and writing this number down here cannot
-change it. That is why the digest above, measured at the evidence commit, still
-describes the commit that records it.
+The historical `70a48aca…` digest belongs only to the 575-entry archive in the
+candidate block. The current dry run has three more entries and no archive, so
+there is no honest digest to compare with it yet. The packet itself remains
+outside the tarball: the `files` allowlist is `dist/src` plus README, COMMANDS,
+LICENSE and NOTICE.
 
 None of these figures is a cross-machine reproducibility claim (see §5), and
 none is the digest a founder should tag against: §6.2 re-runs the candidate on
@@ -172,7 +194,7 @@ Independently, `npm run typecheck` exits 0 and the release-owned test files —
 report 26 pass / 0 fail. The full suite is 1464 tests: 1460 pass, 0 fail, 4
 skipped.
 
-### Mutation check on the load-bearing gate
+### Historical mutation check on the load-bearing gate
 
 `test/release_coherence.test.ts` asserts that every feature the release notes
 promise has its code inside the file list `npm pack` would ship. To show that
@@ -189,23 +211,23 @@ release_coherence -> 2 FAIL: packet measurement changed, and
 Restored: 575 packed files, 12/12 pass. The pre-existing production gate does not
 catch a dropped feature, because it does not know what the notes promised.
 
-### Packaged file manifest
+### Current dry-run packaged file manifest
 
-578 entries, 3,055,776 bytes unpacked. Five files at the package root, everything
-else under `dist/src/` — the allowlist is `dist/src` plus four documents, and
-nothing else reaches a user.
+The exact-head dry run reported 578 entries and 3,055,776 bytes unpacked. Five
+files are at the package root; everything else is under `dist/src/`. This is an
+inventory prediction, not a statement that a current archive exists.
 
-| Path | Entries | Size |
-|---|---:|---:|
-| `COMMANDS.md`, `LICENSE`, `NOTICE.md`, `README.md`, `package.json` | 5 | — |
-| `dist/src/core/**` | 303 | 1595.4 KiB |
-| `dist/src/ui/**` | 117 | 400.5 KiB |
-| `dist/src/commands/**` | 117 | 831.9 KiB |
-| `dist/src/skills/**` (six built-in skills) | 18 | 21.7 KiB |
-| `dist/src/generated/**` | 3 | 15.0 KiB |
-| `dist/src/{index,main,types,version}.*` | 12 | 27.7 KiB |
+| Path | Entries |
+|---|---:|
+| `COMMANDS.md`, `LICENSE`, `NOTICE.md`, `README.md`, `package.json` | 5 |
+| `dist/src/core/**` | 303 |
+| `dist/src/ui/**` | 117 |
+| `dist/src/commands/**` | 120 |
+| `dist/src/skills/**` (six built-in skills) | 18 |
+| `dist/src/generated/**` | 3 |
+| `dist/src/{index,main,types,version}.*` | 12 |
 
-By extension: 184 `.js`, 184 `.d.ts`, 184 `.js.map`, 13 `.json`, 9 `.md`, 1
+By extension: 185 `.js`, 185 `.d.ts`, 185 `.js.map`, 13 `.json`, 9 `.md`, 1
 extensionless. Source maps ship, as they did in 0.1.0; that is existing policy,
 unchanged by this release.
 
@@ -314,19 +336,22 @@ Named as unproven rather than omitted:
   instead of silently becoming a chat. That is the correct behaviour and it is
   still a broken end-to-end path. It is a server configuration gap, not
   something this tag fixes.
-- **Reproducibility of the tarball digest across machines.** The digest below is
-  what this machine produced. It is recorded so the CI-built tarball can be
-  compared against it, not asserted to be byte-identical on other hosts.
+- **A current exact-head archive or digest.** The current evidence is a dry-run
+  inventory only. The `70a48aca…` digest belongs to the historical 575-entry
+  candidate and must not be compared as though it described the 578-entry tree.
+- **Reproducibility of an archive digest across machines.** Once the exact-head
+  archive exists, its digest is a machine reading to compare with CI, not a
+  promise that another machine must produce byte-identical gzip bytes.
 - **`npm audit` against future advisories.** The audit result is a reading taken
   at pack time, not a standing property.
 
 ## 6. Founder-owned actions
 
 These are the only remaining steps, and none of them were run from this lane.
-Neither `AA-REL-01` nor this repair created a tag, published a release, or
+Neither `AA-REL-01` nor this integration created a tag, published a release, or
 contacted the registry to publish.
 
-1. **Merge this repair PR to `main`.** Note the merge commit SHA; the tag must
+1. **Merge this integration PR to `main`.** Note the merge commit SHA; the tag must
    point at it, and `release.yml` refuses to publish a tag that is not an
    ancestor of `origin/main`.
 
@@ -371,8 +396,9 @@ contacted the registry to publish.
    npm view aether-agents dist-tags --json     # latest must be 0.3.0
    ```
 
-   Compare the published tarball's sha256 with the digest in this packet and
-   with the workflow artifact's.
+   Record the exact archive's sha256 in this packet, then compare it with the
+   workflow artifact. Do not use the historical `70a48aca…` digest as the
+   expected digest for the current tree.
 
 8. **Only after step 7 succeeds**, update the availability language in
    `README.md` and `RELEASE_NOTES.md` to say 0.3.0 installs from npm. Until that

@@ -44,12 +44,6 @@ function currentPackReport(): ReturnType<typeof createPackReport> {
   return cachedPackReport;
 }
 
-function packetNumber(packet: string, pattern: RegExp, label: string): number {
-  const value = pattern.exec(packet)?.[1];
-  assert.ok(value, `the operator packet does not record ${label}`);
-  return Number.parseInt(value.replaceAll(",", ""), 10);
-}
-
 // ── Gate A: one release, named consistently ─────────────────────────────────
 
 test("the lockfile names the same version as the manifest, in both places", () => {
@@ -104,13 +98,17 @@ test("the dated release log has an entry for this version, and the index links i
   }
 });
 
-test("an operator packet exists for this version and binds a commit", () => {
+test("the operator packet separates current dry-run evidence from the historical archive", () => {
   const path = join(root, "docs", "releases", `OPERATOR-PACKET-v${VERSION}.md`);
   assert.ok(existsSync(path), `no docs/releases/OPERATOR-PACKET-v${VERSION}.md`);
   const packet = readFileSync(path, "utf8");
   assert.ok(packet.includes(`v${VERSION}`), "the operator packet does not name the proposed tag");
-  assert.match(packet, /\b[0-9a-f]{40}\b/, "the operator packet names no full commit SHA");
-  assert.match(packet, /sha256[:\s]/i, "the operator packet records no tarball digest");
+  assert.match(packet, /\| Branch base \| `85a75645e8b94e8542bcf6ee0f384037a2915a5e` \(`origin\/main`, after #106\) \|/);
+  assert.match(packet, /\| Current archive \| \*\*PENDING — no exact-head archive has been produced\*\* \|/);
+  assert.match(packet, /\| Current archive sha256 \| \*\*PENDING — record only after producing that archive\*\* \|/);
+  assert.match(packet, /\| Historical archive \| `aether-agents-0\.3\.0\.tgz` — 739,977 bytes packed \/ 3,022,168 unpacked \/ 575 entries \|/);
+  assert.match(packet, /\| Historical archive sha256 \| `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` \|/);
+  assert.doesNotMatch(packet, /fb96ee44[^\n]*(?:ancestor of #96|ancestor of current `main`)/);
 });
 
 test(
@@ -119,14 +117,13 @@ test(
   () => {
     const packet = read("docs", "releases", `OPERATOR-PACKET-v${VERSION}.md`);
     const packed = currentPackReport();
-    const headerEntries = packetNumber(packet, /\| Packed entries \| ([\d,]+) \|/, "the header entry count");
-    const headerBytes = packetNumber(
-      packet,
-      /\| Tarball size \| [\d,]+ bytes packed \/ ([\d,]+) unpacked \|/,
-      "the header unpacked byte count",
-    );
-    const manifest = /### Packaged file manifest\s+([\d,]+) entries, ([\d,]+) bytes unpacked\./.exec(packet);
-    assert.ok(manifest, "the operator packet has no parseable packaged-file manifest summary");
+    const header = /\| Current exact-head dry run \| ([\d,]+) entries \/ ([\d,]+) unpacked bytes \/ ([\d,]+) workflows \|/.exec(packet);
+    assert.ok(header, "the operator packet has no parseable current dry-run summary");
+    const headerEntries = Number.parseInt(header[1]!.replaceAll(",", ""), 10);
+    const headerBytes = Number.parseInt(header[2]!.replaceAll(",", ""), 10);
+    assert.equal(Number.parseInt(header[3]!, 10), 4, "the current dry run records the wrong workflow count");
+    const manifest = /### Current dry-run packaged file manifest\s+The exact-head dry run reported ([\d,]+) entries and ([\d,]+) bytes unpacked\./.exec(packet);
+    assert.ok(manifest, "the operator packet has no parseable current dry-run manifest summary");
     const manifestEntries = Number.parseInt(manifest[1]!.replaceAll(",", ""), 10);
     const manifestBytes = Number.parseInt(manifest[2]!.replaceAll(",", ""), 10);
 
@@ -140,8 +137,11 @@ test(
     assert.equal(
       manifestBytes,
       headerBytes,
-      "the packet mixes unpacked byte measurements from different release bases",
+      "the packet mixes current dry-run byte measurements from different release bases",
     );
+
+    const historical = /### Historical candidate archive[\s\S]*?"packedFiles":575,"packedBytes":3022168,"workflows":3[\s\S]*?sha256:70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d/.exec(packet);
+    assert.ok(historical, "the historical archive facts are not kept together under their own heading");
   },
 );
 
