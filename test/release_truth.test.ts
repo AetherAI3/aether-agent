@@ -41,7 +41,10 @@ function validInput(): ReleaseTruthInput {
     "<!-- SLASH-COMMANDS:END -->",
   ].join("\n");
   const files = {
-    "package.json": JSON.stringify({ name: "aether-agents", version: "0.3.0" }),
+    "package.json": JSON.stringify({
+      name: "aether-agents", version: "0.3.0", main: "dist/src/main.js", types: "dist/src/main.d.ts",
+      bin: { aether: "dist/src/main.js" },
+    }),
     "package-lock.json": JSON.stringify({
       name: "aether-agents",
       version: "0.3.0",
@@ -56,13 +59,12 @@ function validInput(): ReleaseTruthInput {
   return {
     files,
     scannedTexts: { ...files, "src/example.ts": "export const safe = true;\n" },
-    packedFiles: ["package.json", "README.md", "COMMANDS.md", "dist/src/main.js"],
+    packedFiles: ["package.json", "README.md", "COMMANDS.md", "dist/src/main.js", "dist/src/main.d.ts"],
     commands,
     slashCommands,
     capabilities: { state: "available", value: [] },
     generatedDocs: { state: "available", value: [] },
     catalogue: { state: "available", value: { catalogueDigest: "abc", renderedDigest: "abc", generatedAt: "2026-08-22T00:00:00Z", observedAt: "2026-08-23T00:00:00Z", maxAgeMs: 172_800_000 } },
-    packedClaims: { state: "available", value: [] },
     registry: { state: "available", value: { sourceVersion: "0.3.0", publishedVersions: ["0.1.0"], latest: "0.1.0", publicClaim: { sourceAvailability: "unpublished", latest: "0.1.0" } } },
   };
 }
@@ -194,14 +196,14 @@ test("new evidence lanes fail drift and never turn absent data green", () => {
   input.capabilities = { state: "available", value: [{ id: "preview", shipped: true, documented: false, releaseDisposition: null }] };
   input.generatedDocs = { state: "available", value: [{ id: "commands", manifestDigest: "a", documentDigest: "b" }] };
   input.catalogue = { state: "available", value: { catalogueDigest: "a", renderedDigest: "b", generatedAt: "2026-01-01T00:00:00Z", observedAt: "2026-08-23T00:00:00Z", maxAgeMs: 1 } };
-  input.packedClaims = { state: "available", value: [{ id: "preview", advertised: true, registryInstalled: true, sourceOnly: true, requiredPaths: ["dist/src/preview.js"] }] };
+  input.files = { ...input.files, "package.json": JSON.stringify({ name: "aether-agents", version: "0.3.0", main: "dist/src/preview.js" }) };
   input.registry = { state: "unavailable", reason: "network down" };
   const result = evaluateReleaseTruth(input);
   for (const id of ["capabilities.release-disposition", "generated-docs.digest", "catalogue.digest-freshness", "package.claim-inventory"]) assert.equal(result.checks.find((item) => item.id === id)?.status, "fail");
   assert.equal(result.checks.find((item) => item.id === "registry.source-truth")?.status, "unavailable");
   assert.equal(result.ok, false);
 
-  const absent = validInput(); delete absent.capabilities; delete absent.generatedDocs; delete absent.catalogue; delete absent.packedClaims;
+  const absent = validInput(); delete absent.capabilities; delete absent.generatedDocs; delete absent.catalogue;
   const absentResult = evaluateReleaseTruth(absent);
   assert.equal(absentResult.checks.find((item) => item.id === "catalogue.digest-freshness")?.status, "unavailable");
   assert.equal(absentResult.ok, false);
@@ -219,4 +221,29 @@ test("collection failures always return structured release-truth JSON with remed
   assert.match(pack.checks[0]?.remediation ?? "", /npm pack --dry-run --json/);
   const secret = releaseTruthFailure("pack", new Error("AETHER_TOKEN=secret-value Bearer abc.def"));
   assert.doesNotMatch(JSON.stringify(secret), /secret-value|abc\.def/);
+});
+
+test("a required capability missing from independent evidence fails closed", () => {
+  const input = validInput();
+  input.commands = [{ ...commands[0]!, capabilityRequirements: ["aether.synthetic"] }, ...commands.slice(1)];
+  input.capabilities = { state: "available", value: [] };
+  const finding = evaluateReleaseTruth(input).checks.find((item) => item.id === "capabilities.release-disposition");
+  assert.equal(finding?.status, "fail");
+  assert.match(finding?.evidence.join("\n") ?? "", /aether\.synthetic.*no capability evidence/);
+});
+
+test("missing package manifest targets fail the independently derived claim inventory", () => {
+  const input = validInput();
+  input.packedFiles = input.packedFiles.filter((path) => path !== "dist/src/main.d.ts");
+  const finding = evaluateReleaseTruth(input).checks.find((item) => item.id === "package.claim-inventory");
+  assert.equal(finding?.status, "fail");
+  assert.match(finding?.evidence.join("\n") ?? "", /package\.json#types claims dist\/src\/main\.d\.ts/);
+});
+
+test("not_applicable cannot hide a required evidence lane without its explicit contract", () => {
+  const input = validInput();
+  input.generatedDocs = { state: "not_applicable", reason: "nothing to see", contract: "self-attested" };
+  const finding = evaluateReleaseTruth(input).checks.find((item) => item.id === "generated-docs.digest");
+  assert.equal(finding?.status, "fail");
+  assert.match(finding?.evidence.join("\n") ?? "", /expected release-truth\/v0\.3\.0\/no-generated-docs/);
 });

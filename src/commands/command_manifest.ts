@@ -50,13 +50,41 @@ export interface CommandManifestEntry {
   ownedFlags: FlagTable;
   handler: CommandHandlerIdentity;
   docs: CommandDocsBinding;
-  release: CommandReleaseBinding;
+  release: CommandReleaseBinding | null;
 }
 export interface CommandRegistrySources {
   shell: readonly CommandSpec[]; slash: readonly CommandSpec[]; lazyShell?: readonly DispatchedCommand[];
   globalShellFlags?: FlagTable;
 }
 export interface ManifestValidationOptions { reservedShellFlags?: FlagTable }
+
+// Release history is deliberately independent of the runtime registries. A
+// registry addition must land here (with an intentional disposition) or its
+// manifest row remains unclassified and the release gate fails closed.
+const EXISTING_COMMAND_KEYS = [
+  "shell:help", "shell:agent", "shell:chat", "shell:resume", "shell:run", "shell:models",
+  "shell:agents", "shell:auth", "shell:login", "shell:logout", "shell:github", "shell:vault",
+  "shell:workflow", "shell:memory", "shell:skills", "shell:capabilities", "shell:image", "shell:video",
+  "shell:output", "shell:audit", "shell:receipt", "shell:support-bundle", "shell:mcp", "shell:config",
+  "shell:doctor", "shell:sessions", "shell:review", "shell:ship",
+  "slash:help", "slash:models", "slash:model", "slash:agent", "slash:agents", "slash:tier",
+  "slash:effort", "slash:audit", "slash:doctor", "slash:clear", "slash:exit", "slash:mcp",
+  "slash:autonomous-execution", "slash:subagent-driven-execution", "slash:self-review", "slash:recon",
+  "slash:plan", "slash:research", "slash:project-review", "slash:code-review", "slash:writing-skills",
+  "slash:writing-plans", "slash:queue", "slash:steer", "slash:btw", "slash:pin", "slash:drop",
+  "slash:snapshot", "slash:limit", "slash:token-budget", "slash:audit-receipt", "slash:rollback",
+  "slash:logs-view", "slash:goal", "slash:goals", "slash:memory", "slash:workflow",
+  "slash:workflow-templates", "slash:workflow-template", "slash:vault", "slash:vault-context",
+  "slash:vault-search", "slash:vault-recent", "slash:vault-project", "slash:vault-tag", "slash:vault-tree",
+  "slash:delegate", "slash:tree", "slash:broadcast", "slash:gather", "slash:scaffold", "slash:port",
+  "slash:test-drive", "slash:bench", "slash:purge", "slash:stage-diff", "slash:review", "slash:ship",
+  "slash:revert", "slash:photogen", "slash:frame", "slash:re-frame", "slash:videogen", "slash:sequence",
+  "slash:animate", "slash:re-cut", "slash:output", "slash:storyboard", "slash:add", "slash:hud",
+] as const satisfies readonly CommandManifestKey[];
+
+export const COMMAND_RELEASE_CONTRACT: ReadonlyMap<CommandManifestKey, CommandReleaseBinding> = new Map(
+  EXISTING_COMMAND_KEYS.map((key) => [key, { disposition: "existing" as const, note: null }]),
+);
 
 const COMMAND_TOKEN = /^[a-z0-9][a-z0-9-]*$/;
 const FLAG_NAME = /^[a-z][a-z0-9-]*$/;
@@ -115,11 +143,12 @@ function normalizeCommand(
   globalFlags: FlagTable = {},
 ): CommandManifestEntry {
   const usage = usageOf(surface, command);
+  const key: CommandManifestKey = `${surface}:${command.name}`;
   const registry = surface === "shell"
     ? { module: "src/commands/cli_registry.ts", symbol: "ALL_CLI_COMMANDS" }
     : { module: "src/commands/slash_registry.ts", symbol: "SLASH_COMMANDS" };
   return {
-    key: `${surface}:${command.name}`, surface, name: command.name,
+    key, surface, name: command.name,
     aliases: [...(command.aliases ?? [])], compatibilityAliases: [...(command.aliases ?? [])], deprecatedAliases: [],
     ...(command.args === undefined ? {} : { args: command.args }),
     summary: command.summary, detailedHelp: `${usage}\n${command.summary}`, section: command.section,
@@ -130,7 +159,7 @@ function normalizeCommand(
     ownedFlags: copyFlags(lazy?.flags),
     handler: handlerOf(surface, command.name, lazy),
     docs: { kind: "registry-help", ...registry, target: command.name, usage, visible: command.hidden !== true, disposition: "registry-only" },
-    release: { disposition: "existing", note: null },
+    release: COMMAND_RELEASE_CONTRACT.get(key) ?? null,
   };
 }
 export function createCommandManifest(sources: CommandRegistrySources): readonly CommandManifestEntry[] {
@@ -180,8 +209,11 @@ function validateProductMetadata(label: string, entry: CommandManifestEntry, err
     if (globalFlags.has(flag)) errors.push(`${label}: duplicate accepted global flag --${flag}`);
     globalFlags.add(flag);
   }
-  if (!(RELEASE_DISPOSITIONS as readonly string[]).includes(entry.release.disposition)) errors.push(`${label}: invalid release disposition '${entry.release.disposition}'`);
-  if (entry.release.note !== null && !entry.release.note.trim()) errors.push(`${label}: empty release note`);
+  if (!entry.release) errors.push(`${label}: missing release disposition contract`);
+  else {
+    if (!(RELEASE_DISPOSITIONS as readonly string[]).includes(entry.release.disposition)) errors.push(`${label}: invalid release disposition '${entry.release.disposition}'`);
+    if (entry.release.note !== null && !entry.release.note.trim()) errors.push(`${label}: empty release note`);
+  }
   const declared = new Set(entry.aliases);
   const classified = new Set<string>();
   for (const alias of entry.compatibilityAliases) {

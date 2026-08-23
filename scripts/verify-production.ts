@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync }
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { deterministicRepositoryEvidence, releaseTruthFromRepository } from "./release-truth.js";
+import { NOT_APPLICABLE_CONTRACTS, deterministicRepositoryEvidence, releaseTruthFromRepository } from "./release-truth.js";
 
 interface PackageManifest {
   name?: unknown;
@@ -255,9 +255,10 @@ export function verifyProduction(root: string, expectedTag?: string): {
     ...validateManifest(manifest, expectedTag),
     ...validatePack(pack, manifest),
   ];
-  const truthEvidence = deterministicRepositoryEvidence();
+  const truthEvidence = deterministicRepositoryEvidence(root);
   truthEvidence.registry = {
     state: "not_applicable",
+    contract: NOT_APPLICABLE_CONTRACTS["registry.source-truth"],
     reason: "deterministic package verification does not use the network; release:truth performs the live npm host probe",
   };
   const releaseTruth = releaseTruthFromRepository(root, pack.files.map((file) => file.path), truthEvidence);

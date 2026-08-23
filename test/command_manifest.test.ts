@@ -59,7 +59,10 @@ const shellFixture: CommandSpec[] = [
   { name: "alpha", aliases: ["a"], args: "<x>", summary: "first", section: "One" },
   { name: "beta", summary: "second", section: "One" },
 ];
-const fixture = (): readonly CommandManifestEntry[] => createCommandManifest({ shell: shellFixture, slash: [] });
+const unclassifiedFixture = (): readonly CommandManifestEntry[] => createCommandManifest({ shell: shellFixture, slash: [] });
+const fixture = (): readonly CommandManifestEntry[] => unclassifiedFixture().map((entry) => ({
+  ...entry, release: { disposition: "existing" as const, note: null },
+}));
 
 test("validator detects aliases and surface/name collisions but permits cross-surface names", () => {
   const base = fixture();
@@ -70,7 +73,9 @@ test("validator detects aliases and surface/name collisions but permits cross-su
   const collision: CommandManifestEntry = { ...base[1]!, aliases: ["a"], compatibilityAliases: ["a"] };
   assert.ok(validateCommandManifest([base[0]!, collision]).includes("shell:beta: token 'a' collides with shell:alpha"));
   assert.ok(validateCommandManifest([base[0]!, { ...base[0]! }]).includes("shell:alpha: duplicate surface/name key"));
-  assert.deepEqual(validateCommandManifest(createCommandManifest({ shell: [shellFixture[0]!], slash: [shellFixture[0]!] })), []);
+  const crossSurface = createCommandManifest({ shell: [shellFixture[0]!], slash: [shellFixture[0]!] })
+    .map((entry) => ({ ...entry, release: { disposition: "existing" as const, note: null } }));
+  assert.deepEqual(validateCommandManifest(crossSurface), []);
 });
 
 test("validator rejects nonexistent handler and docs ownership", () => {
@@ -110,7 +115,13 @@ test("validator detects product, alias, docs, and release metadata drift", () =>
   assert.deepEqual(validateCommandManifest([{ ...base, docs: { ...base.docs, target: "beta" } }]), [
     "shell:alpha: docs target 'beta' does not match command name",
   ]);
-  assert.deepEqual(validateCommandManifest([{ ...base, release: { ...base.release, note: "" } }]), ["shell:alpha: empty release note"]);
+  assert.deepEqual(validateCommandManifest([{ ...base, release: { disposition: "existing", note: "" } }]), ["shell:alpha: empty release note"]);
+});
+
+test("a synthetic registry command cannot inherit an existing release disposition", () => {
+  const [entry] = unclassifiedFixture();
+  assert.equal(entry?.release, null);
+  assert.deepEqual(validateCommandManifest(unclassifiedFixture()), ["shell:alpha: missing release disposition contract", "shell:beta: missing release disposition contract"]);
 });
 
 test("production manifest validates with the real global flag namespace", () => {

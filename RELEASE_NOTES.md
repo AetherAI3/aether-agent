@@ -14,6 +14,13 @@ Covers `477f0fc..a845479` — every commit merged after the v0.2.0 notes were
 written, and everything the v0.2.0 notes described, which was never shipped
 either.
 
+<!-- Capability dispositions are checked independently from COMMANDS.md and the command manifest. -->
+<!-- CAPABILITY-RELEASE:START -->
+- `aether.catalogue` — `exempt`: an existing runtime requirement, unchanged in this release.
+- `aether.hosted` — `exempt`: an existing runtime requirement, unchanged in this release.
+- `aether.hosted-or-local` — `exempt`: an existing runtime requirement, unchanged in this release.
+<!-- CAPABILITY-RELEASE:END -->
+
 ## New
 
 - **A review → commit → pull request rail.** `aether review` reads the

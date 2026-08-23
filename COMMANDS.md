@@ -24,6 +24,18 @@ aether                                  # no args = interactive REPL
 `help`, `models`, `model`, `agent`, `agents`, `tier`, `audit`, `effort`, `doctor`, `clear`, `exit`, `mcp`, `autonomous-execution`, `subagent-driven-execution`, `self-review`, `recon`, `plan`, `research`, `project-review`, `code-review`, `writing-skills`, `writing-plans`, `queue`, `steer`, `btw`, `pin`, `drop`, `snapshot`, `limit`, `audit-receipt`, `rollback`, `logs-view`, `goal`, `goals`, `memory`, `workflow`, `workflow-templates`, `workflow-template`, `vault`, `vault-context`, `vault-search`, `vault-recent`, `vault-project`, `vault-tag`, `vault-tree`, `delegate`, `tree`, `broadcast`, `gather`, `scaffold`, `port`, `test-drive`, `bench`, `purge`, `stage-diff`, `review`, `ship`, `revert`, `photogen`, `frame`, `re-frame`, `videogen`, `sequence`, `animate`, `re-cut`, `output`, `storyboard`, `add`, `hud`
 <!-- SLASH-COMMANDS:END -->
 
+## Runtime capability requirements
+
+These identifiers are the public capability requirements referenced by command
+metadata. Their release treatment is recorded independently in the release
+notes.
+
+<!-- CAPABILITY-DOCS:START -->
+- `aether.catalogue` — live model and agent catalogue access.
+- `aether.hosted` — an authenticated hosted Aether runtime.
+- `aether.hosted-or-local` — either the hosted runtime or the packaged local fallback.
+<!-- CAPABILITY-DOCS:END -->
+
 
 ---
 

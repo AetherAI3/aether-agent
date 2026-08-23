@@ -4,24 +4,32 @@ import { fileURLToPath } from "node:url";
 import { COMMAND_MANIFEST } from "../src/commands/command_manifest.js";
 
 export const RELEASE_TRUTH_SCHEMA = "aether-agent/release-truth@1" as const;
-export type Evidence<T> = { state: "available"; value: T } | { state: "unavailable" | "not_applicable"; reason: string };
+export const NOT_APPLICABLE_CONTRACTS = {
+  "generated-docs.digest": "release-truth/v0.3.0/no-generated-docs",
+  "catalogue.digest-freshness": "release-truth/v0.3.0/live-catalogue-only",
+  "registry.source-truth": "release-truth/offline/no-network",
+} as const;
+export type Evidence<T> =
+  | { state: "available"; value: T }
+  | { state: "unavailable"; reason: string }
+  | { state: "not_applicable"; reason: string; contract: string };
 export interface ReleaseTruthCommand {
   name: string;
   aliases?: readonly string[];
   hidden?: boolean;
-  release?: { disposition: "existing" | "new" | "changed" | "deprecated" | "internal"; note: string | null };
+  capabilityRequirements?: readonly string[];
+  release?: { disposition: "existing" | "new" | "changed" | "deprecated" | "internal"; note: string | null } | null;
 }
 export interface ScanSkip { path: string; reason: "binary" | "undecodable" | "oversized" | "budget" | "non_regular" | "excluded_directory"; detail: string }
 export interface CapabilityDisposition { id: string; shipped: boolean; documented: boolean; releaseDisposition: "announced" | "exempt" | "removed" | null }
 export interface GeneratedDocDigest { id: string; manifestDigest: string; documentDigest: string }
 export interface CatalogueTruth { catalogueDigest: string; renderedDigest: string; generatedAt: string; observedAt: string; maxAgeMs: number }
-export interface PackedClaim { id: string; advertised: boolean; registryInstalled: boolean; sourceOnly: boolean; requiredPaths: readonly string[] }
+export interface PackedClaim { id: string; source: string; requiredPaths: readonly string[] }
 export interface RegistryTruth { sourceVersion: string; publishedVersions: readonly string[]; latest: string | null; publicClaim: { sourceAvailability: "published" | "unpublished"; latest: string | null } }
 export interface ReleaseTruthEvidence {
   capabilities?: Evidence<readonly CapabilityDisposition[]>;
   generatedDocs?: Evidence<readonly GeneratedDocDigest[]>;
   catalogue?: Evidence<CatalogueTruth>;
-  packedClaims?: Evidence<readonly PackedClaim[]>;
   registry?: Evidence<RegistryTruth>;
 }
 export interface ReleaseTruthInput extends ReleaseTruthEvidence {
@@ -61,8 +69,18 @@ const sourceVersion = (text: string | undefined): string | null => text?.match(/
 function check(id: string, failures: readonly string[], success: string, remediation: string): ReleaseTruthCheck {
   return failures.length ? { id, status: "fail", summary: failures[0]!, remediation, evidence: [...failures] } : { id, status: "pass", summary: success, remediation, evidence: [] };
 }
-function evidenceCheck<T>(id: string, source: Evidence<T> | undefined, inspect: (value: T) => string[], success: string, remediation: string, absent: "unavailable" | "not_applicable" = "unavailable"): ReleaseTruthCheck {
-  const evidence = source ?? { state: absent, reason: "no evidence was supplied" };
+function evidenceCheck<T>(id: string, source: Evidence<T> | undefined, inspect: (value: T) => string[], success: string, remediation: string): ReleaseTruthCheck {
+  const evidence: Evidence<T> = source ?? { state: "unavailable", reason: "no evidence was supplied" };
+  if (evidence.state === "not_applicable") {
+    const expected = NOT_APPLICABLE_CONTRACTS[id as keyof typeof NOT_APPLICABLE_CONTRACTS];
+    if (!expected || evidence.contract !== expected) {
+      return {
+        id, status: "fail", summary: "not_applicable evidence has no recognized contract", remediation,
+        evidence: [`received ${evidence.contract || "no contract"}; expected ${expected ?? "an applicable evidence lane"}`],
+      };
+    }
+    return { id, status: evidence.state, summary: evidence.reason, remediation, evidence: [`${evidence.contract}: ${evidence.reason}`] };
+  }
   if (evidence.state !== "available") return { id, status: evidence.state, summary: evidence.reason, remediation, evidence: [evidence.reason] };
   return check(id, inspect(evidence.value), success, remediation);
 }
@@ -120,6 +138,74 @@ export function documentedSlashCommands(markdown: string): string[] {
   return [...found].sort();
 }
 
+const CAPABILITY_DOC_MARKERS = ["<!-- CAPABILITY-DOCS:START -->", "<!-- CAPABILITY-DOCS:END -->"] as const;
+const CAPABILITY_RELEASE_MARKERS = ["<!-- CAPABILITY-RELEASE:START -->", "<!-- CAPABILITY-RELEASE:END -->"] as const;
+
+function markedCapabilityNames(text: string | undefined, markers: readonly [string, string]): string[] {
+  if (text === undefined) return [];
+  const start = text.indexOf(markers[0]); const end = text.indexOf(markers[1]);
+  if (start < 0 || end <= start) return [];
+  return [...text.slice(start + markers[0].length, end).matchAll(/`([a-z][a-z0-9._:-]+)`/g)]
+    .map((match) => match[1]!);
+}
+
+export function capabilityEvidenceFromSources(
+  commands: readonly ReleaseTruthCommand[],
+  commandsDoc: string | undefined,
+  releaseNotes: string | undefined,
+): CapabilityDisposition[] {
+  const required = new Set(commands.flatMap((command) => command.capabilityRequirements ?? []));
+  const documented = new Set(markedCapabilityNames(commandsDoc, CAPABILITY_DOC_MARKERS));
+  const dispositions = new Map<string, CapabilityDisposition["releaseDisposition"]>();
+  if (releaseNotes !== undefined) {
+    const start = releaseNotes.indexOf(CAPABILITY_RELEASE_MARKERS[0]);
+    const end = releaseNotes.indexOf(CAPABILITY_RELEASE_MARKERS[1]);
+    if (start >= 0 && end > start) {
+      const block = releaseNotes.slice(start + CAPABILITY_RELEASE_MARKERS[0].length, end);
+      for (const match of block.matchAll(/`([a-z][a-z0-9._:-]+)`[^\r\n]*`(announced|exempt|removed)`/g)) {
+        dispositions.set(match[1]!, match[2] as CapabilityDisposition["releaseDisposition"]);
+      }
+    }
+  }
+  const ids = new Set([...required, ...documented, ...dispositions.keys()]);
+  return [...ids].sort().map((id) => ({
+    id,
+    shipped: required.has(id),
+    documented: documented.has(id),
+    releaseDisposition: dispositions.get(id) ?? null,
+  }));
+}
+
+function packageTargetClaims(value: unknown, source: string, claims: PackedClaim[]): void {
+  if (typeof value === "string") {
+    const path = value.replace(/^\.\//, "");
+    if (path !== "package.json") claims.push({ id: source, source, requiredPaths: [path] });
+    return;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return;
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) packageTargetClaims(nested, `${source}.${key}`, claims);
+}
+
+/** Claims come from package.json/public-document contracts, never the pack report being checked. */
+export function packageClaimsFromFiles(files: Readonly<Record<string, string>>): PackedClaim[] {
+  const manifest = parseJson(files["package.json"]); const claims: PackedClaim[] = [];
+  if (manifest) {
+    packageTargetClaims(manifest["main"], "package.json#main", claims);
+    packageTargetClaims(manifest["types"], "package.json#types", claims);
+    packageTargetClaims(manifest["bin"], "package.json#bin", claims);
+    packageTargetClaims(manifest["exports"], "package.json#exports", claims);
+  }
+  for (const path of ["README.md", "COMMANDS.md"]) {
+    if (files[path] !== undefined) claims.push({ id: `public-doc:${path}`, source: path, requiredPaths: [path] });
+  }
+  const seen = new Set<string>();
+  return claims.filter((claim) => {
+    const key = claim.requiredPaths.join("\u0000");
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  });
+}
+
 export function evaluateReleaseTruth(input: ReleaseTruthInput): ReleaseTruthResult {
   const manifest = parseJson(input.files["package.json"]); const lock = parseJson(input.files["package-lock.json"]);
   const version = typeof manifest?.["version"] === "string" ? manifest["version"] : null; const name = manifest?.["name"];
@@ -156,6 +242,7 @@ export function evaluateReleaseTruth(input: ReleaseTruthInput): ReleaseTruthResu
     }
     return [];
   });
+  const requiredCapabilities = [...new Set([...input.commands, ...slash].flatMap((item) => item.capabilityRequirements ?? []))].sort();
   const forbidden = Object.entries(input.scannedTexts).filter(([, text]) => FORBIDDEN_PATTERN.test(text)).map(([path]) => `${path} contains the retired product URL`).sort();
   const skips = input.scanSkips ?? []; const partial = skips.filter((item) => item.reason === "oversized" || item.reason === "budget");
   const scanCheck: ReleaseTruthCheck = partial.length ? { id: "scan.coverage", status: "unavailable", summary: "repository scan reached a safety bound", remediation: "Reduce oversized text artifacts or raise the reviewed bound; never treat a partial scan as green.", evidence: skips.map((item) => `${item.path}: ${item.reason} (${item.detail})`) } : { id: "scan.coverage", status: "pass", summary: "all bounded repository text was inspected", remediation: "Inspect skipped-file evidence when adding binary formats.", evidence: skips.map((item) => `${item.path}: ${item.reason} (${item.detail})`) };
@@ -167,11 +254,23 @@ export function evaluateReleaseTruth(input: ReleaseTruthInput): ReleaseTruthResu
     check("commands.release-disposition", commandDispositions, "every shipped command has a release disposition", "Populate command manifest release metadata; new, changed, and deprecated commands require a non-empty note."),
     check("links.no-aether-terminal", forbidden, "the retired product URL is absent", `Remove every ${FORBIDDEN_URL} reference; that product is outside Aether Agent.`),
     scanCheck,
-    evidenceCheck("capabilities.release-disposition", input.capabilities, (items) => items.filter((item) => item.shipped && (!item.documented || !["announced", "exempt"].includes(item.releaseDisposition ?? ""))).map((item) => `${item.id} ships without documentation and release disposition`), "capabilities have documentation and release dispositions", "Generate evidence from the capability manifest and release notes."),
+    evidenceCheck("capabilities.release-disposition", input.capabilities, (items) => {
+      const byId = new Map(items.map((item) => [item.id, item])); const failures: string[] = [];
+      for (const id of requiredCapabilities) {
+        const item = byId.get(id);
+        if (!item) { failures.push(`${id} is required by a shipped command but has no capability evidence`); continue; }
+        if (!item.shipped) failures.push(`${id} is required by a shipped command but evidence says it is not shipped`);
+      }
+      for (const item of items.filter((candidate) => candidate.shipped)) {
+        if (!item.documented) failures.push(`${item.id} ships without independent public documentation`);
+        if (!["announced", "exempt"].includes(item.releaseDisposition ?? "")) failures.push(`${item.id} ships without a release disposition`);
+      }
+      return failures;
+    }, "capabilities have documentation and release dispositions", "Document every command requirement and classify it in the release notes."),
     evidenceCheck("generated-docs.digest", input.generatedDocs, (items) => items.filter((item) => !item.manifestDigest || item.manifestDigest !== item.documentDigest).map((item) => `${item.id} generated digest differs from its manifest`), "generated command/model docs match manifests", "Regenerate documents from canonical manifests."),
     evidenceCheck("catalogue.digest-freshness", input.catalogue, (item) => { const failures: string[] = []; if (!item.catalogueDigest || item.catalogueDigest !== item.renderedDigest) failures.push("catalogue rendered digest differs from canonical digest"); const generated = Date.parse(item.generatedAt); const observed = Date.parse(item.observedAt); if (!Number.isFinite(generated) || !Number.isFinite(observed)) failures.push("catalogue timestamps are invalid"); else if (observed - generated > item.maxAgeMs) failures.push("catalogue snapshot is stale"); return failures; }, "catalogue digest and freshness are valid", "Refresh authoritative catalogue data and regenerate outputs."),
-    evidenceCheck("package.claim-inventory", input.packedClaims, (claims) => claims.flatMap((claim) => { const failures = claim.advertised ? claim.requiredPaths.filter((path) => !packed.has(path)).map((path) => `${claim.id} is advertised but ${path} is absent`) : []; if (claim.sourceOnly && claim.registryInstalled) failures.push(`${claim.id} is source-only but advertised as registry-installed`); return failures; }), "packed contents satisfy advertised claims", "Package required implementation or correct the claim inventory."),
-    evidenceCheck("registry.source-truth", input.registry, (item) => { const failures: string[] = []; const published = item.publishedVersions.includes(item.sourceVersion); if (item.sourceVersion !== version) failures.push("registry evidence source version differs from package"); if ((item.publicClaim.sourceAvailability === "published") !== published) failures.push("public source availability differs from registry evidence"); if (item.publicClaim.latest !== item.latest) failures.push("public latest claim differs from registry dist-tag"); return failures; }, "source and registry claims match observed dist-tags", "Run the npm host probe; network failure must remain unavailable.", "unavailable"),
+    check("package.claim-inventory", packageClaimsFromFiles(input.files).flatMap((claim) => claim.requiredPaths.filter((path) => !packed.has(path)).map((path) => `${claim.id} claims ${path} from ${claim.source}, but it is absent from the package`)), "packed contents satisfy independently derived package and public claims", "Package every manifest target and required public document, or correct its authoritative source."),
+    evidenceCheck("registry.source-truth", input.registry, (item) => { const failures: string[] = []; const published = item.publishedVersions.includes(item.sourceVersion); if (item.sourceVersion !== version) failures.push("registry evidence source version differs from package"); if ((item.publicClaim.sourceAvailability === "published") !== published) failures.push("public source availability differs from registry evidence"); if (item.publicClaim.latest !== item.latest) failures.push("public latest claim differs from registry dist-tag"); return failures; }, "source and registry claims match observed dist-tags", "Run the npm host probe; network failure must remain unavailable."),
   ];
   return resultFromChecks(version, checks);
 }
@@ -208,7 +307,8 @@ const manifestCommands = (surface: "shell" | "slash"): ReleaseTruthCommand[] => 
     name: entry.name,
     aliases: entry.aliases,
     hidden: entry.hidden,
-    release: entry.release,
+    capabilityRequirements: entry.availability.capabilityRequirements,
+    ...(entry.release ? { release: entry.release } : {}),
   }));
 
 export function collectReleaseTruthInput(
@@ -242,29 +342,32 @@ export async function runReleaseTruth(root: string, evidence: ReleaseTruthEviden
   let paths = packedFiles; if (!paths) { try { const { createPackReport } = await import("./verify-production.js"); paths = createPackReport(root).files.map((file) => file.path); } catch (error) { return releaseTruthFailure("pack", error); } }
   try { return releaseTruthFromRepository(root, paths, evidence); } catch (error) { return releaseTruthFailure("collection", error); }
 }
-export function deterministicRepositoryEvidence(): ReleaseTruthEvidence {
-  const capabilities = [...new Set(COMMAND_MANIFEST.flatMap((entry) => entry.availability.capabilityRequirements))]
-    .sort()
-    .map((id) => ({ id, shipped: true, documented: true, releaseDisposition: "exempt" as const }));
+export function deterministicRepositoryEvidence(root: string): ReleaseTruthEvidence {
+  const commands = [...manifestCommands("shell"), ...manifestCommands("slash")];
+  let capabilities: Evidence<readonly CapabilityDisposition[]>;
+  try {
+    capabilities = {
+      state: "available",
+      value: capabilityEvidenceFromSources(
+        commands,
+        readFileSync(join(root, "COMMANDS.md"), "utf8"),
+        readFileSync(join(root, "RELEASE_NOTES.md"), "utf8"),
+      ),
+    };
+  } catch (error) {
+    capabilities = { state: "unavailable", reason: `capability evidence could not be read: ${safeFailureDetail(error)}` };
+  }
   return {
-    capabilities: { state: "available", value: capabilities },
+    capabilities,
     generatedDocs: {
       state: "not_applicable",
+      contract: NOT_APPLICABLE_CONTRACTS["generated-docs.digest"],
       reason: "v0.3.0 has no generated command/model document contract; this lane becomes required when its generator lands",
     },
     catalogue: {
       state: "not_applicable",
+      contract: NOT_APPLICABLE_CONTRACTS["catalogue.digest-freshness"],
       reason: "v0.3.0 reads the live model catalogue and ships no generated catalogue snapshot",
-    },
-    packedClaims: {
-      state: "available",
-      value: [{
-        id: "aether-agent-cli",
-        advertised: true,
-        registryInstalled: false,
-        sourceOnly: true,
-        requiredPaths: ["README.md", "COMMANDS.md", "dist/src/main.js"],
-      }],
     },
   };
 }
@@ -303,7 +406,7 @@ export async function observeNpmRegistry(root: string): Promise<Evidence<Registr
 
 async function main(): Promise<void> {
   const root = process.cwd();
-  const evidence = deterministicRepositoryEvidence();
+  const evidence = deterministicRepositoryEvidence(root);
   evidence.registry = await observeNpmRegistry(root);
   const result = await runReleaseTruth(root, evidence);
   process.stdout.write(`${JSON.stringify(result)}\n`);
