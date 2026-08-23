@@ -166,17 +166,28 @@ function renderTargetHelp(options: HelpOptions, target: string): string {
 
 function editDistance(a: string, b: string, max: number): number {
   if (Math.abs(a.length - b.length) > max) return max + 1;
+  let previousPrevious: number[] | undefined;
   let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
   for (let row = 1; row <= a.length; row++) {
     const current = [row];
-    let rowMin = row;
     for (let column = 1; column <= b.length; column++) {
       const cost = a[row - 1] === b[column - 1] ? 0 : 1;
-      const value = Math.min(previous[column]! + 1, current[column - 1]! + 1, previous[column - 1]! + cost);
+      let value = Math.min(previous[column]! + 1, current[column - 1]! + 1, previous[column - 1]! + cost);
+      // Optimal-string-alignment distance: count one adjacent transposition as
+      // one edit. Command typos are full of these (`auht` -> `auth`), and the
+      // top-level guard deliberately allows only one edit for short words.
+      if (
+        previousPrevious &&
+        row > 1 &&
+        column > 1 &&
+        a[row - 1] === b[column - 2] &&
+        a[row - 2] === b[column - 1]
+      ) {
+        value = Math.min(value, previousPrevious[column - 2]! + 1);
+      }
       current.push(value);
-      rowMin = Math.min(rowMin, value);
     }
-    if (rowMin > max) return max + 1;
+    previousPrevious = previous;
     previous = current;
   }
   return previous[b.length]!;

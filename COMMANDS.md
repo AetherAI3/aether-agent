@@ -61,8 +61,10 @@ so a prompt that happens to look like a command still chats.
 aether "explain what src/router.ts does"
 aether --model opus "rewrite this function to be O(n)"
 ```
-A lone near-miss token is treated as a typo, not a prompt: `aether auht`
-suggests `aether auth` and exits `2` instead of spending a turn on "auht".
+A lone near-miss token is treated as a typo, not a prompt. This includes an
+adjacent-letter transposition: `aether auht` suggests `aether auth` and exits
+`2` before any hosted request. Use `aether chat auht` to send that exact text
+as a prompt intentionally.
 
 ### `aether code "<task>"` — autonomous coding agent
 One host loop drives a pluggable brain: cloud (UVT-metered) by default,
