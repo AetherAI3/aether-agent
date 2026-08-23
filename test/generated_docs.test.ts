@@ -63,6 +63,11 @@ test("command section, summary, and args reject hostile public content before ma
     { section: "**injected heading**" },
     { summary: "password=hunter2" },
     { args: "[click](https://evil.test) `code` --token=plain-secret-value" },
+    { args: "<scr<name>ipt>" },
+    { args: "<script>" },
+    { args: "</script>" },
+    { args: "<img onerror=x>" },
+    { args: "<new-undeclared-placeholder>" },
   ] as const;
   for (const mutation of mutations) {
     const mutated = COMMAND_MANIFEST.map((entry, index) => index === 0 ? { ...entry, ...mutation } : entry) as readonly CommandManifestEntry[];

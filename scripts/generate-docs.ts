@@ -74,8 +74,36 @@ const PRIVATE_NETWORK = /(?:\b(?:localhost|0\.0\.0\.0|127\.\d{1,3}\.\d{1,3}\.\d{
 const INTERNAL_ROUTE = /\/(?:api\/)?internal(?:\/|\b)/i;
 const PRICING_ASSERTION = /(?:[$€£]\s*\d|\b(?:usd|eur|gbp)\b|\b(?:price|pricing|costs?|rates?)\b[^.\n]{0,40}\b(?:token|request|image|video|month|hour)\b|\b\d+(?:\.\d+)?\s*(?:cents?|pence)\s+(?:per|\/)\s+(?:token|request|image|video|month|hour)\b)/i;
 const MARKDOWN_INJECTION = /(?:<\/?[A-Za-z][^>]*>|\[[^\]\n]*\]\([^)]*\)|!\[|`|\*|__|(?:^|[\s(])_[^_\n]+_(?=$|[\s).,;:!?])|^\s{0,3}#{1,6}(?:\s|$))/m;
+const COMMAND_PLACEHOLDERS = new Set([
+  "command", "connect|status|disconnect", "desc|view|start|pause|resume|cancel|complete|note",
+  "element", "file", "guidance", "id", "id|all", "lang", "login|status|token|refresh|logout",
+  "model", "msg", "n", "name", "neo|kronus", "note", "n|id", "order-id", "path", "prompt",
+  "q", "subcommand", "tag", "target", "task", "title", "topic", "type", "uvt",
+]);
 
 export function normalizeEol(value: string): string { return value.replace(/\r\n?/g, "\n"); }
+
+function maskCommandPlaceholders(value: string): string | undefined {
+  let cursor = 0;
+  let masked = "";
+  while (cursor < value.length) {
+    const open = value.indexOf("<", cursor);
+    const strayClose = value.indexOf(">", cursor);
+    if (strayClose >= 0 && (open < 0 || strayClose < open)) return undefined;
+    if (open < 0) return `${masked}${value.slice(cursor)}`;
+    masked += value.slice(cursor, open);
+    const close = value.indexOf(">", open + 1);
+    if (close < 0) return undefined;
+    const placeholder = value.slice(open + 1, close);
+    if (!COMMAND_PLACEHOLDERS.has(placeholder)) return undefined;
+    // A safe word preserves token boundaries. Deleting a multi-character
+    // placeholder could join two fragments into fresh markup (for example,
+    // `<scr<name>ipt>`), which is not a safe sanitization strategy.
+    masked += "placeholder";
+    cursor = close + 1;
+  }
+  return masked;
+}
 
 function validatePublicString(value: unknown, label: string, options: { markdown?: boolean; commandArgs?: boolean } = {}): string {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${label} is required`);
@@ -86,10 +114,8 @@ function validatePublicString(value: unknown, label: string, options: { markdown
   if (redactForBundle(value, {}) !== value || SECRET.test(value) || GENERIC_CREDENTIAL.test(value)) throw new Error(`${label} contains credential-shaped content`);
   if (PRIVATE_NETWORK.test(value) || INTERNAL_ROUTE.test(value)) throw new Error(`${label} contains an internal route`);
   if (PRICING_ASSERTION.test(value)) throw new Error(`${label} contains a pricing assertion`);
-  const markdownInput = options.commandArgs
-    ? value.replace(/<[A-Za-z0-9][A-Za-z0-9_|-]*>/g, "")
-    : value;
-  if (options.markdown && MARKDOWN_INJECTION.test(markdownInput)) throw new Error(`${label} contains markdown injection`);
+  const markdownInput = options.commandArgs ? maskCommandPlaceholders(value) : value;
+  if (options.markdown && (markdownInput === undefined || MARKDOWN_INJECTION.test(markdownInput))) throw new Error(`${label} contains markdown injection`);
   return value.trim();
 }
 

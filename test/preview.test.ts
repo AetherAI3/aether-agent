@@ -63,13 +63,19 @@ test("managed preview detects its URL, reports headless honestly, sanitizes logs
   writeFileSync(script, `
     import { createServer } from "node:http";
     import { spawn } from "node:child_process";
-    const beat = spawn(process.execPath,["-e",${JSON.stringify(`const {writeFileSync}=require('node:fs');setInterval(()=>writeFileSync(${JSON.stringify(heartbeat)},String(Date.now())),80)`)}],{stdio:"ignore"});
-    const s=createServer((_q,r)=>r.end("ok"));
-    s.listen(0,"127.0.0.1",()=>{const a=s.address();console.log("\\u001b]0;hostile\\u0007ready http://127.0.0.1:"+a.port);console.log("grand "+beat.pid)});
-    setInterval(()=>{},1000);
+    import { writeFileSync } from "node:fs";
+    if (process.argv[2] === "beat") {
+      setInterval(()=>writeFileSync(process.argv[3],String(Date.now())),80);
+    } else {
+      const beat = spawn(process.execPath,[process.argv[1],"beat",process.argv[3]],{stdio:"ignore"});
+      const s=createServer((_q,r)=>r.end("ok"));
+      s.listen(0,"127.0.0.1",()=>{const a=s.address();console.log("\\u001b]0;hostile\\u0007ready http://127.0.0.1:"+a.port);console.log("grand "+beat.pid)});
+      setInterval(()=>{},1000);
+    }
   `);
+  const previewArgs = [script, "serve", heartbeat];
   const out = sink(); const err = sink();
-  const start = await cmdPreview(context(root), ["start"], { command: process.execPath, args: [script], timeoutMs: "8000", noOpen: true, out: out.stream, err: err.stream });
+  const start = await cmdPreview(context(root), ["start"], { command: process.execPath, args: previewArgs, timeoutMs: "8000", noOpen: true, out: out.stream, err: err.stream });
   assert.equal(start, PREVIEW_EXIT.ok, err.text());
   assert.match(out.text(), /^http:\/\/127\.0\.0\.1:\d+/m);
   assert.match(out.text(), /Browser not opened/);
@@ -88,12 +94,12 @@ test("managed preview detects its URL, reports headless honestly, sanitizes logs
   assert.doesNotMatch(failedOpenOut.text(), /Opened|launch requested/);
   const attachOut = sink();
   assert.equal(await cmdPreview(context(root), ["start"], {
-    command: process.execPath, args: [script], timeoutMs: "8000", noOpen: true,
+    command: process.execPath, args: previewArgs, timeoutMs: "8000", noOpen: true,
     out: attachOut.stream, err: err.stream,
   }), 0);
   assert.match(attachOut.text(), /Attached to declared preview/);
   assert.equal(await cmdPreview(context(root), ["start"], {
-    command: process.execPath, args: [script, "different"], timeoutMs: "8000", noOpen: true,
+    command: process.execPath, args: [...previewArgs, "different"], timeoutMs: "8000", noOpen: true,
     out: attachOut.stream, err: err.stream,
   }), PREVIEW_EXIT.controlFailed);
   assert.match(err.text(), /different declared preview/);
