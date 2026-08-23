@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Writable } from "node:stream";
@@ -9,7 +9,8 @@ import type { CommandFlags } from "../core/command_dispatch.js";
 import { openBrowserChecked } from "../core/browser.js";
 import type { OpenOutcome } from "../core/opener.js";
 import {
-  commandDigest, parsePreviewState, PREVIEW_SCHEMA, previewPaths, sanitizePreviewText,
+  commandDigest, parsePreviewState, PREVIEW_SCHEMA, previewPathStillNames, previewPaths,
+  readStablePreviewFile, sanitizePreviewText,
   validatePreviewCommand, type PreviewCommand, type PreviewLaunch, type PreviewState,
 } from "../core/preview_contract.js";
 import { terminateProcessTree } from "../core/process_tree_kill.js";
@@ -78,34 +79,40 @@ export function resolvePreviewCommand(projectRoot: string, options: PreviewOptio
 
 function readState(path: string): PreviewState | null {
   if (!existsSync(path)) return null;
-  const stat = lstatSync(path);
-  if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 32_768) throw new Error("refusing unsafe preview state file");
   let raw: unknown;
-  try { raw = JSON.parse(readFileSync(path, "utf8")); } catch { throw new Error("preview state is malformed; remove it only after checking no preview is active"); }
+  try { raw = JSON.parse(readStablePreviewFile(path, 32_768).bytes.toString("utf8")); }
+  catch { throw new Error("preview state is malformed or unstable; remove it only after checking no preview is active"); }
   const state = parsePreviewState(raw);
   if (!state) throw new Error("preview state failed schema validation; refusing to trust its PID or control endpoint");
   return state;
 }
 
-type ControlResult =
+export type ControlResult =
   | { kind: "ok"; state: PreviewState }
   | { kind: "unreachable" };
 
 function removeOwnedControlRequest(path: string, requestId: string): void {
   try {
-    if (!existsSync(path) || lstatSync(path).isSymbolicLink()) return;
-    const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (!existsSync(path)) return;
+    const stable = readStablePreviewFile(path, 1_024);
+    const value: unknown = JSON.parse(stable.bytes.toString("utf8"));
     if (value && typeof value === "object" && !Array.isArray(value) &&
-        (value as Record<string, unknown>)["requestId"] === requestId) unlinkSync(path);
+        (value as Record<string, unknown>)["requestId"] === requestId &&
+        previewPathStillNames(path, stable.identity)) unlinkSync(path);
   } catch { /* another process consumed it or the file is not ours */ }
 }
 
-async function control(state: PreviewState, statePath: string, method: "GET" | "POST", path: "/status" | "/stop"): Promise<ControlResult> {
+export async function previewControlRequest(
+  state: PreviewState,
+  statePath: string,
+  method: "GET" | "POST",
+  path: "/status" | "/stop",
+): Promise<ControlResult> {
   const requestId = randomUUID();
   const requestPath = join(dirname(statePath), `control-${requestId}.json`);
   let ownsRequest = false;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1_000);
+  const timer = setTimeout(() => controller.abort(), 3_000);
   try {
     writePrivate(requestPath, JSON.stringify({ schema: PREVIEW_SCHEMA, requestId, instanceId: state.instanceId, method, path }));
     ownsRequest = true;
@@ -125,12 +132,17 @@ async function control(state: PreviewState, statePath: string, method: "GET" | "
   }
 }
 
-async function currentState(projectRoot: string, statePath: string): Promise<{ state: PreviewState | null; stale: boolean }> {
+async function currentState(
+  projectRoot: string,
+  statePath: string,
+): Promise<{ state: PreviewState | null; ownership: "absent" | "verified" | "unreachable" }> {
   const state = readState(statePath);
-  if (!state) return { state: null, stale: false };
+  if (!state) return { state: null, ownership: "absent" };
   if (realpathSync(resolve(state.projectRoot)) !== projectRoot) throw new Error("preview state belongs to a different project");
-  const live = await control(state, statePath, "GET", "/status");
-  return live.kind === "ok" ? { state: live.state, stale: false } : { state, stale: true };
+  const live = await previewControlRequest(state, statePath, "GET", "/status");
+  return live.kind === "ok"
+    ? { state: live.state, ownership: "verified" }
+    : { state, ownership: "unreachable" };
 }
 
 function showOpen(state: PreviewState, noOpen: boolean, out: Writable, err: Writable, opener = openBrowserChecked): number {
@@ -172,18 +184,26 @@ export async function cmdPreview(ctx: AppContext, argv: string[], options: Previ
     try { command = resolvePreviewCommand(projectRoot, options); }
     catch (error) { err.write(`${sanitizePreviewText(error instanceof Error ? error.message : String(error))}\n`); return PREVIEW_EXIT.unsafe; }
     const digest = commandDigest(command);
-    const existing = await currentState(projectRoot, paths.statePath);
-    if (existing.state && !existing.stale) {
+    let existing: Awaited<ReturnType<typeof currentState>>;
+    try { existing = await currentState(projectRoot, paths.statePath); }
+    catch (error) {
+      err.write(`${sanitizePreviewText(error instanceof Error ? error.message : String(error))}\n`);
+      return PREVIEW_EXIT.unsafe;
+    }
+    if (existing.state && existing.ownership === "unreachable") {
+      err.write(
+        `Preview ownership could not be verified for ${existing.state.instanceId}. ` +
+        "State was preserved and no duplicate was started; retry status or stop.\n",
+      );
+      return PREVIEW_EXIT.controlFailed;
+    }
+    if (existing.state && existing.ownership === "verified") {
       if (existing.state.commandDigest !== digest) {
         err.write("A different declared preview is already running; stop it before changing commands.\n");
         return PREVIEW_EXIT.controlFailed;
       }
       out.write(`Attached to declared preview ${existing.state.instanceId}.\n`);
       return existing.state.phase === "ready" ? showOpen(existing.state, options.noOpen ?? false, out, err, options.open) : PREVIEW_EXIT.ok;
-    }
-    if (existing.stale) {
-      err.write("Removed stale preview state after its instance-bound supervisor challenge failed; no PID was signalled.\n");
-      unlinkSync(paths.statePath);
     }
     err.write(
       `Preview plan\n  argv: ${JSON.stringify(redactPreviewArgv([command.executable, ...command.args]))}\n  cwd: ${sanitizePreviewText(command.cwd)}\n` +
@@ -220,7 +240,7 @@ export async function cmdPreview(ctx: AppContext, argv: string[], options: Previ
           await sleep(100);
           const state = readState(paths.statePath);
           if (!state || state.instanceId !== instanceId) continue;
-          const live = await control(state, paths.statePath, "GET", "/status");
+          const live = await previewControlRequest(state, paths.statePath, "GET", "/status");
           if (live.kind === "ok" && live.state.phase === "ready") return showOpen(live.state, options.noOpen ?? false, out, err, options.open);
           if (state.phase === "failed") { err.write(`${state.error ?? "preview launch failed"}\n`); return PREVIEW_EXIT.launchFailed; }
         }
@@ -239,17 +259,20 @@ export async function cmdPreview(ctx: AppContext, argv: string[], options: Previ
   }
 
   let live: PreviewState | null;
-  let stale: boolean;
+  let ownership: "absent" | "verified" | "unreachable";
   try {
-    ({ state: live, stale } = await currentState(projectRoot, paths.statePath));
+    ({ state: live, ownership } = await currentState(projectRoot, paths.statePath));
   } catch (error) {
     err.write(`${sanitizePreviewText(error instanceof Error ? error.message : String(error))}\n`);
     return PREVIEW_EXIT.unsafe;
   }
   if (!live) { err.write("No managed preview is recorded for this project.\n"); return PREVIEW_EXIT.notRunning; }
-  if (stale) {
-    err.write(`Preview state is stale (${live.instanceId}); no process was signalled because ownership could not be proved.\n`);
-    return PREVIEW_EXIT.notRunning;
+  if (ownership === "unreachable") {
+    err.write(
+      `Preview ownership is unverified (${live.instanceId}); state was preserved and no process was signalled. ` +
+      "Retry status or stop.\n",
+    );
+    return PREVIEW_EXIT.controlFailed;
   }
   if (sub === "status") {
     out.write(`${live.phase}  pid=${live.childPid}${live.url ? `  ${live.url}` : ""}\n`);
@@ -257,14 +280,14 @@ export async function cmdPreview(ctx: AppContext, argv: string[], options: Previ
   }
   if (sub === "open") return showOpen(live, options.noOpen ?? false, out, err, options.open);
   if (sub === "logs") {
-    if (!existsSync(paths.logPath) || lstatSync(paths.logPath).isSymbolicLink()) { err.write("No safe preview log is available.\n"); return PREVIEW_EXIT.notRunning; }
-    const size = statSync(paths.logPath).size;
-    const body = readFileSync(paths.logPath).subarray(Math.max(0, size - 64 * 1024)).toString("utf8");
-    out.write(sanitizePreviewText(body));
+    try {
+      const bytes = readStablePreviewFile(paths.logPath, 1_100_000).bytes;
+      out.write(sanitizePreviewText(bytes.subarray(Math.max(0, bytes.length - 64 * 1024)).toString("utf8")));
+    } catch { err.write("No safe, stable preview log is available.\n"); return PREVIEW_EXIT.notRunning; }
     return PREVIEW_EXIT.ok;
   }
   err.write(`Stopping declared preview ${live.instanceId} (pid ${live.childPid}) and its process tree.\n`);
-  const stopped = await control(live, paths.statePath, "POST", "/stop");
+  const stopped = await previewControlRequest(live, paths.statePath, "POST", "/stop");
   if (stopped.kind !== "ok") { err.write("Supervisor instance challenge failed; no PID was signalled.\n"); return PREVIEW_EXIT.controlFailed; }
   for (let i = 0; i < 50 && existsSync(paths.statePath); i += 1) await sleep(100);
   if (existsSync(paths.statePath)) { err.write("Preview stop was requested, but cleanup was not confirmed.\n"); return PREVIEW_EXIT.controlFailed; }

@@ -1,19 +1,29 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  chmodSync, closeSync, constants, existsSync, fstatSync, ftruncateSync, lstatSync, openSync,
+  readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync,
+} from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  commandDigest, isLoopbackUrl, parsePreviewState, PREVIEW_SCHEMA, previewPaths, sanitizePreviewText,
+  commandDigest, isLoopbackUrl, parsePreviewState, PREVIEW_SCHEMA, previewPathStillNames, previewPaths,
+  readStablePreviewFile, sanitizePreviewText,
   validatePreviewCommand, type PreviewCommand, type PreviewLaunch, type PreviewState,
 } from "./preview_contract.js";
 import { terminateProcessTree } from "./process_tree_kill.js";
 
 function writeState(path: string, state: PreviewState): void {
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
-  try { chmodSync(tmp, 0o600); } catch { /* Windows ACLs are the authority. */ }
-  renameSync(tmp, path);
+  const tmp = `${path}.${process.pid}-${randomUUID()}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", { encoding: "utf8", mode: 0o600, flag: "wx" });
+    try { chmodSync(tmp, 0o600); } catch { /* Windows ACLs are the authority. */ }
+    renameSync(tmp, path);
+  } catch (error) {
+    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* preserve the state write failure */ }
+    throw error;
+  }
 }
 
 function validLaunch(value: unknown): value is PreviewLaunch {
@@ -22,7 +32,9 @@ function validLaunch(value: unknown): value is PreviewLaunch {
   const allowed = new Set(["schema", "instanceId", "projectRoot", "commandDigest", "command", "statePath", "logPath"]);
   if (Object.keys(v).some((key) => !allowed.has(key))) return false;
   return v["schema"] === PREVIEW_SCHEMA && typeof v["instanceId"] === "string" &&
-    typeof v["projectRoot"] === "string" && typeof v["commandDigest"] === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v["instanceId"]) &&
+    typeof v["projectRoot"] === "string" && v["projectRoot"].length <= 4096 &&
+    typeof v["commandDigest"] === "string" && /^[0-9a-f]{64}$/.test(v["commandDigest"]) &&
     typeof v["statePath"] === "string" && typeof v["logPath"] === "string" &&
     isAbsolute(v["statePath"] as string) && isAbsolute(v["logPath"] as string) &&
     typeof v["command"] === "object" && v["command"] !== null;
@@ -37,29 +49,34 @@ function reply(res: ServerResponse, status: number, body: unknown): void {
 function consumeControlRequest(launch: PreviewLaunch, req: IncomingMessage): boolean {
   const requestId = req.headers["x-aether-preview-control"];
   if (typeof requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) return false;
-  let names: string[];
+  const requestPath = join(dirname(launch.statePath), `control-${requestId}.json`);
   try {
-    const dir = dirname(launch.statePath);
-    names = readdirSync(dir).filter((name) => /^control-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/i.test(name));
-    if (names.length > 256) return false;
+    const stable = readStablePreviewFile(requestPath, 1_024);
+    const value: unknown = JSON.parse(stable.bytes.toString("utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const v = value as Record<string, unknown>;
+    const valid = Object.keys(v).length === 5 && v["schema"] === PREVIEW_SCHEMA && v["requestId"] === requestId &&
+      v["instanceId"] === launch.instanceId && v["method"] === req.method && v["path"] === req.url;
+    if (!valid) return false;
+    if (!previewPathStillNames(requestPath, stable.identity)) return false;
+    unlinkSync(requestPath);
+    return true;
   } catch { return false; }
-  const dir = dirname(launch.statePath);
-  for (const name of names) {
-    try {
-      const requestPath = join(dir, name);
-      const stat = lstatSync(requestPath);
-      if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 1_024) continue;
-      const value: unknown = JSON.parse(readFileSync(requestPath, "utf8"));
-      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-      const v = value as Record<string, unknown>;
-      const valid = Object.keys(v).length === 5 && v["schema"] === PREVIEW_SCHEMA && v["requestId"] === requestId &&
-        v["instanceId"] === launch.instanceId && v["method"] === req.method && v["path"] === req.url;
-      if (!valid) continue;
-      unlinkSync(requestPath);
-      return true;
-    } catch { /* a malformed or concurrently removed request cannot block another */ }
+}
+
+function openStableLog(path: string): number {
+  const before = lstatSync(path, { bigint: true });
+  if (before.isSymbolicLink() || !before.isFile()) throw new Error("unsafe preview log path");
+  const noFollow = process.platform === "win32" ? 0 : constants.O_NOFOLLOW;
+  const fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | noFollow);
+  const opened = fstatSync(fd, { bigint: true });
+  const after = lstatSync(path, { bigint: true });
+  if (!opened.isFile() || after.isSymbolicLink() || before.dev !== opened.dev || before.ino !== opened.ino ||
+      opened.dev !== after.dev || opened.ino !== after.ino) {
+    closeSync(fd);
+    throw new Error("preview log changed while it was being opened");
   }
-  return false;
+  return fd;
 }
 
 async function probe(url: string): Promise<boolean> {
@@ -86,6 +103,8 @@ export async function runPreviewSupervisor(launchJson: string): Promise<number> 
   } catch { return 2; }
 
   let child: ChildProcess | null = null;
+  let logFd: number;
+  try { logFd = openStableLog(launch.logPath); } catch { return 2; }
   let stopping = false;
   let state!: PreviewState;
   const candidates: string[] = [];
@@ -132,6 +151,7 @@ export async function runPreviewSupervisor(launchJson: string): Promise<number> 
       error: sanitizePreviewText(error instanceof Error ? error.message : String(error)).slice(0, 500),
     };
     writeState(launch.statePath, state);
+    closeSync(logFd);
     server.close();
     return 1;
   }
@@ -144,16 +164,32 @@ export async function runPreviewSupervisor(launchJson: string): Promise<number> 
   writeState(launch.statePath, state);
 
   let tail = "";
-  let logChars = 0;
+  let logBytes = 0;
+  let spawnError = "";
+  let logFailed = false;
   const consume = (chunk: Buffer | string): void => {
     const safe = sanitizePreviewText(String(chunk));
-    logChars += safe.length;
-    if (logChars > 1_048_576) {
-      const prior = readFileSync(launch.logPath, "utf8").slice(-524_288);
-      writeFileSync(launch.logPath, (prior + safe).slice(-1_048_576), { encoding: "utf8", mode: 0o600 });
-      logChars = Math.min(1_048_576, prior.length + safe.length);
-    } else {
-      appendFileSync(launch.logPath, safe, { encoding: "utf8", mode: 0o600 });
+    const bytes = Buffer.from(safe);
+    try {
+      if (logBytes + bytes.length > 1_048_576) {
+        ftruncateSync(logFd, 0);
+        const marker = Buffer.from("[earlier preview log truncated]\n");
+        writeSync(logFd, marker);
+        logBytes = marker.length;
+      }
+      const remaining = Math.max(0, 1_048_576 - logBytes);
+      if (remaining > 0) {
+        const bounded = bytes.subarray(Math.max(0, bytes.length - remaining));
+        writeSync(logFd, bounded);
+        logBytes += bounded.length;
+      }
+    } catch {
+      if (!logFailed) {
+        logFailed = true;
+        spawnError = "preview log became unavailable";
+        terminateProcessTree(child);
+      }
+      return;
     }
     tail = (tail + safe).slice(-16_384);
     for (const match of tail.matchAll(/https?:\/\/[^\s"'<>\]\[()]+/g)) {
@@ -165,7 +201,6 @@ export async function runPreviewSupervisor(launchJson: string): Promise<number> 
   child.stderr?.on("data", consume);
 
   let closed: number | null = null;
-  let spawnError = "";
   child.once("error", (error: NodeJS.ErrnoException) => { spawnError = error.code ?? error.message; });
   child.once("close", (code) => { closed = code ?? 1; });
   const cancel = (): void => {
@@ -182,8 +217,11 @@ export async function runPreviewSupervisor(launchJson: string): Promise<number> 
       if (await probe(candidate)) { readyUrl = candidate; break; }
     }
     if (readyUrl) {
-      await new Promise((resolve) => setTimeout(resolve, 350));
-      if (closed === null) break;
+      // A listener already occupying a declared port must not make a child that
+      // immediately fails its own bind look ready. Keep the child alive across
+      // a full startup-stability window and probe the same URL again.
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      if (closed === null && await probe(readyUrl)) break;
       readyUrl = undefined;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -196,6 +234,7 @@ export async function runPreviewSupervisor(launchJson: string): Promise<number> 
     state = { ...state, phase: "failed", error };
     writeState(launch.statePath, state);
     terminateProcessTree(child);
+    closeSync(logFd);
     server.close();
     return 1;
   }
@@ -205,13 +244,20 @@ export async function runPreviewSupervisor(launchJson: string): Promise<number> 
 
   if (closed === null) await new Promise<void>((resolve) => child!.once("close", () => resolve()));
   if (!stopping) {
-    state = { ...state, phase: "failed", error: `dev command exited after readiness (exit ${closed ?? 1})` };
+    state = { ...state, phase: "failed", error: spawnError || `dev command exited after readiness (exit ${closed ?? 1})` };
     writeState(launch.statePath, state);
   }
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  closeSync(logFd);
   process.removeListener("SIGINT", cancel);
   process.removeListener("SIGTERM", cancel);
-  if (stopping) { try { if (existsSync(launch.statePath) && parsePreviewState(JSON.parse(readFileSync(launch.statePath, "utf8")))?.instanceId === launch.instanceId) unlinkSync(launch.statePath); } catch { /* stale state is safer than deleting an unknown file */ } }
+  if (stopping) {
+    try {
+      const stable = readStablePreviewFile(launch.statePath, 32_768);
+      if (parsePreviewState(JSON.parse(stable.bytes.toString("utf8")))?.instanceId === launch.instanceId &&
+          previewPathStillNames(launch.statePath, stable.identity)) unlinkSync(launch.statePath);
+    } catch { /* stale or replaced state is safer than deleting an unknown file */ }
+  }
   return stopping ? 0 : 1;
 }
 
