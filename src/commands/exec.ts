@@ -10,6 +10,7 @@ import { TOOLS, PROTOCOL_VERSION } from "../core/brain_protocol.js";
 import { toolDefinition } from "../core/tool_registry.js";
 import { ControlLedger, HeadlessWriter, HEADLESS_CONTROL_PROTOCOL, HEADLESS_MAX_LINE_BYTES, parseControlFrame, redactHeadless } from "../core/headless_protocol.js";
 import { LineBuffer } from "../core/brain_protocol.js";
+import { resolveLocalModelSelection } from "../core/local_ollama.js";
 
 export const EXEC_EXIT = { ok: 0, failed: 1, usage: 2, unverified: 4, protocol: 64, timeout: 124, cancelled: 130 } as const;
 export type ExecPermission = "deny" | "read-only" | "workspace-write";
@@ -61,13 +62,30 @@ function verificationStatus(result: ToolResult | null, configured: boolean): Ver
 
 export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecOptions): Promise<number> {
   const cwd = realpathSync(resolve(ctx.flags.cwd));
+  const driver = opts.driver ?? "ollama";
+  if (driver === "selftest" && ctx.flags.model?.trim()) {
+    process.stderr.write("aether exec: --model is unavailable with the selftest driver; selftest performs no model work\n");
+    return EXEC_EXIT.usage;
+  }
+  let localModel: { tag: string; id: string } | null = null;
+  if (driver === "ollama") {
+    try {
+      localModel = resolveLocalModelSelection(ctx.flags.model, ctx.cfg.localModel ?? "");
+    } catch (error) {
+      const explicit = ctx.flags.model?.trim();
+      const message = explicit && !explicit.startsWith("ollama:")
+        ? `Model ${JSON.stringify(explicit)} is unavailable to aether exec. Use an explicit ollama:<tag>; bare and hosted model ids are rejected.`
+        : error instanceof Error ? error.message : String(error);
+      process.stderr.write(`aether exec: ${String(redactHeadless(message))}\n`);
+      return EXEC_EXIT.usage;
+    }
+  }
   const writer = new HeadlessWriter(cwd, opts.writeLine, opts.sessionId);
   const declared = new Set(opts.allowedTools.filter((tool) => (EXEC_V1_TOOLS as readonly string[]).includes(tool)));
   const warnings: string[] = [];
   if (process.stdin.isTTY) warnings.push("stdin controls unavailable on a TTY; send process signals or pipe versioned JSONL controls");
   if (!opts.verifyCommand) warnings.push("no verification command configured; successful agent completion remains non-zero/unverified");
   if (opts.resume) warnings.push("resume is not supported by aether.exec/1; the request will be rejected without starting a brain");
-  const driver = opts.driver ?? "ollama";
   if (driver === "selftest") warnings.push("selftest driver validates installed child/protocol wiring only; it performs no model work");
   const brain = opts.brain ?? new BundledChildBrain({
     mode: driver,
@@ -89,7 +107,7 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
     bridge_protocol: PROTOCOL_VERSION,
     repository: repositoryIdentity(cwd),
     backend: driver === "selftest" ? "bundled-selftest-child" : "bundled-ollama-child",
-    model: (ctx.flags.model ?? ctx.cfg.defaultModel) || null,
+    model: localModel?.id ?? null,
     effort: (ctx.flags.effort ?? ctx.cfg.defaultEffort) || null,
     permissions: {
       mode: opts.permission, explicit_decisions: true,
@@ -173,7 +191,7 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
   try {
     const taskCommand: TaskCommand = {
       type: "task", text: task, cwd, poolGb: 5,
-      model: ctx.flags.model, effort: (ctx.flags.effort ?? ctx.cfg.defaultEffort) || undefined, testCmd: opts.verifyCommand,
+      model: localModel?.tag, effort: (ctx.flags.effort ?? ctx.cfg.defaultEffort) || undefined, testCmd: opts.verifyCommand,
     };
     for await (const event of brain.run(taskCommand)) {
       if (cancelled) break;

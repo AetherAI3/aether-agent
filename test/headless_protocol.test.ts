@@ -18,13 +18,18 @@ import {
 } from "../src/core/headless_protocol.js";
 import { runHeadlessExec } from "../src/commands/exec.js";
 import { OllamaBrain } from "../src/core/brain_ollama.js";
+import { DEFAULT_OLLAMA_MODEL } from "../src/core/ollama.js";
 
 class FakeBrain implements Brain {
   readonly results: Array<{ id: string; result: ToolResult }> = [];
   readonly controls: string[] = [];
+  readonly tasks: TaskCommand[] = [];
   closed = false;
   constructor(private readonly events: readonly BrainEvent[]) {}
-  async *run(_task: TaskCommand): AsyncIterable<BrainEvent> { for (const event of this.events) yield event; }
+  async *run(task: TaskCommand): AsyncIterable<BrainEvent> {
+    this.tasks.push(task);
+    for (const event of this.events) yield event;
+  }
   sendToolResult(id: string, result: ToolResult): void { this.results.push({ id, result }); }
   control(action: "pause" | "resume" | "steer", note?: string): void { this.controls.push(`${action}:${note ?? ""}`); }
   close(): void { this.closed = true; }
@@ -40,6 +45,88 @@ function context(cwd: string): AppContext {
     flags: { json: false, audit: false, yes: false, cwd }, confirm: async () => false,
   };
 }
+
+const successfulEvent: BrainEvent = { type: "done", ok: true, result: "done", remaining: 0, reason: "" };
+const successfulVerify = `${JSON.stringify(process.execPath)} -e "process.exit(0)"`;
+
+async function runModelSelection(
+  ctx: AppContext,
+  brain: FakeBrain,
+  driver: "ollama" | "selftest" = "ollama",
+): Promise<{ code: number; frames: Record<string, unknown>[] }> {
+  const lines: string[] = [];
+  const code = await runHeadlessExec(ctx, "inspect model selection", {
+    permission: "deny", allowedTools: [], capabilityPacks: [], timeoutMs: 5000,
+    verifyCommand: successfulVerify, brain, driver, writeLine: (line) => lines.push(line.trimEnd()),
+  });
+  return { code, frames: lines.map((line) => JSON.parse(line) as Record<string, unknown>) };
+}
+
+test("exec resolves absent models from local config then the safe Ollama default", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aether-headless-model-"));
+  const savedCtx = context(root);
+  savedCtx.cfg.defaultModel = "gpt-5.6-sol";
+  savedCtx.cfg.localModel = "ollama:gemma3:4b";
+  const savedBrain = new FakeBrain([successfulEvent]);
+  const saved = await runModelSelection(savedCtx, savedBrain);
+  assert.equal(saved.code, 0);
+  assert.equal(saved.frames[0]?.["model"], "ollama:gemma3:4b");
+  assert.equal(savedBrain.tasks[0]?.model, "gemma3:4b");
+
+  const defaultCtx = context(root);
+  defaultCtx.cfg.defaultModel = "gpt-5.6-sol";
+  defaultCtx.cfg.localModel = "";
+  const defaultBrain = new FakeBrain([successfulEvent]);
+  const fallback = await runModelSelection(defaultCtx, defaultBrain);
+  assert.equal(fallback.code, 0);
+  assert.equal(fallback.frames[0]?.["model"], `ollama:${DEFAULT_OLLAMA_MODEL}`);
+  assert.equal(defaultBrain.tasks[0]?.model, DEFAULT_OLLAMA_MODEL);
+});
+
+test("exec reports a namespaced Ollama id but sends only the normalized tag to the brain", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aether-headless-model-"));
+  const ctx = context(root);
+  ctx.flags.model = "  ollama:qwen2.5-coder:14b  ";
+  const brain = new FakeBrain([successfulEvent]);
+  const run = await runModelSelection(ctx, brain);
+  assert.equal(run.code, 0);
+  assert.equal(run.frames[0]?.["model"], "ollama:qwen2.5-coder:14b");
+  assert.equal(brain.tasks[0]?.model, "qwen2.5-coder:14b");
+});
+
+test("exec rejects bare, hosted-looking, and malformed explicit models before brain start", async () => {
+  for (const model of ["qwen2.5-coder:7b", "gpt-5.6-sol", "ollama:", "ollama:bad tag", "ollama:../escape"]) {
+    const root = mkdtempSync(join(tmpdir(), "aether-headless-model-"));
+    const ctx = context(root);
+    ctx.flags.model = model;
+    const brain = new FakeBrain([successfulEvent]);
+    const run = await runModelSelection(ctx, brain);
+    assert.equal(run.code, 2, model);
+    assert.deepEqual(run.frames, [], model);
+    assert.equal(brain.tasks.length, 0, model);
+    assert.equal(brain.closed, false, model);
+  }
+});
+
+test("selftest is model-free and rejects an explicit model before brain start", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aether-headless-model-"));
+  const ctx = context(root);
+  ctx.cfg.defaultModel = "gpt-5.6-sol";
+  ctx.cfg.localModel = "ollama:gemma3:4b";
+  const brain = new FakeBrain([successfulEvent]);
+  const run = await runModelSelection(ctx, brain, "selftest");
+  assert.equal(run.code, 0);
+  assert.equal(run.frames[0]?.["model"], null);
+  assert.equal(brain.tasks[0]?.model, undefined);
+
+  ctx.flags.model = "ollama:gemma3:4b";
+  const rejectedBrain = new FakeBrain([successfulEvent]);
+  const rejected = await runModelSelection(ctx, rejectedBrain, "selftest");
+  assert.equal(rejected.code, 2);
+  assert.deepEqual(rejected.frames, []);
+  assert.equal(rejectedBrain.tasks.length, 0);
+  assert.equal(rejectedBrain.closed, false);
+});
 
 test("writer sequences frames, redacts secrets, bounds large payloads, and writes terminal once", () => {
   const root = mkdtempSync(join(tmpdir(), "aether-headless-"));
