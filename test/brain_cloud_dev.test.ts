@@ -278,6 +278,12 @@ test("dev session: a transient tool-result POST failure is retried (idempotent u
   });
 });
 
+// The degrade now has a precondition: no local-authority contract. A run that
+// pinned a model (TASK does) or a caller that asked for local authority
+// refuses it instead — see brain_cloud_drift.test.ts. This case keeps the
+// fail-soft half honest for a plain, unpinned run.
+const UNPINNED = { type: "task" as const, text: "hello", cwd: ".", poolGb: 5 };
+
 test("legacy fallback: a 404 on session create degrades to the one-way chat stream", async () => {
   const calls: Call[] = [];
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -312,8 +318,10 @@ test("legacy fallback: a 404 on session create degrades to the one-way chat stre
   await withFetch(fetchImpl, async () => {
     const brain = new CloudBrain(new ApiClient("https://stub.test", tokens));
     const out: BrainEvent[] = [];
-    for await (const ev of brain.run(TASK)) out.push(ev);
+    for await (const ev of brain.run(UNPINNED)) out.push(ev);
     assert.ok(calls.some((c) => c.url.includes("/agent/chat/stream")));
+    // Fail-soft, but never silent.
+    assert.ok(out.some((e) => e.type === "routing_drift"), "the degrade must be announced");
     const done = out.find((e) => e.type === "done");
     assert.ok(done && done.type === "done" && done.ok === true);
     // legacy path: no server session, so tool results/control are no-ops

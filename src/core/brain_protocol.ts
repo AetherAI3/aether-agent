@@ -80,6 +80,41 @@ export interface AgentDoneFrame {
   toolCalls?: number;
   durationMs?: number;
 }
+/**
+ * Transport routing drift — the requested transport was NOT the one used.
+ *
+ * HOST-SIDE ONLY: no brain sends this over the wire, so it is not part of the
+ * frozen NDJSON/SSE decode surface and does not bump PROTOCOL_VERSION (it is
+ * additive per docs/CONTRACTS.md's versioning rule).
+ *
+ * It exists because a downgrade from the dev-session protocol to the one-way
+ * chat stream MOVES WHERE THE WORK HAPPENS: a dev session runs tools on this
+ * machine against this checkout; the chat stream runs them server-side against
+ * the cloud vault. That is an identity change, not a performance detail, so it
+ * is an event the user sees and `--json` carries — never a silent branch.
+ *
+ * `kind` duplicates `type` on purpose: `--json` consumers pin the stable tag
+ * "routing_drift" without having to know the BrainEvent `type` vocabulary.
+ */
+export interface RoutingDriftFrame {
+  type: "routing_drift";
+  kind: "routing_drift";
+  /** The transport the run asked for. */
+  requested: "dev_session";
+  /** What it actually got — "refused" when the run failed closed instead. */
+  resolved: "chat_stream" | "refused";
+  /** HTTP status that caused the drift (403 flagged off · 404 route absent). */
+  status: number;
+  /** The server's own explanation, sanitized (transport.sanitizeServerText). */
+  reason: string;
+  /** What it means for this checkout, in plain words. */
+  consequence: string;
+  /** One line the user can act on. */
+  remediation: string;
+  /** True when the run refused to continue because local authority was required. */
+  fatal: boolean;
+}
+
 export interface WorkflowDoneFrame {
   type: "workflow_done";
   synthesis: string;
@@ -140,7 +175,8 @@ export type BrainEvent =
   | AgentSpawnFrame
   | AgentProgressFrame
   | AgentDoneFrame
-  | WorkflowDoneFrame;
+  | WorkflowDoneFrame
+  | RoutingDriftFrame;
 
 // --- host -> brain commands ------------------------------------------------
 export type HostCommand =
