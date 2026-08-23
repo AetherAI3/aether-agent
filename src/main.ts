@@ -5,6 +5,7 @@
 
 import { parseArgs } from "node:util";
 import { createInterface } from "node:readline";
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./core/config.js";
@@ -273,8 +274,29 @@ function finish(code: number): void {
   setTimeout(() => process.exit(code), 2000).unref();
 }
 
-const invokedPath = process.argv[1] ? resolve(process.argv[1]) : "";
-if (invokedPath === resolve(fileURLToPath(import.meta.url))) {
+/**
+ * npm installs the POSIX `aether` bin as a symlink. Node preserves that shim
+ * path in argv[1] while import.meta.url identifies the resolved target, so a
+ * lexical comparison makes the installed CLI silently skip main(). Compare
+ * canonical paths when possible, retaining the lexical fallback for unusual
+ * filesystems where realpath cannot resolve either side.
+ */
+export function isMainInvocation(
+  argv1: string | undefined,
+  moduleUrl: string = import.meta.url,
+  realpath: (path: string) => string = realpathSync,
+): boolean {
+  if (!argv1) return false;
+  const invokedPath = resolve(argv1);
+  const modulePath = resolve(fileURLToPath(moduleUrl));
+  try {
+    return realpath(invokedPath) === realpath(modulePath);
+  } catch {
+    return invokedPath === modulePath;
+  }
+}
+
+if (isMainInvocation(process.argv[1])) {
   main(process.argv.slice(2))
     .then(finish)
     .catch((err) => {
