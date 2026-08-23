@@ -2,242 +2,207 @@
 
 # Aether Agent
 
-**Start a task on one model. Finish it on another, on another machine.
-Your tests decide when it's done.**
+**One coding agent. Hosted frontier models or fully local Ollama. Your tests decide when it’s done.**
 
-[![CI](https://github.com/AetherAI3/aether-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AetherAI3/aether-agent/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-Apache--2.0-06b6d4)](LICENSE) [![Node](https://img.shields.io/badge/node-%E2%89%A524-14b8a6)](https://nodejs.org) [![TypeScript](https://img.shields.io/badge/TypeScript-7-3178c6)](https://www.typescriptlang.org/) [![Release notes](https://img.shields.io/badge/release-notes-7c3aed)](RELEASE_NOTES.md)
+[![CI](https://github.com/AetherAI3/aether-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AetherAI3/aether-agent/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/aether-agents?label=npm)](https://www.npmjs.com/package/aether-agents)
+[![Release notes](https://img.shields.io/badge/release-notes-7c3aed)](RELEASE_NOTES.md)
+[![License](https://img.shields.io/badge/license-Apache--2.0-06b6d4)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A524-14b8a6)](https://nodejs.org/)
+[![Security policy](https://img.shields.io/badge/security-policy-7c3aed)](SECURITY.md)
 
-```bash
-npm i -g aether-agents --ignore-scripts    # Node ≥ 24 · zero runtime dependencies
-aether auth login                          # …or skip it and run on your own Ollama
-aether agent "make the failing tests pass"
-```
-
-[Carry the work](#carry-the-work-across-models-and-machines) · [Install](#install-in-three-moves) · [Models & pricing](#models--pricing) · [Commands](#commands) · [Security](#security) · [Platform](#part-of-the-aether-platform) · [Release notes](RELEASE_NOTES.md)
-
-<a href="https://app.aethersystems.net/">
-<img width="760" alt="Aether Agent — terminal coding session" src="https://github.com/user-attachments/assets/f7a71cbb-6be2-41ea-b2a4-35c7c0d889d6" />
-</a>
+[Start](#choose-how-to-run) · [Proof](#a-sixty-second-proof) · [Commands](#essential-commands) · [Security](#security-and-runtime-boundaries) · [Contribute](CONTRIBUTING.md)
 
 </div>
 
-Aether Agent scans, plans, edits, and runs your tests — in your repo, on your terms.
-Two things make it different from the rest of the terminal-agent shelf:
+Aether Agent is an open-source coding CLI. It can inspect and edit a repository,
+run commands, keep local session records, and run a verification command after the
+agent finishes. The same TypeScript host drives the hosted and Ollama paths; the
+selected brain changes, but workspace checks, tool execution, review, session, and
+verification code remain local.
 
-- **Verification is ground truth.** The agent re-runs *your* test command at the end
-  and reads the exit code itself. A model that says "done" over a red tree gets
-  marked `incomplete`, and the process exits non-zero. "Done" is never the model's word.
-- **The work outlives the session.** Every run leaves a local record. `aether resume
-  export` turns that record into a single portable file — copy it to another checkout,
-  another machine, another OS, and `aether agent --resume <file>` picks the thread up
-  on whatever model you want, with no chat history to re-paste.
+This README documents the current `main` branch. The npm package installs the
+registry's current `latest` release, which can lag `main`. Check the installed
+version with `aether --version` and use [release notes](RELEASE_NOTES.md) for its
+feature set. A source feature is not claimed as published merely because it is on
+`main`.
 
-**Aether Agent is in beta.** Updates are shipping quickly.
+## Install
 
-> **What `npm i -g` gives you today: 0.1.0.** The npm `latest` dist-tag is still
-> `0.1.0`, and 0.1.0 is the only version ever published. **`main` is 0.3.0 and is
-> not on the registry** — neither was 0.2.0, which was written up but never
-> released and is now superseded. So the features described under
-> [v0.3.0 in the release notes](RELEASE_NOTES.md) — the `aether review` →
-> `aether ship` rail, `aether sessions`, skills enforced inside real runs,
-> `aether skills`, `aether capabilities`, `aether support-bundle`, portable handoffs, `--resume`
-> reaching the brain, `aether agent --local "<task>"` working straight after an
-> install — are **not** in the package the command above installs. Until a
-> `v0.3.0` release is published, build from source to get them:
->
-> ```bash
-> git clone https://github.com/AetherAI3/aether-agent
-> cd aether-agent && npm ci && npm run build && npm link
-> ```
->
-> Publishing is owner-gated; the exact steps, the commit the tag must point at,
-> and the packed tarball's digest are in
-> [`docs/releases/OPERATOR-PACKET-v0.3.0.md`](docs/releases/OPERATOR-PACKET-v0.3.0.md).
+Node.js 24 or newer is required.
 
-## Carry the work across models and machines
+Install the latest release currently published on npm:
 
 ```bash
-# machine A — start it on a hosted frontier model
-aether agent --model opus5 "make the slugify tests pass"
-aether resume export --out handoff.json        # ⇄ one file: task, verdict, files, repo
-
-# machine B (or the same one, offline) — continue on a different brain
-aether agent --local --model qwen2.5-coder:7b --resume handoff.json
+npm install -g aether-agents@latest --ignore-scripts
+aether --version
 ```
 
-The handoff is a summary, not a transcript: the task, which model ran it, the verify
-gate's verdict, how many tests were still failing, the files that changed, and the
-repository it belongs to. Nothing is keyed to an absolute path, so the receiving
-checkout does not have to live where the work started — and no file contents, shell
-commands, or credential-shaped values ride along. The next model reads it as a brief
-and continues; you never re-paste the conversation.
-
-Run the whole thing yourself, end to end, in about five seconds:
+To run the current source instead:
 
 ```bash
-npm run demo:handoff       # two sessions, two models, two checkouts, one verify gate
+git clone https://github.com/AetherAI3/aether-agent.git
+cd aether-agent
+npm ci --ignore-scripts
+npm run build
+npm link
 ```
 
-The demo builds a throwaway git repo with a real failing test, runs the real CLI on
-model A, exports the handoff, **deletes machine A's checkout and logs**, and finishes
-the job in a second checkout on model B. By default the model is a scripted local stub
-so the run is deterministic and needs no download or account; `AETHER_DEMO_REAL=1`
-runs the identical script against real Ollama models. Either way the last word belongs
-to `node --test`, run independently of the agent. See
-[`docs/demo/handoff.md`](docs/demo/handoff.md).
+The source repository is
+[`AetherAI3/aether-agent`](https://github.com/AetherAI3/aether-agent), with bugs and
+feature requests in its [issue tracker](https://github.com/AetherAI3/aether-agent/issues).
+The package is [`aether-agents`](https://www.npmjs.com/package/aether-agents).
 
-## Install in three moves
+## Choose how to run
 
-<div align="center">
-
-<img width="800" alt="Install in three moves — drop it in, run on the fleet, or go fully offline" src="https://github.com/user-attachments/assets/fabfd1ac-ca6a-43a4-86cd-c63bb80317b0" />
-
-</div>
+### Hosted Aether account
 
 ```bash
-npm i -g aether-agents --ignore-scripts     # 01 — drop it in (Node ≥ 24)
-
-aether auth login          # 02 — sign in once
-aether agent               #      …terminal opens. Just start chatting.
-
-ollama pull qwen2.5-coder:7b   # 03 — or go offline: no account, no network
-aether agent --local           #      …same terminal, nothing leaves the machine
+aether auth login
+aether auth status
+aether agent --test-cmd "npm test" "fix the failing test"
 ```
 
+`aether auth login` starts device authorization and stores the resulting credential
+locally. A signed-in coding run requests a hosted dev session while tool execution
+and verification stay in the checkout. Hosted coding availability is determined at
+runtime: if the service does not provide the required local-authority protocol, the
+CLI reports routing drift and exits with code `3` without falling back to server-side
+tool execution.
 
-`aether agent` opens the REPL — chat with the model, slash-commands at hand, the agent edits files and runs your tests **in the same session**. Both brains run through the same host loop, render, tools, and commands — switching just swaps the transport. On the hosted path your code stays local and only the prompt + context you send leaves; on `--local`, nothing leaves at all. The offline brain is built into the package: it talks straight to Ollama over its OpenAI-compatible endpoint, with the same eight tools and the same permission gate, so `--local` needs nothing beyond Node and `ollama serve`.
+Use `aether models` to inspect the catalogue returned for the signed-in account.
+Model availability and service terms are server-owned and are intentionally not
+copied into a hand-maintained table here.
 
-> Running the separate Python brain instead — Aether's open-source (Apache-2.0) **[Unlimited Context](https://github.com/AetherAI3/Unlimited-Context-LLM)** engine, which gives an Ollama model a billion-token working memory — is opt-in with `AETHER_LOCAL_BRAIN=python` once you have installed it. It is not bundled with the npm package.
+### Fully local Ollama, no Aether account
 
-> Prefer the installer UI? Download [`install.sh`](install.sh) or [`install.ps1`](install.ps1), inspect it, then run it locally. Both follow npm's `latest` dist-tag, which today is **0.1.0**; `AETHER_VERSION=<version>` (shell) or `-Version <version>` (PowerShell) pins an exact **published** release, so a version that is not on the registry yet — 0.2.0 and 0.3.0 included — will fail with `No matching version found`. The canonical npm command above verifies registry integrity and disables lifecycle scripts; there are no native or runtime dependencies and no daemon.
+Install [Ollama](https://ollama.com/), then start its server and pull the CLI's
+default local model:
 
-## Models & pricing
+```bash
+ollama serve
+ollama pull qwen2.5-coder:7b
+aether agent --local --test-cmd "npm test" "fix the failing test"
+```
 
-<div align="center">
+Pass `--model <ollama-tag>` to select another model you have pulled. The local path
+talks directly to the configured Ollama endpoint (by default
+`http://localhost:11434`) and does not require an Aether account. `OLLAMA_HOST` may
+point elsewhere, so "local" describes the selected backend, not a guarantee about a
+user-supplied remote Ollama URL.
 
-<a href="https://aethersystems.net/">
-<img width="800" alt="Model fleet with open per-token pricing — text and coding models, image and video generation, orchestrators" src="https://github.com/user-attachments/assets/63662c5f-2b05-4935-ac14-6a131767c8f5" />
-</a>
+## A sixty-second proof
 
-</div>
+From a git repository, give the agent a small task and an explicit verification
+command:
 
-One fleet, transparent per-token pricing — Claude, GPT, DeepSeek, Kimi, Gemma and Gemini for text & code, a 32-model image / video / 3D fleet, plus the **Neo · Kronus · Aether-Vision** orchestrators. `aether models` prints what your plan can actually reach, live from the server — the tables below are the current shape of it.
+```bash
+aether agent --local --test-cmd "npm test" "make one small change and keep the tests green"
+aether review diff
+aether sessions
+```
 
-### Frontier — Pro / Team
+The final status comes from the host-run command's exit code. Without `--test-cmd`,
+the run is recorded as `unverified`, never as verified success.
 
-| Model | `--model` key | Context window |
-|---|---|---|
-| Claude Opus 5 | `opus5` | 1,000,000 |
-| GPT-5.6 Sol | `gpt56_sol` | 1,050,000 |
-| GPT-5.6 Terra | `gpt56_terra` | 1,050,000 |
-| GPT-5.6 Luna | `gpt56_luna` | 1,050,000 |
-| Kimi K3 | `kimi_k3` | 1,048,576 |
-| Gemini 3.6 Flash | `gemini36_flash` | 1,048,576 |
+Continue locally by session id, or export a bounded handoff for another checkout,
+machine, or model:
 
-Six frontier models, every one with a million-token window. In the GPT-5.6 family, Sol takes the hardest reasoning and coding work, Terra is the balanced everyday pick, Luna is the fast, cost-sensitive one — and all three are priced through their true 1,050,000-token window, with the long-context band billed exactly rather than estimated. Opus 5 is an **addition, not a replacement**: `--model opus` still resolves to Claude Opus 4.8 and nothing you have configured changes.
+```bash
+aether resume export --out aether-handoff.json
+aether agent --local --resume aether-handoff.json
+```
 
-### The rest of the fleet
+When the branch is committed and ready, `aether ship` shows the complete publication
+plan and asks before pushing and opening a pull request. Non-interactive publication
+requires the explicit `--approve publish` authority; `--yes` alone is insufficient.
 
-| Plan | What you can select |
+## What stays consistent
+
+- **Verification is host-owned.** The configured test command is rerun after the
+  model loop, and its real exit code determines the result.
+- **Handoffs are portable.** `aether resume export` writes a bounded continuation
+  record rather than copying the full transcript or repository contents.
+- **One local host drives both paths.** Workspace confinement, permission prompts,
+  local tools, session logging, and the final verification gate do not move into the
+  model transport.
+- **Capabilities stay visible.** `aether capabilities` reports the runtime contract;
+  `aether skills` manages capability-scoped skill discovery and trust.
+
+## Setup and diagnosis
+
+```bash
+aether doctor
+aether doctor --live
+aether doctor --fix --dry-run
+```
+
+The fast check inspects configured prerequisites. `--live` exercises reachable
+services. Repair mode is limited to the doctor's registered repairs; preview it with
+`--dry-run` before approving changes. Run `aether doctor --help` for the current
+flags and checks.
+
+## Essential commands
+
+| Command | Purpose |
 |---|---|
-| **Free** | Claude Haiku 4.5 · DeepSeek V4 Flash · one image model as a teaser |
-| **Solo** | + Claude Sonnet 5 · GPT-5.4 mini · the **Neo 5.1T** orchestrator · the full image fleet |
-| **Pro / Team** | + Claude Opus 4.8 · GPT-5.5 · DeepSeek V4 Pro · Kimi K2.6 · Gemma 4 31B · the six frontier models above · video & 3D generation · the **Kronus v2.4** and **Aether-Vision** orchestrators |
+| `aether agent [task]` | Open the agent REPL or run a coding task. |
+| `aether agent --local [task]` | Use the built-in Ollama brain. |
+| `aether auth login` | Authorize a hosted account. |
+| `aether models` | Read the current hosted model catalogue. |
+| `aether doctor` | Inspect setup and optionally run live diagnostics. |
+| `aether sessions` | Browse and continue project sessions. |
+| `aether resume export` | Write a portable continuation file. |
+| `aether review` | Inspect, stage, verify, or commit local changes. |
+| `aether ship` | Push the current branch and open a pull request after approval. |
+| `aether capabilities` | Show declared and currently available capabilities. |
+| `aether skills` | Inspect and manage agent skills. |
+| `aether support-bundle` | Export redacted diagnostics for support. |
 
-Media is 15 image models (Nano Banana Pro & 2, FLUX.2 Klein / Pro / Flex / Max, Recraft V3 & V4, Seedream 4.5, Riverflow V2, GPT-5 Image), 16 video models (Seedance 2.0 & 1.5 Pro, Veo 3.1 / Fast / Lite, Kling 3.0 Standard & Pro, Kling Video O1, Sora 2 Pro, Wan 2.6 & 2.7, Hailuo 2.3, HunyuanVideo 1.5, Grok Imagine), and Hunyuan3D 2.1 for text-to-3D — all drivable from the prompt line with `/photogen`, `/videogen` and `/storyboard`.
+Use `aether help`, `aether help <command>`, or the complete
+[command reference](COMMANDS.md) for the complete surface. The README intentionally
+keeps only the main path.
 
-On `--local`, none of the above applies: you run any Ollama model you have pulled, with no account, no fleet, and no metering.
+## Security and runtime boundaries
 
-Usage is metered in **UVT** — one universal credit, one balance, shared across this agent, the [AetherCloud desktop](https://github.com/AetherAI3/aethercloud), and [Aether AI on the web](https://app.aethersystems.net/chat). Free tier to try (no card), subscription for premium models, UVT top-ups for pay-as-you-go. **Current tiers and prices: [aethersystems.net](https://aethersystems.net/)**
+- File tools are confined to the selected workspace. Write, shell, and git actions
+  pass through the host permission gate.
+- Hosted tasks and the context supplied for them are sent to the configured Aether
+  API. A hosted coding run refuses a transport that cannot keep tool authority local.
+- `--local` sends model requests to the configured Ollama endpoint. Network-capable
+  tools remain separate actions; inspect prompts and configuration for your threat
+  model.
+- Credentials are stored outside the repository with owner-only permissions. Logout
+  clears the local credential even if server revocation cannot be reached.
+- Session logs are local and redact credential-shaped values. Portable handoffs are
+  summaries, not repository snapshots.
 
-## Commands
+For vulnerability reporting and supported-version policy, see
+[SECURITY.md](SECURITY.md). Architecture and protocol contracts are documented in
+[`docs/`](docs/).
 
-<div align="center">
+## Other Aether surfaces
 
-<a href="COMMANDS.md">
-<img width="800" alt="Slash commands — session, agent modes, steering, context and limits, goals and workflows, vault, orchestra" src="https://github.com/user-attachments/assets/52ca6de0-0958-4237-9dfd-776c9e55822d" />
-</a>
+Aether web, Aether Code, Aether Design, and AetherCloud desktop are separate product
+surfaces. This CLI does not currently expose a command that opens those surfaces or
+redeems a coding session into them, so this README does not promise cross-surface
+continuation. AetherCloud's source lives in
+[`AetherAI3/aethercloud`](https://github.com/AetherAI3/aethercloud).
 
-</div>
+## Contributing and license
 
-Inside the REPL, `/` commands control the whole session — type `/help` to see them in-session, or click the card above for the full reference. That includes generating images and video from the prompt line (`/photogen`, `/videogen`, `/storyboard` …) and connecting **MCP servers** with `/mcp`. From the shell:
-
-```bash
-aether agent                      # the main thing — open the REPL and chat
-aether agent --local              # same REPL on a local Ollama brain (offline)
-aether models                     # list models + orchestrators
-aether resume                     # replay the last session in this workspace
-aether resume export              # write a portable handoff for another machine
-aether agent --resume <id|file>   # continue it — on any model, with the context
-aether sessions                   # every session in this project, and where it can resume
-aether review                     # see what changed, pick it, commit exactly that
-aether ship                       # push the head branch and open the pull request
-```
-
-Flags you can set when launching the REPL (or pass with an inline task `aether agent "<task>"` for one-shot autonomous mode):
-
-| Flag | What it does |
-|---|---|
-| `--local` | Local Ollama brain instead of the hosted API. |
-| `--model <id>` | Force a model by key (`--model opus5`, `--model gpt56_terra`, or an Ollama tag with `--local`). |
-| `--effort <tier>` | Budget ceiling: `LOW` · `MED` · `MAX` · `ULTRA` · `CODEPRO`. |
-| `--test-cmd <cmd>` | Command the verification gate runs. With none, a run ends `unverified` — never `ok`. |
-| `--resume <id\|file>` | Continue a prior session, or a handoff file from another machine. |
-| `--worktree` | Fresh git worktree on an auto-named branch (isolated). |
-| `--repo <owner/name>` | Clone a GitHub repo via your own `gh`/`git` auth, work it in a worktree. |
-| `-y`, `--yes` | Auto-confirm prompts (non-interactive). |
-
-**Full reference** — every command, flag, slash command, and env var: [COMMANDS.md](COMMANDS.md). Dated patch notes: [RELEASE_NOTES.md](RELEASE_NOTES.md) · [docs/releases/](docs/releases/).
-
-## Development
-
-The application and executable test suite are fully on **TypeScript 7.0.2**, with **Node.js 24 or newer** as the supported runtime. Strict ESM compilation emits the distributable JavaScript to `dist/`; the published package contains `dist/src` and excludes compiled tests.
-
-Run the release gates from a clean checkout:
+Run the same gates used for changes to this repository:
 
 ```bash
-npm ci
+npm ci --ignore-scripts
 npm run typecheck
 npm test
 npm run smoke
 npm pack --dry-run
 ```
 
-The verified TypeScript 7 release baseline is tagged [`v0.1.0`](https://github.com/AetherAI3/aether-agent/tree/v0.1.0). Migration details and measurements are in the [TypeScript 7 upgrade design](docs/specs/2026-07-20-typescript-7-terminal-upgrade-design.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Security issues
+follow [SECURITY.md](SECURITY.md), not the public issue tracker.
 
-## Security
-
-- **Your code stays local.** Edits apply on your machine, path-guarded — the client refuses to write outside your working directory.
-- **Verification is ground truth.** The host runs your test command and reads the exit code itself; "done" is never the model's word.
-- **Tokens are credentials.** Stored `chmod 600`, never committed; `aether auth logout` clears them.
-- **The server is the authority.** On the API path, usage limits, model access, and signed chain-of-custody receipts are enforced server-side — the client only displays what the server reports.
-
-Found a vulnerability? See [SECURITY.md](SECURITY.md).
-
-## Part of the Aether platform
-
-Aether Agent is the **terminal** surface of Aether. Every surface below shares one login, one UVT balance, one model fleet, and one memory — start a task here, pick it up on the web, finish it in the IDE.
-
-| Surface | Where | What it is |
-|---|---|---|
-| **Aether AI on the web** | [app.aethersystems.net/chat](https://app.aethersystems.net/chat) | The Workbench — chat, agents you can launch, a work tray for everything they produce, image & video generation, your vault. |
-| **Aether Code** | [app.aethersystems.net/code](https://app.aethersystems.net/code) | The browser IDE — the agent console docked beside your files, worktree teams and per-session transcripts, Nano compile & IR export. |
-| **Aether Design** | [app.aethersystems.net/design](https://app.aethersystems.net/design) | Design Studio — canvas, creator and presets, with the agent editing the design directly. |
-| **AetherCloud desktop** | [github.com/AetherAI3/aethercloud](https://github.com/AetherAI3/aethercloud) | The agentic desktop app — projects, workflows, the memory Vault, and local Actions runs that can open a pull request. |
-| **Aether Terminal** | [aethersystems.net/terminal](https://aethersystems.net/terminal) | What this CLI looks like, before you install anything. |
-
-Get the desktop at **[aethersystems.net](https://aethersystems.net/)** — installs in about a minute, no card needed. Platform-wide patch notes live at **[app.aethersystems.net/release-notes](https://app.aethersystems.net/release-notes)**; terminal-specific ones are in [RELEASE_NOTES.md](RELEASE_NOTES.md).
-
-## License
-
-Apache-2.0 — use it, fork it, ship it. The license covers the code, not the Aether name or hosted service ([LICENSE](LICENSE) · [NOTICE.md](NOTICE.md)). PRs and issues welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
-
----
-
-<div align="center">
-
-Built by **Aether AI** · [aethersystems.net](https://aethersystems.net)
-
-*One terminal. Frontier models or fully local. Your code stays yours.*
-
-</div>
+Apache-2.0 — use it, fork it, and ship it. The license covers the code, not the
+Aether name or hosted service ([LICENSE](LICENSE) · [NOTICE.md](NOTICE.md)).
