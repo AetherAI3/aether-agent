@@ -226,9 +226,13 @@ test("the whole rail: edit → select → stage → commit → publish → PR", 
     // metacharacter silently WIDENS what the assertion accepts rather than
     // narrowing it. There is no pattern to match here: PR_URL is a constant and
     // the test wants it back verbatim.
+    // Exact-token equality, not includes(): a substring test over a URL reads
+    // to CodeQL as js/incomplete-url-substring-sanitization, and it is also the
+    // weaker assertion — "https://evil.example/https://github.com/..." would
+    // satisfy it. The URL must be printed as its own whitespace-delimited token.
     assert.ok(
-      shipped.text().includes(PR_URL),
-      `the pull request URL was never reported: ${shipped.text()}`,
+      shipped.text().split(/\s+/).some((token) => token === PR_URL),
+      `the pull request URL was never reported verbatim: ${shipped.text()}`,
     );
   } finally {
     fixture.cleanup();
