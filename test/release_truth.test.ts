@@ -140,7 +140,8 @@ test("command parsing handles environment assignments, global flags, and slash c
   assert.deepEqual(documentedCommands("This removed friction: use `aether teleport`."), ["teleport"]);
   assert.deepEqual(documentedSlashCommands("This was improved: use `/teleport`."), ["teleport"]);
   assert.deepEqual(documentedSlashCommands("Typos get a nudge: `/modle` answers with a suggestion."), []);
-  assert.deepEqual(documentedCommands("A lone near-miss token is treated as a typo: `aether auht`"), []);
+  assert.deepEqual(documentedCommands("Expected typo example: `aether auht` suggests `aether auth`."), []);
+  assert.deepEqual(documentedCommands("A typo example without the marker still audits `aether auht`."), ["auht"]);
 });
 
 test("every command requires release disposition metadata", () => {

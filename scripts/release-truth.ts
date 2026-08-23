@@ -117,7 +117,10 @@ function invocationCommand(value: string): string | null {
 export function documentedCommands(markdown: string): string[] {
   const found = new Set<string>();
   for (const line of markdown.split(/\r?\n/)) {
-    if (/\bnear-miss token is treated as a typo\b/i.test(line)) continue;
+    // Typo examples are negative tests, not advertised command invocations.
+    // The marker must be on the same line as the example so a broad prose
+    // exemption cannot accidentally hide commands elsewhere in the document.
+    if (/\bexpected typo example\b/i.test(line)) continue;
     const fragments = [...line.matchAll(/`([^`\r\n]+)`/g)].map((match) => match[1]!);
     if (/^\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*(?:\$\s*)?aether\b/.test(line)) fragments.push(line);
     for (const fragment of fragments) { const name = invocationCommand(fragment); if (name) found.add(name); }
