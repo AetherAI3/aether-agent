@@ -19,6 +19,10 @@ export interface GlobalFlags {
   cwd: string;
   /** Explicit offline agent selection (--local); cloud memory must stay disabled. */
   local?: boolean;
+  /** Select everything rather than a named subset (--all). */
+  all?: boolean;
+  /** The verification command (--test-cmd), handed to the VerifyRunner. */
+  testCmd?: string;
 }
 
 export interface AppContext {

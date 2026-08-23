@@ -36,6 +36,8 @@ import { runLogsViewer } from "../ui/logs_viewer.js";
 
 import { pinSlash, dropSlash, snapshotSlash, limitSlash, auditReceiptSlash, purgeSlash } from "./slash_context.js";
 import { rollbackSlash, revertSlash, stageDiffSlash } from "./slash_git_tools.js";
+import { reviewSlash } from "./review.js";
+import { shipSlash } from "./ship.js";
 import { scaffoldSlash, portSlash, testDriveSlash, benchSlash } from "./slash_codegen.js";
 import { addSlash, hudSlash } from "./slash_hud.js";
 import {
@@ -299,7 +301,7 @@ export async function handleSlash(
     case "writing-skills":
     case "autonomous-execution":
     case "research":
-    case "review":
+    case "project-review":
     case "code-review":
       out.write(`/${cmd} is handled directly in the interactive REPL.\n`);
       break;
@@ -342,6 +344,18 @@ export async function handleSlash(
     }
     case "stage-diff": {
       await stageDiffSlash(ctx, out);
+      break;
+    }
+    // The review → commit → pull request rail. `/review` used to be a prompt
+    // rewrite asking the brain for a prose project review; that macro is still
+    // here under `/project-review`, and the name now belongs to the surface
+    // that shows the user their own changes.
+    case "review": {
+      await reviewSlash(ctx, out, arg);
+      break;
+    }
+    case "ship": {
+      await shipSlash(ctx, out, arg);
       break;
     }
     case "revert": {

@@ -128,6 +128,83 @@ export const DISPATCH_COMMANDS: DispatchedCommand[] = [
         });
     },
   },
+  // `aether review` / `aether ship`.
+  //
+  // These flags MUST be declared. main.ts parses with `strict: false`, which
+  // swallows any undeclared flag into `values` and strips it from the
+  // positionals a command receives — so an undeclared `--files a,b` does not
+  // reach the command as an argument and does not reach it as a flag either.
+  // It simply vanishes, and the command reports success having done nothing.
+  // Every flag the review/ship layer reads is declared below for that reason,
+  // and test/review_flags.test.ts proves each one arrives.
+  //
+  // `--test-cmd`, `--all`, `--yes` and `--json` are globals, so they are NOT
+  // redeclared here (a command that shadows a global is a registry load error)
+  // and are read off ctx.flags instead, the way doctor reads `--yes`.
+  {
+    name: "review",
+    args: "[stage|unstage|revert|commit|diff|verify]",
+    summary: "review changes, pick files or hunks, commit",
+    section: "Start",
+    flags: {
+      files: { type: "string" },
+      hunks: { type: "string" },
+      message: { type: "string", short: "m" },
+      // `--approve <action>` is the declared authority boundary: `--yes` alone
+      // never approves a destructive or a publishing step.
+      approve: { type: "string" },
+      title: { type: "string" },
+      body: { type: "string" },
+      base: { type: "string" },
+    },
+    load: async () => {
+      const { cmdReview } = await import("./review.js");
+      // Parsed values are handed over as data — named properties, never
+      // re-rendered into an argv string for a second parse to promote a value
+      // like `--title=--fix` into a flag nobody typed.
+      return (ctx, argv, flags) =>
+        cmdReview(ctx, argv, {
+          files: flags.str("files"),
+          hunks: flags.str("hunks"),
+          message: flags.str("message"),
+          base: flags.str("base"),
+          testCmd: ctx.flags.testCmd,
+          approve: flags.str("approve"),
+          all: Boolean(ctx.flags.all),
+          yes: ctx.flags.yes,
+          json: ctx.flags.json,
+        });
+    },
+  },
+  {
+    name: "ship",
+    args: "[--title t] [--base b]",
+    summary: "publish the head branch and open a pull request",
+    section: "Start",
+    // `review` already declares this identical table; two commands sharing one
+    // identical flag is a single parseArgs entry, not a collision.
+    flags: {
+      files: { type: "string" },
+      hunks: { type: "string" },
+      message: { type: "string", short: "m" },
+      approve: { type: "string" },
+      title: { type: "string" },
+      body: { type: "string" },
+      base: { type: "string" },
+    },
+    load: async () => {
+      const { cmdShip } = await import("./ship.js");
+      return (ctx, argv, flags) =>
+        cmdShip(ctx, argv, {
+          title: flags.str("title"),
+          body: flags.str("body"),
+          base: flags.str("base"),
+          approve: flags.str("approve"),
+          yes: ctx.flags.yes,
+          json: ctx.flags.json,
+        });
+    },
+  },
 ];
 
 /** Everything the CLI answers to, however it is dispatched. */

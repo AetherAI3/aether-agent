@@ -129,9 +129,19 @@ const MODES: PromptMode[] = [
       "discussion. Be surgical — don't rewrite working code unnecessarily.",
   },
   {
-    cmd: "/review",
+    // Renamed from `/review`. That name now belongs to the change-review rail
+    // (commands/review.ts): it shows the user their own diff and lets them
+    // stage, revert, commit and ship it. This macro asks the brain for prose
+    // about the project, which is a different thing that was wearing the same
+    // name.
+    //
+    // The rename was forced rather than cosmetic. applyPromptMode runs BEFORE
+    // handleSlash in chat.ts and matches no-arg modes by PREFIX, so while this
+    // entry said "/review" every `/review …` line was rewritten into a prompt
+    // and the slash dispatcher never saw it. Two commands could not share it.
+    cmd: "/project-review",
     takesArg: false,
-    notice: () => "🔍 Full review in progress…",
+    notice: () => "🔍 Full project review in progress…",
     build: () =>
       "REVIEW MODE. Perform a comprehensive review of the current project state. " +
       "Cover: (1) recent changes — what was modified and why, (2) code quality assessment, " +

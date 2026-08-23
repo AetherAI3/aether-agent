@@ -10,7 +10,7 @@
 //   2 live-child cancel      test/process_tree.test.ts  (whole tree, by pid)
 //   3 reconnect replay       HERE
 //   4 remote freshness       test/worktree.test.ts      (real git, pinned base)
-//   5 fake-gh ship           NOT WRITABLE — see the end of this file
+//   5 fake-gh ship           test/ship_rail.test.ts + test/review_ship_e2e.test.ts
 //   6 cap across reconnect   HERE
 //   7 brain parity           NOT WRITABLE — see the end of this file
 //
@@ -113,17 +113,25 @@ test("canary 6b: an unmeasured session is never reported as capped", () => {
   assert.equal(reg.usageStatus(), "unknown");
 });
 
-// ── The two that cannot be written yet ──────────────────────────────────────
+// ── Canary 5 — fake-gh ship. WRITTEN. ───────────────────────────────────────
 //
-// Canary 5 — fake-gh ship.
-//   There is no PR-creation path to exercise. repo.ts's prCreateHint returns a
-//   STRING for the user to run; no subprocess ever invokes `gh pr create`. A
-//   fake-gh harness would assert against code that does not exist. This canary
-//   arrives with the review/ship rail, not before it.
+// It used to say: "There is no PR-creation path to exercise. repo.ts's
+// prCreateHint returns a STRING for the user to run; no subprocess ever invokes
+// `gh pr create`." Both halves are now false. `aether ship` / `/ship` invoke it,
+// and the run tail offers it instead of printing it.
+//
+// The canary lives in two files rather than one, split by layer:
+//   test/ship_rail.test.ts       — the argv boundary, fake gh, hostile strings.
+//   test/review_ship_e2e.test.ts — the whole rail through the real command
+//                                  entry points: a real repository, a real bare
+//                                  remote, the refs that actually moved, and
+//                                  the exact `gh pr create` argv.
+//
+// ── The one that still cannot be written ────────────────────────────────────
 //
 // Canary 7 — local/Ollama brain parity.
 //   LocalBrain spawns a Python module that is not vendored here and exposes no
 //   injectable transport, so no test can drive it. Comparing normalized
 //   transcripts needs a seam on the Python path first.
 //
-// Both are tracked as gaps rather than stubbed green.
+// It is tracked as a gap rather than stubbed green.

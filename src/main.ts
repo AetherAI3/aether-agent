@@ -82,6 +82,12 @@ async function main(argv: string[]): Promise<number> {
     audit: Boolean(values["audit"]),
     yes: Boolean(values["yes"]),
     local: Boolean(values["local"]),
+    // Globals a dispatched command may need to read. A command cannot declare
+    // these itself — shadowing a global is a registry load error — and the
+    // flags accessor only answers for what the command declared, so a global
+    // reaches a dispatch-table entry through the context or not at all.
+    all: Boolean(values["all"]),
+    testCmd: sf(values["test-cmd"]),
     cwd: typeof values["cwd"] === "string" ? (values["cwd"] as string) : process.cwd(),
   };
   // y/N confirmation for destructive prompts (e.g. switching model mid-session).
