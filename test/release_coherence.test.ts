@@ -37,6 +37,18 @@ const read = (...parts: string[]): string => readFileSync(join(root, ...parts), 
 
 const pkg = JSON.parse(read("package.json")) as { name: string; version: string };
 const VERSION = pkg.version;
+let cachedPackReport: ReturnType<typeof createPackReport> | undefined;
+
+function currentPackReport(): ReturnType<typeof createPackReport> {
+  cachedPackReport ??= createPackReport(root);
+  return cachedPackReport;
+}
+
+function packetNumber(packet: string, pattern: RegExp, label: string): number {
+  const value = pattern.exec(packet)?.[1];
+  assert.ok(value, `the operator packet does not record ${label}`);
+  return Number.parseInt(value.replaceAll(",", ""), 10);
+}
 
 // ── Gate A: one release, named consistently ─────────────────────────────────
 
@@ -100,6 +112,38 @@ test("an operator packet exists for this version and binds a commit", () => {
   assert.match(packet, /\b[0-9a-f]{40}\b/, "the operator packet names no full commit SHA");
   assert.match(packet, /sha256[:\s]/i, "the operator packet records no tarball digest");
 });
+
+test(
+  "the operator packet's current manifest agrees with npm pack without claiming cross-machine byte identity",
+  { timeout: 120_000 },
+  () => {
+    const packet = read("docs", "releases", `OPERATOR-PACKET-v${VERSION}.md`);
+    const packed = currentPackReport();
+    const headerEntries = packetNumber(packet, /\| Packed entries \| ([\d,]+) \|/, "the header entry count");
+    const headerBytes = packetNumber(
+      packet,
+      /\| Tarball size \| [\d,]+ bytes packed \/ ([\d,]+) unpacked \|/,
+      "the header unpacked byte count",
+    );
+    const manifest = /### Packaged file manifest\s+([\d,]+) entries, ([\d,]+) bytes unpacked\./.exec(packet);
+    assert.ok(manifest, "the operator packet has no parseable packaged-file manifest summary");
+    const manifestEntries = Number.parseInt(manifest[1]!.replaceAll(",", ""), 10);
+    const manifestBytes = Number.parseInt(manifest[2]!.replaceAll(",", ""), 10);
+
+    // npm's packed and unpacked byte totals move with checkout line endings;
+    // the packet explicitly records one machine's result, not cross-machine
+    // reproducibility. Entry membership is portable. The two byte claims in
+    // the packet must still agree with each other so an old manifest cannot
+    // survive beside a newly measured header.
+    assert.equal(headerEntries, packed.entryCount, "the packet header entry count does not match npm pack");
+    assert.equal(manifestEntries, packed.entryCount, "the packet manifest entry count does not match npm pack");
+    assert.equal(
+      manifestBytes,
+      headerBytes,
+      "the packet mixes unpacked byte measurements from different release bases",
+    );
+  },
+);
 
 // ── Gate B: the package contains what the notes promise ─────────────────────
 
@@ -221,7 +265,7 @@ test(
     // The source checkout's dist/ is NOT the package: the files allowlist is
     // dist/src plus four docs, so dist/scripts and dist/test exist on disk and
     // ship to nobody. Ask npm what would actually be packed.
-    const packed = createPackReport(root);
+    const packed = currentPackReport();
     const paths = new Set(packed.files.map((file) => file.path.replaceAll("\\", "/")));
 
     assert.equal(packed.version, VERSION, "npm pack reports a version the manifest does not");
