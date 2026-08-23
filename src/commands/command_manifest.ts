@@ -88,7 +88,7 @@ const COMMAND_RELEASE_ENTRIES: ReadonlyArray<readonly [CommandManifestKey, Comma
   ]),
   ["shell:exec", {
     disposition: "new",
-    note: "Local child-process agent driver with aether.exec/1 JSONL events and explicit permission receipts.",
+    note: "Local child-process agent driver with compatible aether.exec/1 and repository-bound aether.exec/2 JSONL sessions.",
   }],
   ["shell:setup", { disposition: "new", note: "v0.3.0 adds bounded local setup diagnosis." }],
   ["shell:local", { disposition: "new", note: "v0.3.0 adds explicit Ollama diagnosis and management." }],
@@ -133,7 +133,7 @@ function capabilitiesFor(surface: CommandSurface, name: string): string[] {
   if (name === "preview") return ["aether.local-preview"];
   if (surface === "shell" && HOSTED_CAPABILITY_COMMANDS.has(name)) return ["aether.hosted"];
   if (surface === "shell" && name === "agent") return ["aether.hosted-or-local"];
-  if (surface === "shell" && name === "exec") return ["aether.local-child", "aether.headless.v1"];
+  if (surface === "shell" && name === "exec") return ["aether.local-child", "aether.headless.v1", "aether.headless.v2"];
   if (surface === "slash" && ["models", "model", "agents", "agent", "tier"].includes(name)) return ["aether.catalogue"];
   return [];
 }

@@ -40,6 +40,7 @@ notes.
 - `aether.hosted-or-local` — either the hosted runtime or the packaged local fallback.
 - `aether.local-child` — local child-process brain authority; never a remote shell.
 - `aether.headless.v1` — versioned `aether.exec/1` JSONL events and controls.
+- `aether.headless.v2` — durable, repository-bound headless sessions with acknowledged controls.
 - `aether.local-preview` — consent-gated local dev-server supervision and loopback opening.
 - `ollama.local` — a user-operated Ollama endpoint and optional local CLI binary.
 <!-- CAPABILITY-DOCS:END -->
@@ -128,12 +129,28 @@ Both flags work on `aether chat` and the REPL too.
 ### `aether exec "<task>"` — headless local agent
 
 Runs the packaged Node/Ollama child brain without a TTY or hosted API dependency. Stdout
-contains only versioned JSONL protocol frames; diagnostics use stderr. The default
-tool envelope is read-only. Add tools explicitly with repeatable `--allow-tool`
-and choose `--permission deny|read-only|workspace-write`. Agent shell, Git, and
-network tools are disabled in v1. A successful model completion exits non-zero unless the host-run
-`--test-cmd` also passes. See [`docs/HEADLESS_PROTOCOL.md`](docs/HEADLESS_PROTOCOL.md)
-for framing, structured stdin controls, payload bounds, and stable exit codes.
+contains only versioned JSONL protocol frames; diagnostics use stderr. Protocol v1 remains
+the default. Select `--exec-protocol 2` for repository-bound checkpoints, pause/resume/steer,
+bounded idempotent controls, and confined reusable agent definitions. The default tool envelope
+is read-only. Agent shell, Git, and network tools are disabled in both versions. A successful
+model completion exits non-zero unless the host-run `--test-cmd` also passes; v2 additionally
+requires the verification result to remain bound to the same commit and workspace bytes.
+
+| Flag | Meaning |
+|---|---|
+| `--exec-protocol <1\|2>` | Select the headless protocol; v1 remains the compatibility default. |
+| `--exec-driver <ollama\|selftest>` | Use the local model child, or the model-free installation selftest. |
+| `--permission <deny\|read-only\|workspace-write>` | Set the host-enforced permission ceiling. |
+| `--allow-tool <name>` | Declare a safe file/search tool; repeat to declare more than one. |
+| `--capability-pack <id>` | Record a bounded capability-pack identifier; repeatable. |
+| `--agent-definition <path>` | Load an `aether.exec.agent/1` definition confined to the workspace (v2 only). |
+| `--authority-ttl-ms <ms>` | Bound v2 checkpoint authority to 1 second–4 hours. |
+| `--resume <session-id>` | Resume a non-terminal v2 checkpoint without replacing its authority. |
+| `--timeout-ms <ms>` | Bound the run to 100 ms–1 hour. |
+| `--test-cmd <command>` | Run the authoritative final verification gate. |
+
+See [`docs/HEADLESS_PROTOCOL.md`](docs/HEADLESS_PROTOCOL.md) for framing, structured stdin
+controls, checkpoint and agent-definition contracts, payload bounds, and stable exit codes.
 
 ### `aether run <neo|kronus> "<task>"` — orchestrator
 Hands a multi-step task to an orchestrator, which plans, fans out sub-agents,

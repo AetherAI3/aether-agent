@@ -110,6 +110,9 @@ export const DISPATCH_COMMANDS: DispatchedCommand[] = [
       "capability-pack": { type: "string", multiple: true },
       "timeout-ms": { type: "string" },
       "exec-driver": { type: "string" },
+      "exec-protocol": { type: "string" },
+      "agent-definition": { type: "string" },
+      "authority-ttl-ms": { type: "string" },
     },
     load: async () => {
       const { cmdExec } = await import("./exec.js");

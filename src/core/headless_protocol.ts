@@ -4,11 +4,15 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { redactForBundle, SENSITIVE_KEY } from "./redaction.js";
 
 export const HEADLESS_PROTOCOL = "aether.exec/1";
+export const HEADLESS_PROTOCOL_V2 = "aether.exec/2";
 export const HEADLESS_CONTROL_PROTOCOL = "aether.exec.control/1";
+export const HEADLESS_CONTROL_PROTOCOL_V2 = "aether.exec.control/2";
 export const HEADLESS_MAX_LINE_BYTES = 16 * 1024;
+export type HeadlessProtocol = typeof HEADLESS_PROTOCOL | typeof HEADLESS_PROTOCOL_V2;
+export type HeadlessControlProtocol = typeof HEADLESS_CONTROL_PROTOCOL | typeof HEADLESS_CONTROL_PROTOCOL_V2;
 
 export interface HeadlessFrame {
-  protocol: typeof HEADLESS_PROTOCOL;
+  protocol: HeadlessProtocol;
   sequence: number;
   correlation_id: string;
   type: string;
@@ -57,6 +61,7 @@ export class HeadlessWriter {
     root: string,
     private readonly write: (line: string) => void = (line) => process.stdout.write(line),
     sessionId: string = randomUUID(),
+    private readonly protocol: HeadlessProtocol = HEADLESS_PROTOCOL,
   ) {
     if (!SAFE_ID.test(sessionId)) throw new Error("invalid headless session id");
     this.root = realpathSync(resolve(root));
@@ -82,7 +87,7 @@ export class HeadlessWriter {
     );
     const base = {
       ...safePayload,
-      protocol: HEADLESS_PROTOCOL,
+      protocol: this.protocol,
       sequence: this.sequence++,
       correlation_id: correlationId,
       type,
@@ -96,7 +101,7 @@ export class HeadlessWriter {
       const artifact = JSON.stringify(base, null, 2) + "\n";
       writeFileSync(absolute, artifact, { encoding: "utf8", mode: 0o600 });
       const bounded: HeadlessFrame = {
-        protocol: HEADLESS_PROTOCOL,
+        protocol: this.protocol,
         sequence: base.sequence,
         correlation_id: correlationId,
         type,
@@ -130,20 +135,23 @@ export class HeadlessWriter {
 }
 
 export interface ControlFrame {
-  protocol: typeof HEADLESS_CONTROL_PROTOCOL;
+  protocol: HeadlessControlProtocol;
   sequence: number;
   correlation_id: string;
   action: "cancel" | "pause" | "resume" | "steer";
   note?: string;
 }
 
-export function parseControlFrame(line: string): { ok: true; frame: ControlFrame } | { ok: false; error: string } {
+export function parseControlFrame(
+  line: string,
+  expectedProtocol: HeadlessControlProtocol = HEADLESS_CONTROL_PROTOCOL,
+): { ok: true; frame: ControlFrame } | { ok: false; error: string } {
   if (Buffer.byteLength(line, "utf8") > HEADLESS_MAX_LINE_BYTES) return { ok: false, error: "control frame exceeds 16384 bytes" };
   let raw: unknown;
   try { raw = JSON.parse(line); } catch { return { ok: false, error: "malformed JSON" }; }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, error: "control frame must be an object" };
   const obj = raw as Record<string, unknown>;
-  if (obj["protocol"] !== HEADLESS_CONTROL_PROTOCOL) return { ok: false, error: "unsupported control protocol" };
+  if (obj["protocol"] !== expectedProtocol) return { ok: false, error: "unsupported control protocol" };
   if (!Number.isSafeInteger(obj["sequence"]) || Number(obj["sequence"]) < 0) return { ok: false, error: "invalid control sequence" };
   if (typeof obj["correlation_id"] !== "string" || !SAFE_ID.test(obj["correlation_id"])) return { ok: false, error: "invalid correlation_id" };
   if (!["cancel", "pause", "resume", "steer"].includes(String(obj["action"]))) return { ok: false, error: "unsupported control action" };
@@ -169,7 +177,85 @@ export class ControlLedger {
   }
 }
 
-export function validateHeadlessFrames(lines: readonly string[]): string[] {
+export const HEADLESS_V2_MAX_CONTROLS = 256;
+export const HEADLESS_V2_MAX_STEERS = 16;
+export const HEADLESS_V2_MAX_STEER_BYTES = 16 * 1024;
+
+export interface V2ControlOutcome {
+  accepted: boolean;
+  action: ControlFrame["action"];
+  state: "running" | "paused" | "cancelled";
+  error?: string;
+}
+
+type V2ControlDecision =
+  | { kind: "new" }
+  | { kind: "duplicate"; outcome: V2ControlOutcome }
+  | { kind: "rejected"; error: string };
+
+interface V2ControlEntry {
+  fingerprint: string;
+  outcome: V2ControlOutcome | null;
+}
+
+/**
+ * The v2 ledger is idempotent rather than fatal. An identical duplicate gets
+ * its original outcome, a conflicting duplicate is refused, and a future
+ * sequence is refused without consuming the missing slot. This lets a
+ * controller retry after a lost acknowledgement without changing state.
+ */
+export class V2ControlLedger {
+  private readonly entries = new Map<number, V2ControlEntry>();
+  private next: number;
+  private steerCount: number;
+  private steerBytes: number;
+  private cancelled = false;
+
+  constructor(snapshot: { nextSequence?: number; steerCount?: number; steerBytes?: number } = {}) {
+    this.next = snapshot.nextSequence ?? 0;
+    this.steerCount = snapshot.steerCount ?? 0;
+    this.steerBytes = snapshot.steerBytes ?? 0;
+  }
+
+  begin(frame: ControlFrame): V2ControlDecision {
+    const fingerprint = JSON.stringify({ action: frame.action, note: frame.note ?? null });
+    if (frame.sequence < this.next) {
+      const prior = this.entries.get(frame.sequence);
+      if (!prior) return { kind: "rejected", error: "stale control sequence" };
+      if (prior.fingerprint !== fingerprint) return { kind: "rejected", error: "conflicting duplicate control sequence" };
+      if (!prior.outcome) return { kind: "rejected", error: "control sequence is still pending" };
+      return { kind: "duplicate", outcome: prior.outcome };
+    }
+    if (frame.sequence > this.next) return { kind: "rejected", error: `expected control sequence ${this.next}` };
+    if (this.next >= HEADLESS_V2_MAX_CONTROLS) return { kind: "rejected", error: "control limit reached" };
+    if (this.cancelled) return { kind: "rejected", error: "session cancelled" };
+    if (frame.action === "steer") {
+      const bytes = Buffer.byteLength(frame.note ?? "", "utf8");
+      if (!frame.note?.trim()) return { kind: "rejected", error: "steer requires a non-empty note" };
+      if (this.steerCount + 1 > HEADLESS_V2_MAX_STEERS || this.steerBytes + bytes > HEADLESS_V2_MAX_STEER_BYTES) {
+        return { kind: "rejected", error: "steer budget exceeded" };
+      }
+      this.steerCount += 1;
+      this.steerBytes += bytes;
+    }
+    this.entries.set(frame.sequence, { fingerprint, outcome: null });
+    this.next += 1;
+    return { kind: "new" };
+  }
+
+  complete(frame: ControlFrame, outcome: V2ControlOutcome): void {
+    const entry = this.entries.get(frame.sequence);
+    if (!entry || entry.outcome) throw new Error("control sequence was not pending");
+    entry.outcome = { ...outcome };
+    if (frame.action === "cancel" && outcome.accepted) this.cancelled = true;
+  }
+
+  snapshot(): { nextSequence: number; steerCount: number; steerBytes: number } {
+    return { nextSequence: this.next, steerCount: this.steerCount, steerBytes: this.steerBytes };
+  }
+}
+
+export function validateHeadlessFrames(lines: readonly string[], expectedProtocol: HeadlessProtocol = HEADLESS_PROTOCOL): string[] {
   const errors: string[] = [];
   let expected = 0;
   let terminal = false;
@@ -179,7 +265,7 @@ export function validateHeadlessFrames(lines: readonly string[]): string[] {
     let frame: Record<string, unknown>;
     try { frame = JSON.parse(line) as Record<string, unknown>; }
     catch { errors.push(`line ${index + 1}: malformed JSON`); continue; }
-    if (frame["protocol"] !== HEADLESS_PROTOCOL) errors.push(`line ${index + 1}: wrong protocol`);
+    if (frame["protocol"] !== expectedProtocol) errors.push(`line ${index + 1}: wrong protocol`);
     if (!Number.isSafeInteger(frame["sequence"]) || frame["sequence"] !== expected) errors.push(`line ${index + 1}: expected sequence ${expected}`);
     if (typeof frame["type"] !== "string" || !FRAME_TYPE.test(frame["type"])) errors.push(`line ${index + 1}: invalid frame type`);
     if (typeof frame["correlation_id"] !== "string" || !SAFE_ID.test(frame["correlation_id"])) errors.push(`line ${index + 1}: invalid correlation_id`);

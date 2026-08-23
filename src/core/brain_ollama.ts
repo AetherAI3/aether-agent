@@ -12,7 +12,7 @@
 //
 // No new deps: it reuses ollamaChat + the EventQueue. close() aborts the loop.
 
-import type { Brain, TaskCommand } from "./brain.js";
+import type { Brain, BrainControlResult, TaskCommand } from "./brain.js";
 import { EventQueue } from "./brain.js";
 import type { BrainEvent } from "./brain_protocol.js";
 import { TOOL_DEFINITIONS } from "./tool_registry.js";
@@ -75,6 +75,11 @@ export class OllamaBrain implements Brain {
   // wrong id was indistinguishable from the right one.
   private readonly pending = new Map<string, (r: ToolResult) => void>();
   private aborted = false;
+  private running = false;
+  private paused = false;
+  private readonly pauseWaiters = new Set<() => void>();
+  private readonly steerQueue: string[] = [];
+  private steerBytes = 0;
 
   constructor(opts: OllamaBrainOptions = {}) {
     this.opts = opts;
@@ -101,23 +106,37 @@ export class OllamaBrain implements Brain {
     resolve(result);
   }
 
-  control(action: "pause" | "resume" | "steer", note?: string): void {
-    // This brain runs a single-pass loop with no interruption point, so it
-    // cannot honour pause, resume or steer. Silently returning made the host
-    // believe the instruction landed; a dropped steer then reads as the model
-    // ignoring the user. Report it instead of accepting it.
-    this.queue.push({
-      type: "monologue",
-      text:
-        `[${action} is not supported by the local Ollama brain — the instruction was not applied` +
-        (note ? `: "${note}"` : "") +
-        "]",
-      depth: 0,
-    });
+  control(action: "pause" | "resume" | "steer", note?: string): BrainControlResult {
+    if (!this.running || this.aborted) return { accepted: false, state: "closed", error: "brain is not running" };
+    if (action === "pause") {
+      if (this.paused) return { accepted: false, state: "paused", error: "brain is already paused" };
+      this.paused = true;
+      return { accepted: true, state: "paused" };
+    }
+    if (action === "resume") {
+      if (!this.paused) return { accepted: false, state: "running", error: "brain is not paused" };
+      this.paused = false;
+      for (const resume of this.pauseWaiters) resume();
+      this.pauseWaiters.clear();
+      return { accepted: true, state: "running" };
+    }
+    const steer = note?.trim() ?? "";
+    const bytes = Buffer.byteLength(steer, "utf8");
+    if (!steer) return { accepted: false, state: this.paused ? "paused" : "running", error: "steer note is empty" };
+    if (this.steerQueue.length >= 16 || this.steerBytes + bytes > 16 * 1024) {
+      return { accepted: false, state: this.paused ? "paused" : "running", error: "steer budget exceeded" };
+    }
+    this.steerQueue.push(steer);
+    this.steerBytes += bytes;
+    return { accepted: true, state: this.paused ? "paused" : "running" };
   }
 
   close(): void {
     this.aborted = true;
+    this.running = false;
+    this.paused = false;
+    for (const resume of this.pauseWaiters) resume();
+    this.pauseWaiters.clear();
     // Unblock every loop parked on a tool result so it can observe the abort.
     // Drained as a set so no waiter can be stranded by an early return.
     for (const [id, resolve] of this.pending) {
@@ -138,8 +157,21 @@ export class OllamaBrain implements Brain {
     });
   }
 
+  private async waitWhilePaused(): Promise<void> {
+    if (!this.paused || this.aborted) return;
+    await new Promise<void>((resolve) => this.pauseWaiters.add(resolve));
+  }
+
+  private applySteers(messages: ChatMessage[]): number {
+    const notes = this.steerQueue.splice(0);
+    this.steerBytes = 0;
+    for (const note of notes) messages.push({ role: "user", content: `[Operator steering]\n${note}` });
+    return notes.length;
+  }
+
   /** The agentic loop: chat -> (tool calls -> results)* -> final answer. */
   private async loop(task: TaskCommand): Promise<void> {
+    this.running = true;
     const model = this.opts.model || task.model || undefined;
     const maxTurns = this.opts.maxTurns ?? DEFAULT_MAX_TURNS;
     const tools = this.opts.tools ?? TOOLS;
@@ -159,6 +191,13 @@ export class OllamaBrain implements Brain {
           ok = false;
           break;
         }
+        await this.waitWhilePaused();
+        if (this.aborted) {
+          reason = "aborted";
+          ok = false;
+          break;
+        }
+        this.applySteers(messages);
         let reply: ChatReply;
         try {
           reply = await this.chat(messages, {
@@ -175,6 +214,30 @@ export class OllamaBrain implements Brain {
         }
 
         const calls = reply.tool_calls ?? [];
+        // A pause received while the network request was in flight takes
+        // effect before any resulting tool call or answer becomes observable.
+        await this.waitWhilePaused();
+        if (this.aborted) {
+          reason = "aborted";
+          ok = false;
+          break;
+        }
+        // A steer that arrived during the request gets a fresh model turn.
+        // This check precedes tool publication: executing a stale write that
+        // the model selected before an accepted steer would make the
+        // acknowledgement false. A reply carrying tool calls is discarded
+        // because replaying an assistant tool-call turn without tool results
+        // would also create an invalid conversation.
+        if (this.steerQueue.length > 0) {
+          if (calls.length === 0) messages.push(assistantTurn(reply));
+          this.applySteers(messages);
+          if (turn === maxTurns - 1) {
+            ok = false;
+            reason = "max-turns";
+            result = "stopped: accepted steering could not be processed within the turn budget.";
+          }
+          continue;
+        }
         if (calls.length === 0) {
           // No tool call -> this is the final answer. Surface it and finish.
           result = (reply.content || "").trim() || "done";
@@ -209,6 +272,10 @@ export class OllamaBrain implements Brain {
         }
       }
     } finally {
+      this.running = false;
+      this.paused = false;
+      for (const resume of this.pauseWaiters) resume();
+      this.pauseWaiters.clear();
       // Always close the stream so the host loop terminates (even on abort/error).
       this.queue.push({
         type: "done",

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import type { Brain, TaskCommand } from "./brain.js";
+import type { Brain, BrainControlResult, TaskCommand } from "./brain.js";
 import { EventQueue } from "./brain.js";
 import { LineBuffer, type BrainEvent, type ToolName } from "./brain_protocol.js";
 import type { ToolResult } from "./tool_executor.js";
@@ -18,6 +18,11 @@ export class BundledChildBrain implements Brain {
   private child: ChildProcessWithoutNullStreams | null = null;
   private readonly queue = new EventQueue();
   private readonly lines = new LineBuffer();
+  private controlSequence = 0;
+  private readonly pendingControls = new Map<
+    string,
+    { resolve: (result: BrainControlResult) => void; timer: NodeJS.Timeout }
+  >();
   constructor(private readonly opts: BundledChildBrainOptions = {}) {}
 
   run(task: TaskCommand): AsyncIterable<BrainEvent> {
@@ -34,13 +39,29 @@ export class BundledChildBrain implements Brain {
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       for (const line of this.lines.push(chunk)) {
-        let event: BrainEvent;
-        try { event = JSON.parse(line) as BrainEvent; }
+        let raw: Record<string, unknown>;
+        try { raw = JSON.parse(line) as Record<string, unknown>; }
         catch {
           this.queue.push({ type: "error", msg: "bundled brain emitted malformed JSONL" });
           this.close();
           return;
         }
+        if (raw["type"] === "control_result") {
+          const id = String(raw["id"] ?? "");
+          const pending = this.pendingControls.get(id);
+          if (pending) {
+            clearTimeout(pending.timer);
+            this.pendingControls.delete(id);
+            const state = raw["state"] === "paused" || raw["state"] === "closed" ? raw["state"] : "running";
+            pending.resolve({
+              accepted: raw["accepted"] === true,
+              state,
+              ...(typeof raw["error"] === "string" ? { error: raw["error"] } : {}),
+            });
+          }
+          continue;
+        }
+        const event = raw as unknown as BrainEvent;
         if (!event || typeof event !== "object" || typeof event.type !== "string") {
           this.queue.push({ type: "error", msg: "bundled brain emitted an invalid event" });
           this.close();
@@ -67,10 +88,29 @@ export class BundledChildBrain implements Brain {
   sendToolResult(id: string, result: ToolResult): void {
     this.send({ type: "tool_result", id, output: result.output, exitCode: result.exitCode });
   }
-  control(): void { /* host reports v1 control actions as unsupported */ }
+  control(action: "pause" | "resume" | "steer", note?: string): Promise<BrainControlResult> {
+    if (!this.child?.stdin.writable) {
+      return Promise.resolve({ accepted: false, state: "closed", error: "bundled brain is not running" });
+    }
+    const id = `control-${this.controlSequence++}`;
+    return new Promise<BrainControlResult>((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingControls.delete(id);
+        resolve({ accepted: false, state: "closed", error: "bundled brain did not acknowledge control" });
+      }, 2000);
+      timer.unref();
+      this.pendingControls.set(id, { resolve, timer });
+      this.send({ type: "control", id, action, ...(note == null ? {} : { note }) });
+    });
+  }
   close(): void {
     terminateProcessTree(this.child);
     this.child = null;
+    for (const [id, pending] of this.pendingControls) {
+      clearTimeout(pending.timer);
+      this.pendingControls.delete(id);
+      pending.resolve({ accepted: false, state: "closed", error: "bundled brain closed before control acknowledgement" });
+    }
     this.queue.end();
   }
   private send(message: Record<string, unknown>): void {

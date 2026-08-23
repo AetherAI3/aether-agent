@@ -1,5 +1,5 @@
 <!-- GENERATED FILE: run `npm run docs:generate`; do not edit by hand. -->
-<!-- manifest-digest: sha256:a5b2c78021ecdff281df646e5b17400f9dba95b19d406e9ef0a831a349c4ac56 -->
+<!-- manifest-digest: sha256:dd0558096f3f9b9f4d036d534e817e7cacd2ef5ef84d67d4c8616f263e1f8c7f -->
 # Generated command reference
 
 This reference is generated from the validated runtime command manifest. Availability is evaluated at runtime; a listed command may still require authentication, a hosted capability, or local tooling.
@@ -58,7 +58,7 @@ Permission: `read-only` · Availability: `runtime-dependent` · Telemetry: `shel
 
 run the local coding agent over versioned JSONL
 
-Permission: `local-write` · Availability: `runtime-dependent` · Telemetry: `shell.exec` · Requires: `aether.local-child`, `aether.headless.v1`
+Permission: `local-write` · Availability: `runtime-dependent` · Telemetry: `shell.exec` · Requires: `aether.local-child`, `aether.headless.v1`, `aether.headless.v2`
 
 Command flags:
 
@@ -67,6 +67,9 @@ Command flags:
 - `--capability-pack <value>…`
 - `--timeout-ms <value>`
 - `--exec-driver <value>`
+- `--exec-protocol <value>`
+- `--agent-definition <value>`
+- `--authority-ttl-ms <value>`
 
 #### `aether setup --local`
 

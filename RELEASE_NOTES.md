@@ -21,6 +21,7 @@ either.
 - `aether.hosted-or-local` — `exempt`: an existing runtime requirement, unchanged in this release.
 - `aether.local-child` — `announced`: the new headless driver is deliberately limited to a local brain child process.
 - `aether.headless.v1` — `announced`: versioned JSONL events, controls, permission decisions, receipts, and authoritative verification.
+- `aether.headless.v2` — `announced`: repository-bound checkpoints, confined reusable agent definitions, bounded acknowledged controls, and commit-bound verification.
 - `aether.local-preview` — `announced`: the managed preview supervisor accepts declared commands and loopback URLs only.
 - `ollama.local` — `announced`: local setup and Ollama management are explicit command surfaces.
 <!-- CAPABILITY-RELEASE:END -->
@@ -38,11 +39,19 @@ either.
   local capability and does not relax web-fetch SSRF rules.
 
 - **`aether exec` — a local, agent-driven JSONL interface.** It starts the
-  packaged Node/Ollama brain child and emits `aether.exec/1` frames with
+  packaged Node/Ollama brain child and emits `aether.exec/1` frames by default, with
+  an opt-in `aether.exec/2` session protocol for durable repository/workspace-bound
+  checkpoints, authority-expiring resume, confined `aether.exec.agent/1` definitions,
+  and session-correlated pause, resume, steer, and cancellation acknowledgements. It retains
   sequence and correlation IDs, explicit permission decisions, bounded tool
   receipts, structured stdin controls, and exactly one terminal result. Network
   agent shell, Git, and network tools are disabled; host-run verification is authoritative,
-  so a model claim can never turn a failing or absent gate into exit 0.
+  so a model claim can never turn a failing, absent, or workspace-mutating gate into exit 0.
+  The packaged Aether-model v2 dogfood is still an acceptance dependency: the current
+  hosted brain contract may downgrade to server-side execution and does not return awaited
+  control acknowledgements. It must not be presented as local-authority v2 until the production
+  contract exposes both guarantees; Ollama and the model-free installation selftest are not
+  substitutes for that acceptance run.
 - **Bounded local setup.** `aether setup --local` and `aether local doctor`
   diagnose Ollama without an account or a hosted request. `local models` lists
   namespaced `ollama:<tag>` ids; `local use` and `local pull` show their plans
