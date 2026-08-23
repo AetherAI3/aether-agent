@@ -205,7 +205,7 @@ result belonged to the historical candidate context and is not presented as
 current exact-head evidence. The full suite remains a required release workflow
 gate.
 The local-lane namespace, pull, config, session, handoff, command-manifest, and
-release-coherence selection independently reported 96 pass / 0 fail before
+release-coherence selection independently reported 98 pass / 0 fail before
 integration; exact-head integration proof is rerun below before handoff.
 
 ### Historical mutation check on the load-bearing gate

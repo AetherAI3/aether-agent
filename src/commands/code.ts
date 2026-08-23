@@ -101,6 +101,11 @@ export interface CodeOpts {
 
 const nowIso = (): string => new Date().toISOString();
 
+/** Resolve the hosted model once for both the wire command and durable provenance. */
+export function resolveHostedSessionModel(explicit: string | undefined, configured: string): string {
+  return resolveHostedModel(explicit, configured);
+}
+
 /** Map a BrainEvent onto the pinned status line (verb + streamed tokens).
  * Exported so the wiring is unit-testable without a real brain. */
 export function applyEventToStatus(
@@ -294,7 +299,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   const localSelection = goLocal
     ? resolveLocalModelSelection(ctx.flags.model, ctx.cfg.localModel ?? "", { allowBareExplicit: opts.local })
     : null;
-  const resolvedHostedModel = goLocal ? "" : resolveHostedModel(ctx.flags.model);
+  const resolvedHostedModel = goLocal ? "" : resolveHostedSessionModel(ctx.flags.model, ctx.cfg.defaultModel);
   // Provenance uses a namespace; the Ollama wire protocol receives only the
   // tag. That makes a handoff unambiguous without changing Ollama's API.
   const resolvedModel = localSelection?.id ?? resolvedHostedModel;

@@ -3,6 +3,7 @@ import type { AppContext } from "../core/context.js";
 import { saveConfig } from "../core/config.js";
 import { normalizeOllamaHost } from "../core/ollama.js";
 import { localModelId, normalizeOllamaTag, resolveLocalModel } from "../core/local_ollama.js";
+import { terminateProcessTree } from "../core/process_tree_kill.js";
 
 export const LOCAL_EXIT = {
   ok: 0,
@@ -16,6 +17,7 @@ export const LOCAL_EXIT = {
   malformedResponse: 26,
   operationFailed: 27,
   mutationFailed: 28,
+  cancelled: 130,
 } as const;
 
 export interface LocalProcessResult {
@@ -24,11 +26,18 @@ export interface LocalProcessResult {
   stderr: string;
   errorCode?: string;
   timedOut?: boolean;
+  cancelled?: boolean;
 }
 
 export interface LocalRuntimeDeps {
   run(command: string, args: readonly string[], timeoutMs: number): LocalProcessResult;
-  pull(command: string, args: readonly string[], timeoutMs: number, onProgress: (chunk: string) => void): Promise<LocalProcessResult>;
+  pull(
+    command: string,
+    args: readonly string[],
+    timeoutMs: number,
+    onProgress: (chunk: string) => void,
+    signal?: AbortSignal,
+  ): Promise<LocalProcessResult>;
   requestTags(host: string, timeoutMs: number): Promise<unknown>;
   save(ctx: AppContext): void;
 }
@@ -88,10 +97,12 @@ export function runStreamingProcess(
   args: readonly string[],
   timeoutMs: number,
   onProgress: (chunk: string) => void,
+  signal?: AbortSignal,
 ): Promise<LocalProcessResult> {
   return new Promise<LocalProcessResult>((resolve) => {
     const child = spawn(command, [...args], {
       shell: false,
+      detached: process.platform !== "win32",
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -99,14 +110,18 @@ export function runStreamingProcess(
     let stderr = "";
     let errorCode: string | undefined;
     let timedOut = false;
-    let forceTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+    const stop = (): void => {
+      if (!timedOut) cancelled = true;
+      terminateProcessTree(child);
+    };
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
-      forceTimer = setTimeout(() => child.kill("SIGKILL"), 2_000);
-      forceTimer.unref();
+      terminateProcessTree(child);
     }, timeoutMs);
     timer.unref();
+    if (signal?.aborted) stop();
+    else signal?.addEventListener("abort", stop, { once: true });
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
@@ -124,13 +139,14 @@ export function runStreamingProcess(
     });
     child.once("close", (status) => {
       clearTimeout(timer);
-      if (forceTimer) clearTimeout(forceTimer);
+      signal?.removeEventListener("abort", stop);
       resolve({
         status,
         stdout,
         stderr,
         ...(errorCode ? { errorCode } : {}),
         ...(timedOut ? { timedOut: true } : {}),
+        ...(cancelled ? { cancelled: true } : {}),
       });
     });
   });
@@ -444,9 +460,23 @@ export async function cmdLocal(ctx: AppContext, argv: string[], _flags: unknown,
       process.stderr.write(`Ollama binary could not run${binary.errorCode ? ` (${binary.errorCode})` : ""}; repair the installation and retry.\n`);
       return LOCAL_EXIT.operationFailed;
     }
-    const pulled = await deps.pull("ollama", ["pull", tag], PULL_TIMEOUT_MS, (chunk) => {
-      process.stderr.write(chunk);
-    });
+    const controller = new AbortController();
+    const cancelPull = (): void => controller.abort();
+    process.once("SIGINT", cancelPull);
+    process.once("SIGTERM", cancelPull);
+    let pulled: LocalProcessResult;
+    try {
+      pulled = await deps.pull("ollama", ["pull", tag], PULL_TIMEOUT_MS, (chunk) => {
+        process.stderr.write(chunk);
+      }, controller.signal);
+    } finally {
+      process.removeListener("SIGINT", cancelPull);
+      process.removeListener("SIGTERM", cancelPull);
+    }
+    if (pulled.cancelled) {
+      process.stderr.write("Ollama pull cancelled; the pull process tree was stopped.\n");
+      return LOCAL_EXIT.cancelled;
+    }
     if (pulled.timedOut || pulled.errorCode === "ETIMEDOUT") {
       process.stderr.write("Ollama pull timed out after 30 minutes; retry when the connection is stable.\n");
       return LOCAL_EXIT.timeout;

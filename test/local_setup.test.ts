@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AppContext } from "../src/core/context.js";
@@ -22,6 +22,7 @@ import { loadSession } from "../src/core/session_resume.js";
 import { buildHandoff } from "../src/core/handoff.js";
 import { cmdModels } from "../src/commands/models.js";
 import { runLocalTurn } from "../src/commands/chat.js";
+import { resolveHostedSessionModel } from "../src/commands/code.js";
 import type { Brain } from "../src/core/brain.js";
 
 function context(overrides: Partial<AppContext["flags"]> = {}, token: string | null = null): AppContext {
@@ -63,6 +64,33 @@ async function capture(run: () => Promise<number>): Promise<{ code: number; stdo
   }
 }
 
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function settle(ms = 500): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function processTreeScript(root: string): string {
+  const grandchild = join(root, "pull-grandchild.cjs");
+  writeFileSync(grandchild, "console.log('GRANDCHILD:' + process.pid); setInterval(() => {}, 1000);\n");
+  const child = join(root, "pull-child.cjs");
+  writeFileSync(
+    child,
+    "const { spawn } = require('node:child_process');\n" +
+      "console.log('CHILD:' + process.pid);\n" +
+      `spawn(process.execPath, [${JSON.stringify(grandchild)}], { stdio: 'inherit' });\n` +
+      "setInterval(() => {}, 1000);\n",
+  );
+  return child;
+}
+
 test("local ids are namespaced and hosted defaults never become Ollama tags", () => {
   assert.equal(localModelId("qwen2.5-coder:7b"), "ollama:qwen2.5-coder:7b");
   assert.equal(ollamaTagFromId("ollama:gemma3:4b"), "gemma3:4b");
@@ -81,20 +109,25 @@ test("local ids are namespaced and hosted defaults never become Ollama tags", ()
   assert.throws(() => normalizeOllamaTag("bad tag"));
 });
 
-test("resolved local model survives session and handoff provenance with its namespace", () => {
+test("resolved local and configured hosted models survive session and handoff provenance", () => {
   const root = mkdtempSync(join(tmpdir(), "aether-local-provenance-"));
   try {
-    const selected = resolveLocalModelSelection(undefined, "ollama:gemma3:4b");
-    const log = new SessionLog(
-      { task: "fix it", model: selected.id, poolGb: 5, brain: "local", cwd: root },
-      "2026-08-23T12:00:00.000Z",
-      root,
-      () => undefined,
-    );
-    log.close("unverified", "2026-08-23T12:01:00.000Z");
-    const loaded = loadSession(log.sessionId, root, root);
-    assert.equal(loaded.manifest.model, "ollama:gemma3:4b");
-    assert.equal(buildHandoff(loaded).model, "ollama:gemma3:4b");
+    const cases = [
+      { model: resolveLocalModelSelection(undefined, "ollama:gemma3:4b").id, brain: "local" as const },
+      { model: resolveHostedSessionModel(undefined, "gpt-5.6-sol"), brain: "cloud" as const },
+    ];
+    for (const [index, selected] of cases.entries()) {
+      const log = new SessionLog(
+        { task: "fix it", model: selected.model, poolGb: 5, brain: selected.brain, cwd: root },
+        `2026-08-23T12:0${index}:00.000Z`,
+        root,
+        () => undefined,
+      );
+      log.close("unverified", `2026-08-23T12:0${index}:30.000Z`);
+      const loaded = loadSession(log.sessionId, root, root);
+      assert.equal(loaded.manifest.model, selected.model);
+      assert.equal(buildHandoff(loaded).model, selected.model);
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -284,6 +317,12 @@ test("local pull uses argv-only runner, displays plan, and does not download wit
   })));
   assert.equal(timed.code, LOCAL_EXIT.timeout);
   assert.match(timed.stderr, /timed out/);
+
+  const cancelled = await capture(() => cmdLocal(ctx, ["pull", "qwen2.5-coder:7b"], {}, deps({
+    pull: async () => ({ status: null, stdout: "", stderr: "", cancelled: true }),
+  })));
+  assert.equal(cancelled.code, LOCAL_EXIT.cancelled);
+  assert.match(cancelled.stderr, /process tree was stopped/);
 });
 
 test("streaming runner retains bounded receipts and classifies timeout", async () => {
@@ -305,6 +344,51 @@ test("streaming runner retains bounded receipts and classifies timeout", async (
     () => {},
   );
   assert.equal(timed.timedOut, true);
+});
+
+test("streaming pull timeout kills its detached grandchild process tree", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aether-local-pull-tree-"));
+  try {
+    const result = await runStreamingProcess(process.execPath, [processTreeScript(root)], 1_500, () => {});
+    assert.equal(result.timedOut, true);
+    const child = /CHILD:(\d+)/.exec(result.stdout)?.[1];
+    const grandchild = /GRANDCHILD:(\d+)/.exec(result.stdout)?.[1];
+    assert.ok(child, `missing child pid: ${result.stdout}`);
+    assert.ok(grandchild, `missing grandchild pid: ${result.stdout}`);
+    await settle();
+    assert.equal(processAlive(Number(child)), false, "pull child survived timeout");
+    assert.equal(processAlive(Number(grandchild)), false, "pull grandchild survived timeout");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("streaming pull cancellation kills its detached grandchild process tree", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aether-local-pull-cancel-"));
+  try {
+    const controller = new AbortController();
+    let progress = "";
+    const result = await runStreamingProcess(
+      process.execPath,
+      [processTreeScript(root)],
+      60_000,
+      (chunk) => {
+        progress += chunk;
+        if (/CHILD:\d+/.test(progress) && /GRANDCHILD:\d+/.test(progress)) controller.abort();
+      },
+      controller.signal,
+    );
+    assert.equal(result.cancelled, true);
+    const child = /CHILD:(\d+)/.exec(result.stdout)?.[1];
+    const grandchild = /GRANDCHILD:(\d+)/.exec(result.stdout)?.[1];
+    assert.ok(child, `missing child pid: ${result.stdout}`);
+    assert.ok(grandchild, `missing grandchild pid: ${result.stdout}`);
+    await settle();
+    assert.equal(processAlive(Number(child)), false, "cancelled pull child survived");
+    assert.equal(processAlive(Number(grandchild)), false, "cancelled pull grandchild survived");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("exit codes are unique and config write failure rolls state back", async () => {

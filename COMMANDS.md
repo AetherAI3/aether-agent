@@ -160,7 +160,8 @@ No token value is printed and no hosted API is called.
 Stable local setup exit codes are `21` binary absent, `22` server down, `23`
 no installed models, `24` selected model missing, `25` timeout, `26` malformed
 host/response, `27` failed Ollama operation, and `28` failed configuration
-mutation. Usage remains `2`; declining a shown plan is `20`. These values do
+mutation. Usage remains `2`; declining a shown plan is `20`, and a cancelled
+pull follows the conventional `130`. These values do
 not collide with the hosted routing-refusal code `3`.
 
 A bare `--model <tag>` is accepted for backward compatibility only when
