@@ -18,7 +18,7 @@ aether                                  # no args = interactive REPL
 <!-- Registry markers are checked against the declarative command registries. -->
 
 <!-- CLI-COMMANDS:START -->
-`help`, `agent`, `chat`, `resume`, `sessions`, `run`, `review`, `ship`, `models`, `agents`, `auth`,
+`help`, `agent`, `exec`, `chat`, `resume`, `sessions`, `run`, `review`, `ship`, `models`, `agents`, `auth`,
 `github`, `vault`, `workflow`, `memory`, `skills`, `capabilities`, `image`,
 `video`, `output`, `audit`, `receipt`, `doctor`, `support-bundle`, `mcp`,
 `config`
@@ -38,6 +38,8 @@ notes.
 - `aether.catalogue` — live model and agent catalogue access.
 - `aether.hosted` — an authenticated hosted Aether runtime.
 - `aether.hosted-or-local` — either the hosted runtime or the packaged local fallback.
+- `aether.local-child` — local child-process brain authority; never a remote shell.
+- `aether.headless.v1` — versioned `aether.exec/1` JSONL events and controls.
 <!-- CAPABILITY-DOCS:END -->
 
 
@@ -120,6 +122,16 @@ the operator permission gate still runs on everything the narrowing leaves. A
 skill matched *automatically* from a trigger phrase contributes its instructions
 but never its policy — only a skill you name with `--skill` narrows.
 Both flags work on `aether chat` and the REPL too.
+
+### `aether exec "<task>"` — headless local agent
+
+Runs the local child-process brain without a TTY or hosted API dependency. Stdout
+contains only versioned JSONL protocol frames; diagnostics use stderr. The default
+tool envelope is read-only. Add tools explicitly with repeatable `--allow-tool`
+and choose `--permission deny|read-only|workspace-write|shell`. Network tools are
+disabled in v1. A successful model completion exits non-zero unless the host-run
+`--test-cmd` also passes. See [`docs/HEADLESS_PROTOCOL.md`](docs/HEADLESS_PROTOCOL.md)
+for framing, structured stdin controls, payload bounds, and stable exit codes.
 
 ### `aether run <neo|kronus> "<task>"` — orchestrator
 Hands a multi-step task to an orchestrator, which plans, fans out sub-agents,

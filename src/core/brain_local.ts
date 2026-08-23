@@ -42,6 +42,8 @@ export interface LocalBrainOptions {
   module?: string;
   /** Extra env for the child (e.g. AETHER_MODEL, OLLAMA_HOST). */
   env?: Record<string, string>;
+  /** Override child stderr handling. The default preserves the human CLI. */
+  diagnostic?: (text: string) => void;
 }
 
 export class LocalBrain implements Brain {
@@ -90,7 +92,9 @@ export class LocalBrain implements Brain {
     // The child's stderr is its own diagnostics (tracebacks); forward dimmed so
     // a brain crash is visible rather than a silent hang.
     child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (d: string) => process.stderr.write(sanitizeTerm(d)));
+    child.stderr.on("data", (d: string) =>
+      (this.opts.diagnostic ?? ((text) => process.stderr.write(text)))(sanitizeTerm(d)),
+    );
 
     child.on("error", (err) => {
       this.queue.push({ type: "error", msg: `cannot start local brain (${python}): ${err.message}` });

@@ -19,10 +19,18 @@ either.
 - `aether.catalogue` — `exempt`: an existing runtime requirement, unchanged in this release.
 - `aether.hosted` — `exempt`: an existing runtime requirement, unchanged in this release.
 - `aether.hosted-or-local` — `exempt`: an existing runtime requirement, unchanged in this release.
+- `aether.local-child` — `announced`: the new headless driver is deliberately limited to a local brain child process.
+- `aether.headless.v1` — `announced`: versioned JSONL events, controls, permission decisions, receipts, and authoritative verification.
 <!-- CAPABILITY-RELEASE:END -->
 
 ## New
 
+- **`aether exec` — a local, agent-driven JSONL interface.** It starts the
+  packaged local brain as a child process and emits `aether.exec/1` frames with
+  sequence and correlation IDs, explicit permission decisions, bounded tool
+  receipts, structured stdin controls, and exactly one terminal result. Network
+  tools and remote shells are disabled; host-run verification is authoritative,
+  so a model claim can never turn a failing or absent gate into exit 0.
 - **A review → commit → pull request rail.** `aether review` reads the
   repository's real state, lets you pick what goes in, commits exactly that, and
   `aether ship` publishes the head branch and opens the pull request.

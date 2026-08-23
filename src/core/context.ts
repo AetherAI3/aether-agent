@@ -7,6 +7,8 @@ import type { TokenStore } from "./auth.js";
 export interface GlobalFlags {
   /** Forced model id (--model). */
   model?: string;
+  /** Effort tier requested by --effort. */
+  effort?: string;
   /** Orchestrator agent id (--agent / `run <agent>`). */
   agent?: string;
   /** Emit raw frames as JSON lines (--json). */
@@ -29,6 +31,9 @@ export interface GlobalFlags {
   out?: string;
   /** The verification command (--test-cmd), handed to the VerifyRunner. */
   testCmd?: string;
+  /** Prior session requested by --resume. Headless surfaces must explicitly
+   * reject unsupported continuation instead of silently discarding it. */
+  resume?: string;
 }
 
 export interface AppContext {

@@ -84,6 +84,7 @@ export async function main(argv: string[]): Promise<number> {
   const api = new ApiClient(cfg.baseUrl, tokens);
   const flags: GlobalFlags = {
     model: typeof values["model"] === "string" ? values["model"] : undefined,
+    effort: sf(values["effort"]),
     agent: typeof values["agent"] === "string" ? values["agent"] : undefined,
     json: Boolean(values["json"]),
     audit: Boolean(values["audit"]),
@@ -95,6 +96,7 @@ export async function main(argv: string[]): Promise<number> {
     // flags accessor only answers for what the command declared, so a global
     // reaches a dispatch-table entry through the context or not at all.
     testCmd: sf(values["test-cmd"]),
+    resume: sf(values["resume"]),
     ...(typeof values["out"] === "string" ? { out: values["out"] as string } : {}),
     cwd: typeof values["cwd"] === "string" ? (values["cwd"] as string) : process.cwd(),
   };

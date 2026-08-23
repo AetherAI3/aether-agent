@@ -82,9 +82,17 @@ const EXISTING_COMMAND_KEYS = [
   "slash:animate", "slash:re-cut", "slash:output", "slash:storyboard", "slash:add", "slash:hud",
 ] as const satisfies readonly CommandManifestKey[];
 
-export const COMMAND_RELEASE_CONTRACT: ReadonlyMap<CommandManifestKey, CommandReleaseBinding> = new Map(
-  EXISTING_COMMAND_KEYS.map((key) => [key, { disposition: "existing" as const, note: null }]),
-);
+const COMMAND_RELEASE_ENTRIES: ReadonlyArray<readonly [CommandManifestKey, CommandReleaseBinding]> = [
+  ...EXISTING_COMMAND_KEYS.map((key): readonly [CommandManifestKey, CommandReleaseBinding] => [
+    key, { disposition: "existing", note: null },
+  ]),
+  ["shell:exec", {
+    disposition: "new",
+    note: "Local child-process agent driver with aether.exec/1 JSONL events and explicit permission receipts.",
+  }],
+];
+export const COMMAND_RELEASE_CONTRACT: ReadonlyMap<CommandManifestKey, CommandReleaseBinding> =
+  new Map(COMMAND_RELEASE_ENTRIES);
 
 const COMMAND_TOKEN = /^[a-z0-9][a-z0-9-]*$/;
 const FLAG_NAME = /^[a-z][a-z0-9-]*$/;
@@ -111,13 +119,14 @@ function permissionFor(surface: CommandSurface, name: string): PermissionClass {
   if (READ_ONLY_COMMANDS.has(name)) return "read-only";
   if (ACCOUNT_COMMANDS.has(name)) return "account";
   if (DESTRUCTIVE_COMMANDS.has(name)) return "destructive";
-  if (LOCAL_WRITE_COMMANDS.has(name) || name === "agent") return "local-write";
+  if (LOCAL_WRITE_COMMANDS.has(name) || name === "agent" || name === "exec") return "local-write";
   return "network";
 }
 
 function capabilitiesFor(surface: CommandSurface, name: string): string[] {
   if (surface === "shell" && HOSTED_CAPABILITY_COMMANDS.has(name)) return ["aether.hosted"];
   if (surface === "shell" && name === "agent") return ["aether.hosted-or-local"];
+  if (surface === "shell" && name === "exec") return ["aether.local-child", "aether.headless.v1"];
   if (surface === "slash" && ["models", "model", "agents", "agent", "tier"].includes(name)) return ["aether.catalogue"];
   return [];
 }

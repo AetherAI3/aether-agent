@@ -100,6 +100,22 @@ export const GLOBAL_FLAGS: FlagTable = {
  */
 export const DISPATCH_COMMANDS: DispatchedCommand[] = [
   {
+    name: "exec",
+    args: '[flags] "task"',
+    summary: "run the local coding agent over versioned JSONL",
+    section: "Start",
+    flags: {
+      permission: { type: "string" },
+      "allow-tool": { type: "string", multiple: true },
+      "capability-pack": { type: "string", multiple: true },
+      "timeout-ms": { type: "string" },
+    },
+    load: async () => {
+      const { cmdExec } = await import("./exec.js");
+      return (ctx, argv, flags) => cmdExec(ctx, argv, flags);
+    },
+  },
+  {
     name: "doctor",
     args: "[--live|--fix] [--deep] [--only <id>]",
     summary: "run structured runtime diagnostics",
