@@ -336,9 +336,9 @@ Named as unproven rather than omitted:
 - **The full `npm test` suite inside the candidate run.** The release-candidate
   run executes the release-owned test files only and reports `npm-test` as
   `not-run`; `--full-tests` includes it. The suite *was* run separately on this
-  machine at the evidence commit — 1464 tests, 1460 pass, 0 fail, 4 skipped —
-  and that reading is recorded in §4 and in the PR body. It is a local reading:
-  `release.yml` and the PR's required checks are the authority.
+  machine at integration commit `b23c8b1` — 1543 tests, 1540 pass, 0 fail,
+  3 skipped — and that reading is recorded in the PR body. It remains local
+  evidence only; the final proposed head must repeat this proof in required CI.
 - **Anything about the deployed API.** Two claims in the release notes'
   Authentication section describe a *server*, not this package: that the API
   accepts long-lived `aek_` tokens, and that `/auth/logout` actually ends the
@@ -364,17 +364,34 @@ Named as unproven rather than omitted:
 - **`npm audit` against future advisories.** The audit result is a reading taken
   at pack time, not a standing property.
 
-## 6. Founder-owned actions
+## 6. Pre-merge gates and founder-owned actions
 
-These are the only remaining steps, and none of them were run from this lane.
-Neither `AA-REL-01` nor this integration created a tag, published a release, or
-contacted the registry to publish.
+The local evidence above is not merge authority. Neither `AA-REL-01` nor this
+integration created a tag, published a release, or contacted the registry to
+publish. The following pre-merge gates remain blocking and must be attached to
+the exact proposed head rather than inferred from an ancestor or a workstation:
 
-1. **Merge this integration PR to `main`.** Note the merge commit SHA; the tag must
-   point at it, and `release.yml` refuses to publish a tag that is not an
-   ancestor of `origin/main`.
+1. **Resolve every independent-review finding** and rerun the full suite,
+   release truth, generated-document check, installed-tarball verification, and
+   adversarial mutation coverage on the resulting clean commit.
 
-2. **Re-run the candidate on the merge commit**, so the tag is created against
+2. **Publish a draft branch and obtain required exact-head CI evidence** on both
+   Linux and Windows. Required checks must include the full suite and an install
+   and launch of the exact packed artifact outside the source tree.
+
+3. **Run real Predator CI against the exact proposed head.** This repository has
+   no configured Predator client or recorded Predator result today; absence is
+   a blocking dependency, not a passing or not-applicable check.
+
+4. **Complete the final independent review** after CI and Predator evidence are
+   available, resolve its threads, and verify that no unrelated generated or
+   scratch artifacts entered the package.
+
+5. **Founder: merge the approved integration PR to `main`.** Note the merge
+   commit SHA; the tag must point at it, and `release.yml` refuses to publish a
+   tag that is not an ancestor of `origin/main`.
+
+6. **Re-run the candidate on the merge commit**, so the tag is created against
    evidence for the exact commit being tagged:
 
    ```bash
@@ -384,18 +401,18 @@ contacted the registry to publish.
 
    Confirm `"ok": true` and `"commitBound": true`.
 
-3. **Create the tag on that commit:**
+7. **Create the tag on that commit:**
 
    ```bash
    git tag -a v0.3.0 <merge-sha> -m "v0.3.0 — skills, and a release that matches the repository"
    git push origin v0.3.0
    ```
 
-4. **Publish a GitHub release for `v0.3.0`**, body taken from
+8. **Publish a GitHub release for `v0.3.0`**, body taken from
    [`2026-08-22.md`](2026-08-22.md). Publication — not tag creation — is what
    triggers `release.yml`.
 
-5. **Confirm the prerequisites `release.yml` needs before publishing the
+9. **Confirm the prerequisites `release.yml` needs before publishing the
    release**, because a missing one fails the run after the release is already
    public:
    - the `npm-production` environment exists on the repository;
@@ -404,11 +421,11 @@ contacted the registry to publish.
    - the workflow's `id-token: write` / `attestations: write` permissions are
      not restricted by an organisation policy.
 
-6. **Watch the `Release npm package` workflow.** It re-runs the whole sequence on
+10. **Watch the `Release npm package` workflow.** It re-runs the whole sequence on
    the tag, attests provenance, uploads the tarball plus a CycloneDX SBOM as a
    90-day artifact, and only then runs `npm publish --provenance`.
 
-7. **Verify availability from the registry, not from the workflow log:**
+11. **Verify availability from the registry, not from the workflow log:**
 
    ```bash
    npm view aether-agents versions --json      # must now include 0.3.0
@@ -419,7 +436,7 @@ contacted the registry to publish.
    workflow artifact. Do not use the historical `70a48aca…` digest as the
    expected digest for the current tree.
 
-8. **Only after step 7 succeeds**, update the availability language in
+12. **Only after step 11 succeeds**, update the availability language in
    `README.md` and `RELEASE_NOTES.md` to say 0.3.0 installs from npm. Until that
    proof exists, the repository must keep saying `npm i -g` gives you `0.1.0` —
    `test/release_coherence.test.ts` enforces that the claim cannot be added
