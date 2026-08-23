@@ -13,6 +13,7 @@ import type { BrainEvent } from "../core/brain_protocol.js";
 import type { ToolResult } from "../core/tool_executor.js";
 import { LocalBrain } from "../core/brain_local.js";
 import { OllamaBrain } from "../core/brain_ollama.js";
+import { resolveLocalModel } from "../core/local_ollama.js";
 import { CloudBrain } from "../core/brain_cloud.js";
 import { ToolExecutor } from "../core/tool_executor.js";
 import { stdioPrompt } from "../ui/interact.js";
@@ -376,7 +377,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     // --effort wins; otherwise the /effort dial saved in the Aether config
     // (same backend: TaskCommand.effort reaches the cloud brain unchanged).
     effort: opts.effort ?? (ctx.cfg.defaultEffort || undefined),
-    model: ctx.flags.model,
+    model: goLocal ? resolveLocalModel(ctx.flags.model, ctx.cfg.localModel ?? "") : ctx.flags.model,
     testCmd: opts.testCmd,
   };
 

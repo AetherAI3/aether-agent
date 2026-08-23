@@ -90,6 +90,8 @@ const COMMAND_RELEASE_ENTRIES: ReadonlyArray<readonly [CommandManifestKey, Comma
     disposition: "new",
     note: "Local child-process agent driver with aether.exec/1 JSONL events and explicit permission receipts.",
   }],
+  ["shell:setup", { disposition: "new", note: "v0.3.0 adds bounded local setup diagnosis." }],
+  ["shell:local", { disposition: "new", note: "v0.3.0 adds explicit Ollama diagnosis and management." }],
 ];
 export const COMMAND_RELEASE_CONTRACT: ReadonlyMap<CommandManifestKey, CommandReleaseBinding> =
   new Map(COMMAND_RELEASE_ENTRIES);
@@ -108,9 +110,9 @@ const KNOWN_DOCS_OWNERS: Readonly<Record<CommandSurface, readonly string[]>> = {
   headless: ["src/commands/cli_registry.ts#ALL_CLI_COMMANDS"],
 };
 
-const READ_ONLY_COMMANDS = new Set(["help", "models", "agents", "audit", "capabilities"]);
+const READ_ONLY_COMMANDS = new Set(["help", "models", "agents", "audit", "capabilities", "setup"]);
 const ACCOUNT_COMMANDS = new Set(["auth", "login", "logout", "github"]);
-const LOCAL_WRITE_COMMANDS = new Set(["resume", "sessions", "review", "skills", "memory", "output", "support-bundle", "config"]);
+const LOCAL_WRITE_COMMANDS = new Set(["resume", "sessions", "review", "skills", "memory", "output", "support-bundle", "config", "local"]);
 const DESTRUCTIVE_COMMANDS = new Set(["ship"]);
 const HOSTED_CAPABILITY_COMMANDS = new Set(["chat", "run", "models", "agents", "image", "video", "vault", "workflow", "receipt"]);
 
@@ -124,6 +126,7 @@ function permissionFor(surface: CommandSurface, name: string): PermissionClass {
 }
 
 function capabilitiesFor(surface: CommandSurface, name: string): string[] {
+  if (surface === "shell" && (name === "setup" || name === "local")) return ["ollama.local"];
   if (surface === "shell" && HOSTED_CAPABILITY_COMMANDS.has(name)) return ["aether.hosted"];
   if (surface === "shell" && name === "agent") return ["aether.hosted-or-local"];
   if (surface === "shell" && name === "exec") return ["aether.local-child", "aether.headless.v1"];

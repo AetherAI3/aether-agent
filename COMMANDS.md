@@ -18,7 +18,7 @@ aether                                  # no args = interactive REPL
 <!-- Registry markers are checked against the declarative command registries. -->
 
 <!-- CLI-COMMANDS:START -->
-`help`, `agent`, `exec`, `chat`, `resume`, `sessions`, `run`, `review`, `ship`, `models`, `agents`, `auth`,
+`help`, `agent`, `exec`, `chat`, `resume`, `sessions`, `run`, `review`, `ship`, `setup`, `local`, `models`, `agents`, `auth`,
 `github`, `vault`, `workflow`, `memory`, `skills`, `capabilities`, `image`,
 `video`, `output`, `audit`, `receipt`, `doctor`, `support-bundle`, `mcp`,
 `config`
@@ -40,6 +40,7 @@ notes.
 - `aether.hosted-or-local` — either the hosted runtime or the packaged local fallback.
 - `aether.local-child` — local child-process brain authority; never a remote shell.
 - `aether.headless.v1` — versioned `aether.exec/1` JSONL events and controls.
+- `ollama.local` — a user-operated Ollama endpoint and optional local CLI binary.
 <!-- CAPABILITY-DOCS:END -->
 
 
@@ -141,6 +142,25 @@ aether run neo "add pagination to the users endpoint and write tests"
 aether run kronus "audit this service for race conditions and fix them"
 ```
 > Orchestrators are gated to paid tiers. Neo is available on Solo+; Kronus on Pro+.
+
+### `aether setup --local` and `aether local` — Ollama setup
+
+`aether setup --local` and `aether local doctor` perform the same bounded,
+read-only diagnosis: Ollama binary, normalized endpoint, server response,
+installed tags, selected local model, backend setting, and hosted sign-in state.
+No token value is printed and no hosted API is called.
+
+| Command | Effect |
+|---|---|
+| `aether local doctor` | Diagnose Ollama without changing anything. |
+| `aether local models` | List installed tags as `ollama:<tag>` ids. |
+| `aether local use <model>` | Plan and, after confirmation or `--yes`, save a namespaced local default. Does not switch the backend. |
+| `aether local pull <model>` | Plan and, after confirmation or `--yes`, run `ollama pull` with argv-only process launch. Does not select it. |
+
+Stable local setup exit codes are `10` binary absent, `11` server down, `12`
+no installed models, `13` selected model missing, `14` timeout, `15` malformed
+host/response, and `16` failed mutation. Usage remains `2`; declining a shown
+plan is `3`.
 
 ### `aether resume [id | export [id]]` — replay or carry a session
 Replays a prior local coding session's transcript from `~/.aether-agent/logs/`.

@@ -108,15 +108,25 @@ machine, `ollama serve` stays in the foreground, so run it by itself in terminal
 ollama serve
 ```
 
-Wait until Ollama is ready. In terminal 2 (PowerShell, Command Prompt, or a POSIX
-shell), pull the CLI's default local model and start the agent:
+In terminal 2 (PowerShell, Command Prompt, or a POSIX shell), diagnose the signed-out
+path, pull a model with explicit approval, select it, and start the agent:
 
 ```bash
-ollama pull qwen2.5-coder:7b
+aether setup --local
+aether local pull qwen2.5-coder:7b --yes
+aether local use qwen2.5-coder:7b --yes
 aether agent --local --test-cmd "npm test" "fix the failing test"
 ```
 
-Pass `--model <ollama-tag>` to select another model you have pulled. The local path
+`aether local doctor` is read-only; `aether local models` lists installed tags as
+namespaced ids such as `ollama:qwen2.5-coder:7b`. Pulls and configuration writes
+always display a plan and require `--yes` or an interactive confirmation. Selecting
+a model does not switch the configured backend; use `--local` when you intend to run
+it. Pass `--model ollama:<tag>` to select another installed model for one run (bare
+tags remain accepted for compatibility when `--local` already makes the intent
+explicit). A saved hosted model id is never forwarded to Ollama as a tag.
+
+The local path
 talks directly to the configured Ollama endpoint (by default
 `http://localhost:11434`) and does not require an Aether account. `OLLAMA_HOST` may
 point elsewhere, so "local" describes the selected backend, not a guarantee about a

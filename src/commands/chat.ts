@@ -31,6 +31,7 @@ import { loadHistory, appendHistory, historyPath, historyEnabled } from "../core
 import { VERSION } from "../version.js";
 import { chooseBackend, type BackendPath } from "../core/backend.js";
 import { OllamaBrain } from "../core/brain_ollama.js";
+import { resolveLocalModel } from "../core/local_ollama.js";
 import type { Brain } from "../core/brain.js";
 import type { ToolResult } from "../core/tool_executor.js";
 import { ToolExecutor } from "../core/tool_executor.js";
@@ -305,7 +306,7 @@ export async function runLocalTurn(
   skillGuard?: (tool: string) => SkillRefusal | null,
 ): Promise<void> {
   const cwd = ctx.flags.cwd;
-  const brain = deps.brain ?? new OllamaBrain(ctx.flags.model ? { model: ctx.flags.model } : {});
+  const brain = deps.brain ?? new OllamaBrain({ model: resolveLocalModel(ctx.flags.model, ctx.cfg.localModel ?? "") });
   const exec = deps.exec ?? new ToolExecutor(cwd);
   const renderer = new HostRenderer({ poolGb: 5, json: ctx.flags.json });
   const approveTool = async (name: string, args: Record<string, unknown>): Promise<boolean> => {
@@ -327,7 +328,7 @@ export async function runLocalTurn(
     text: prompt,
     cwd,
     poolGb: 5,
-    ...(ctx.flags.model ? { model: ctx.flags.model } : {}),
+    model: resolveLocalModel(ctx.flags.model, ctx.cfg.localModel ?? ""),
   };
   let sawError: string | null = null;
   // close() is what unblocks a loop parked on a tool result, so an abort that

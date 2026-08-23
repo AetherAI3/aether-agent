@@ -117,6 +117,26 @@ export const DISPATCH_COMMANDS: DispatchedCommand[] = [
     },
   },
   {
+    name: "setup",
+    args: "--local",
+    summary: "diagnose bounded local Ollama setup without changing configuration",
+    section: "Start",
+    load: async () => {
+      const { cmdSetup } = await import("./local.js");
+      return (ctx, argv, flags) => cmdSetup(ctx, argv, flags);
+    },
+  },
+  {
+    name: "local",
+    args: "<doctor|models|use <model>|pull <model>>",
+    summary: "diagnose and explicitly manage the local Ollama runtime",
+    section: "Start",
+    load: async () => {
+      const { cmdLocal } = await import("./local.js");
+      return (ctx, argv, flags) => cmdLocal(ctx, argv, flags);
+    },
+  },
+  {
     name: "doctor",
     args: "[--live|--fix] [--deep] [--only <id>]",
     summary: "run structured runtime diagnostics",

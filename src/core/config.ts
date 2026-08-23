@@ -12,6 +12,7 @@ import type { AetherConfig } from "../types.js";
 export const DEFAULT_CONFIG: AetherConfig = {
   baseUrl: "https://api.aethersystems.net/cloud",
   defaultModel: "",
+  localModel: "",
   permissionMode: "ask",
   autoApply: false,
   telemetry: true,
