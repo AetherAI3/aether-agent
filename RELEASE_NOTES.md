@@ -31,8 +31,9 @@ either.
   and `/preview` run only an explicit argv declaration or
   `.aether/preview.json`, show the execution and network plan before consent,
   detect a reachable loopback URL, and use the existing no-shell platform
-  opener. A token-bound local supervisor owns the full process tree, so stale
-  PID files and unrelated processes are never attached to or killed. Headless
+  opener. An owner-private, one-use challenge authenticates control; the local
+  supervisor owns the full process tree, so stale PID files and unrelated
+  processes are never attached to or killed. Headless
   runs print the URL without claiming a browser opened. This is a separate
   local capability and does not relax web-fetch SSRF rules.
 

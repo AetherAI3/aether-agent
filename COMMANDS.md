@@ -179,7 +179,8 @@ starts anything it prints the exact argv, working directory, inherited
 permissions, and network implications, then requires confirmation or `--yes`.
 The supervisor accepts readiness only from reachable loopback HTTP(S) URLs,
 stores sanitized bounded logs under `.aether/preview/`, and owns the complete
-process tree. `status`, `logs`, and `stop` use a token-bound loopback challenge
+process tree. `status`, `logs`, and `stop` use an owner-private, one-use
+loopback challenge
 instead of trusting a PID file; an unverifiable stale PID is never signalled.
 
 ```json

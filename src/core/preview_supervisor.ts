@@ -42,11 +42,13 @@ function consumeControlRequest(launch: PreviewLaunch, req: IncomingMessage): boo
     const stat = lstatSync(requestPath);
     if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 1_024) return false;
     const value: unknown = JSON.parse(readFileSync(requestPath, "utf8"));
-    unlinkSync(requestPath);
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
     const v = value as Record<string, unknown>;
-    return Object.keys(v).length === 5 && v["schema"] === PREVIEW_SCHEMA && v["requestId"] === requestId &&
+    const valid = Object.keys(v).length === 5 && v["schema"] === PREVIEW_SCHEMA && v["requestId"] === requestId &&
       v["instanceId"] === launch.instanceId && v["method"] === req.method && v["path"] === req.url;
+    if (!valid) return false;
+    unlinkSync(requestPath);
+    return true;
   } catch {
     return false;
   }

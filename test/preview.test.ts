@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -97,6 +97,24 @@ test("managed preview detects its URL, reports headless honestly, sanitizes logs
     method: "POST", headers: { "x-aether-preview-control": "00000000-0000-4000-8000-000000000000" },
   });
   assert.equal(forged.status, 403, "a control id without an owner-private request file was accepted");
+
+  const blockedId = "11111111-1111-4111-8111-111111111111";
+  const controlPath = join(paths.dir, "control.json");
+  writeFileSync(controlPath, JSON.stringify({
+    schema: PREVIEW_SCHEMA, requestId: blockedId, instanceId: "wrong-instance", method: "POST", path: "/stop",
+  }), { mode: 0o600 });
+  const invalid = await fetch(`http://127.0.0.1:${state.controlPort}/stop`, {
+    method: "POST", headers: { "x-aether-preview-control": blockedId },
+  });
+  assert.equal(invalid.status, 403);
+  assert.equal(existsSync(controlPath), true, "supervisor consumed a request before validating ownership");
+  const busyOut = sink(); const busyErr = sink();
+  assert.equal(await cmdPreview(context(root), ["status"], { out: busyOut.stream, err: busyErr.stream }), PREVIEW_EXIT.controlFailed);
+  assert.match(busyErr.text(), /control is busy/);
+  assert.equal(existsSync(paths.statePath), true, "busy control was misclassified as stale and deleted");
+  assert.equal(existsSync(controlPath), true, "a losing caller deleted a request it did not own");
+  assert.doesNotThrow(() => process.kill(state.childPid, 0), "busy control orphaned or stopped the managed preview");
+  unlinkSync(controlPath);
 
   const statusOut = sink();
   assert.equal(await cmdPreview(context(root), ["status"], { out: statusOut.stream, err: err.stream }), 0);
