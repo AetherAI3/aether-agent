@@ -226,7 +226,7 @@ a statement that a current archive exists.
 |---|---:|
 | `COMMANDS.md`, `LICENSE`, `NOTICE.md`, `README.md`, `package.json` | 5 |
 | `docs/generated/**`, `docs/model-catalogue/**` | 4 |
-| `dist/src/core/**` | 306 |
+| `dist/src/core/**` | 315 |
 | `dist/src/ui/**` | 117 |
 | `dist/src/commands/**` | 123 |
 | `dist/src/skills/**` (six built-in skills) | 18 |

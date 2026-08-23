@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 export const HEADLESS_PROTOCOL = "aether.exec/1";
 export const HEADLESS_CONTROL_PROTOCOL = "aether.exec.control/1";
@@ -14,12 +14,18 @@ export interface HeadlessFrame {
   [key: string]: unknown;
 }
 
-const SECRET_KEY = /(?:authorization|api[-_]?key|(?:access[-_]?|refresh[-_]?)?token|password|secret|cookie)/i;
-const SECRET_VALUE = /\b(?:Bearer\s+[A-Za-z0-9._~+\/-]{8,}|sk-[A-Za-z0-9_-]{8,}|gh[opusr]_[A-Za-z0-9_]{8,})\b/gi;
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const FRAME_TYPE = /^[a-z][a-z0-9_-]{0,63}$/;
+const RESERVED = new Set(["protocol", "sequence", "correlation_id", "type"]);
+const SECRET_KEY = /(?:authorization|api[-_]?key|(?:access[-_]?|refresh[-_]?)?token|password|passwd|secret|cookie|credential|private[-_]?key)/i;
+const SECRET_VALUE = /\b(?:Bearer\s+[A-Za-z0-9._~+\/-]{8,}|sk-[A-Za-z0-9_-]{8,}|gh[opusr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{8,}|glpat-[A-Za-z0-9_-]{8,}|npm_[A-Za-z0-9]{8,}|pypi-[A-Za-z0-9_-]{8,}|xox[baprs]-[A-Za-z0-9-]{8,}|AIza[A-Za-z0-9_-]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16}|aws_secret_access_key\s*[=:]\s*[A-Za-z0-9/+]{20,})\b/gi;
+const CREDENTIALED_URL = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi;
 
 export function redactHeadless(value: unknown, key = ""): unknown {
   if (SECRET_KEY.test(key)) return "[REDACTED]";
-  if (typeof value === "string") return value.replace(SECRET_VALUE, "[REDACTED]");
+  if (typeof value === "string") {
+    return value.replace(CREDENTIALED_URL, "$1[REDACTED]@").replace(SECRET_VALUE, "[REDACTED]");
+  }
   if (Array.isArray(value)) return value.map((item) => redactHeadless(item));
   if (value && typeof value === "object") {
     return Object.fromEntries(
@@ -34,11 +40,15 @@ export class HeadlessWriter {
   private terminalWritten = false;
   readonly sessionId: string;
 
+  private readonly root: string;
+
   constructor(
-    private readonly root: string,
+    root: string,
     private readonly write: (line: string) => void = (line) => process.stdout.write(line),
     sessionId: string = randomUUID(),
   ) {
+    if (!SAFE_ID.test(sessionId)) throw new Error("invalid headless session id");
+    this.root = realpathSync(resolve(root));
     this.sessionId = sessionId;
   }
 
@@ -54,19 +64,24 @@ export class HeadlessWriter {
   }
 
   private writeFrame(type: string, payload: Record<string, unknown>, correlationId: string): HeadlessFrame {
+    if (!FRAME_TYPE.test(type)) throw new Error("invalid headless frame type");
+    if (!SAFE_ID.test(correlationId)) throw new Error("invalid headless correlation id");
+    const safePayload = Object.fromEntries(
+      Object.entries(redactHeadless(payload) as Record<string, unknown>).filter(([key]) => !RESERVED.has(key)),
+    );
     const base = {
+      ...safePayload,
       protocol: HEADLESS_PROTOCOL,
       sequence: this.sequence++,
       correlation_id: correlationId,
       type,
-      ...redactHeadless(payload) as Record<string, unknown>,
     } satisfies HeadlessFrame;
     let line = JSON.stringify(base);
     if (Buffer.byteLength(line, "utf8") > HEADLESS_MAX_LINE_BYTES) {
-      const dir = resolve(this.root, ".aether", "artifacts", this.sessionId);
+      const dir = this.containedArtifactPath(resolve(this.root, ".aether", "artifacts", this.sessionId));
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       const name = `${base.sequence}-${type.replace(/[^a-z0-9_-]/gi, "_")}.json`;
-      const absolute = resolve(dir, name);
+      const absolute = this.containedArtifactPath(resolve(dir, name));
       const artifact = JSON.stringify(base, null, 2) + "\n";
       writeFileSync(absolute, artifact, { encoding: "utf8", mode: 0o600 });
       const bounded: HeadlessFrame = {
@@ -88,6 +103,19 @@ export class HeadlessWriter {
     this.write(line + "\n");
     return base;
   }
+
+  private containedArtifactPath(target: string): string {
+    const absolute = resolve(target);
+    const rel = relative(this.root, absolute);
+    if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) throw new Error("artifact path escapes workspace");
+    let ancestor = absolute;
+    while (!existsSync(ancestor) && dirname(ancestor) !== ancestor) ancestor = dirname(ancestor);
+    const realAncestor = existsSync(ancestor) ? realpathSync(ancestor) : ancestor;
+    if (realAncestor !== this.root && !realAncestor.startsWith(this.root + sep)) {
+      throw new Error("artifact path resolves outside workspace");
+    }
+    return absolute;
+  }
 }
 
 export interface ControlFrame {
@@ -106,7 +134,7 @@ export function parseControlFrame(line: string): { ok: true; frame: ControlFrame
   const obj = raw as Record<string, unknown>;
   if (obj["protocol"] !== HEADLESS_CONTROL_PROTOCOL) return { ok: false, error: "unsupported control protocol" };
   if (!Number.isSafeInteger(obj["sequence"]) || Number(obj["sequence"]) < 0) return { ok: false, error: "invalid control sequence" };
-  if (typeof obj["correlation_id"] !== "string" || !obj["correlation_id"]) return { ok: false, error: "missing correlation_id" };
+  if (typeof obj["correlation_id"] !== "string" || !SAFE_ID.test(obj["correlation_id"])) return { ok: false, error: "invalid correlation_id" };
   if (!["cancel", "pause", "resume", "steer"].includes(String(obj["action"]))) return { ok: false, error: "unsupported control action" };
   if (obj["note"] != null && (typeof obj["note"] !== "string" || Buffer.byteLength(obj["note"], "utf8") > 4096)) {
     return { ok: false, error: "invalid control note" };
@@ -134,19 +162,33 @@ export function validateHeadlessFrames(lines: readonly string[]): string[] {
   const errors: string[] = [];
   let expected = 0;
   let terminal = false;
+  let sessionId: string | null = null;
+  let validSession = false;
   for (const [index, line] of lines.entries()) {
     let frame: Record<string, unknown>;
     try { frame = JSON.parse(line) as Record<string, unknown>; }
     catch { errors.push(`line ${index + 1}: malformed JSON`); continue; }
     if (frame["protocol"] !== HEADLESS_PROTOCOL) errors.push(`line ${index + 1}: wrong protocol`);
-    if (frame["sequence"] !== expected) errors.push(`line ${index + 1}: expected sequence ${expected}`);
+    if (!Number.isSafeInteger(frame["sequence"]) || frame["sequence"] !== expected) errors.push(`line ${index + 1}: expected sequence ${expected}`);
+    if (typeof frame["type"] !== "string" || !FRAME_TYPE.test(frame["type"])) errors.push(`line ${index + 1}: invalid frame type`);
+    if (typeof frame["correlation_id"] !== "string" || !SAFE_ID.test(frame["correlation_id"])) errors.push(`line ${index + 1}: invalid correlation_id`);
+    if (index === 0) {
+      if (frame["type"] !== "session") errors.push("first frame must be session");
+      if (typeof frame["session"] !== "string" || frame["session"] !== frame["correlation_id"]) {
+        errors.push("session frame identity must match correlation_id");
+      } else if (frame["type"] === "session") validSession = true;
+      if (typeof frame["session"] === "string") sessionId = frame["session"];
+    }
     if (terminal) errors.push(`line ${index + 1}: frame after terminal`);
     if (frame["type"] === "terminal") {
       if (terminal) errors.push(`line ${index + 1}: duplicate terminal frame`);
       terminal = true;
+      if (sessionId && frame["correlation_id"] !== sessionId) errors.push("terminal correlation_id must match session");
+      if (index !== lines.length - 1) errors.push("terminal frame must be last");
     }
     expected++;
   }
+  if (!validSession) errors.push("missing valid session frame");
   if (!terminal) errors.push("missing terminal frame");
   return errors;
 }

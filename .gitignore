@@ -16,6 +16,7 @@ _tmp/
 
 # agent runtime output (plans the agent writes during /plan runs)
 .hermes/
+.aether/artifacts/
 
 # packed npm tarballs (npm pack output) — the registry is the distribution
 # channel, not the repo

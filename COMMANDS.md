@@ -125,11 +125,11 @@ Both flags work on `aether chat` and the REPL too.
 
 ### `aether exec "<task>"` — headless local agent
 
-Runs the local child-process brain without a TTY or hosted API dependency. Stdout
+Runs the packaged Node/Ollama child brain without a TTY or hosted API dependency. Stdout
 contains only versioned JSONL protocol frames; diagnostics use stderr. The default
 tool envelope is read-only. Add tools explicitly with repeatable `--allow-tool`
-and choose `--permission deny|read-only|workspace-write|shell`. Network tools are
-disabled in v1. A successful model completion exits non-zero unless the host-run
+and choose `--permission deny|read-only|workspace-write`. Agent shell, Git, and
+network tools are disabled in v1. A successful model completion exits non-zero unless the host-run
 `--test-cmd` also passes. See [`docs/HEADLESS_PROTOCOL.md`](docs/HEADLESS_PROTOCOL.md)
 for framing, structured stdin controls, payload bounds, and stable exit codes.
 

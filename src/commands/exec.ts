@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import type { AppContext } from "../core/context.js";
-import { LocalBrain } from "../core/brain_local.js";
+import { BundledChildBrain, type BundledChildMode } from "../core/brain_bundled_child.js";
 import type { Brain, TaskCommand } from "../core/brain.js";
 import type { BrainDone, VerifyOutcome } from "../core/verify_gate.js";
 import { ToolExecutor, type ToolResult } from "../core/tool_executor.js";
@@ -12,7 +12,8 @@ import { ControlLedger, HeadlessWriter, HEADLESS_CONTROL_PROTOCOL, parseControlF
 import { LineBuffer } from "../core/brain_protocol.js";
 
 export const EXEC_EXIT = { ok: 0, failed: 1, usage: 2, unverified: 4, protocol: 64, timeout: 124, cancelled: 130 } as const;
-export type ExecPermission = "deny" | "read-only" | "workspace-write" | "shell";
+export type ExecPermission = "deny" | "read-only" | "workspace-write";
+export const EXEC_V1_TOOLS = ["read_file", "write_file", "repo_search"] as const;
 export interface ExecOptions {
   permission: ExecPermission;
   allowedTools: readonly string[];
@@ -23,6 +24,7 @@ export interface ExecOptions {
   writeLine?: (line: string) => void;
   sessionId?: string;
   resume?: string;
+  driver?: BundledChildMode;
 }
 
 function git(cwd: string, args: string[]): string | null {
@@ -42,15 +44,12 @@ function repositoryIdentity(cwd: string): Record<string, unknown> {
 }
 
 function allowed(permission: ExecPermission, tool: string, declared: ReadonlySet<string>): { ok: boolean; reason: string } {
-  if (!declared.has(tool)) return { ok: false, reason: "undeclared-tool" };
   const definition = toolDefinition(tool);
   if (!definition) return { ok: false, reason: "unknown-tool" };
+  if (["network", "shell", "git"].includes(definition.sideEffect)) return { ok: false, reason: `${definition.sideEffect}-disabled` };
+  if (!declared.has(tool)) return { ok: false, reason: "undeclared-tool" };
   if (permission === "deny") return { ok: false, reason: "permission-deny" };
-  if (definition.sideEffect === "network") return { ok: false, reason: "network-disabled" };
   if (permission === "read-only" && definition.sideEffect !== "read") return { ok: false, reason: "permission-escalation" };
-  if (permission === "workspace-write" && ["shell", "git"].includes(definition.sideEffect)) {
-    return { ok: false, reason: "permission-escalation" };
-  }
   return { ok: true, reason: "declared-and-authorized" };
 }
 
@@ -63,13 +62,15 @@ function verificationStatus(result: ToolResult | null, configured: boolean): Ver
 export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecOptions): Promise<number> {
   const cwd = realpathSync(resolve(ctx.flags.cwd));
   const writer = new HeadlessWriter(cwd, opts.writeLine, opts.sessionId);
-  const declared = new Set(opts.allowedTools);
+  const declared = new Set(opts.allowedTools.filter((tool) => (EXEC_V1_TOOLS as readonly string[]).includes(tool)));
   const warnings: string[] = [];
   if (process.stdin.isTTY) warnings.push("stdin controls unavailable on a TTY; send process signals or pipe versioned JSONL controls");
   if (!opts.verifyCommand) warnings.push("no verification command configured; successful agent completion remains non-zero/unverified");
   if (opts.resume) warnings.push("resume is not supported by aether.exec/1; the request will be rejected without starting a brain");
-  const brain = opts.brain ?? new LocalBrain({
-    diagnostic: (text) => process.stderr.write(String(redactHeadless(text))),
+  const driver = opts.driver ?? "ollama";
+  if (driver === "selftest") warnings.push("selftest driver validates installed child/protocol wiring only; it performs no model work");
+  const brain = opts.brain ?? new BundledChildBrain({ mode: driver, diagnostic: (text) =>
+    process.stderr.write(String(redactHeadless(text))),
   });
   const exec = new ToolExecutor(cwd, opts.verifyCommand);
   const abort = new AbortController();
@@ -85,10 +86,13 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
     session: writer.sessionId,
     bridge_protocol: PROTOCOL_VERSION,
     repository: repositoryIdentity(cwd),
-    backend: "local-child",
+    backend: driver === "selftest" ? "bundled-selftest-child" : "bundled-ollama-child",
     model: (ctx.flags.model ?? ctx.cfg.defaultModel) || null,
     effort: (ctx.flags.effort ?? ctx.cfg.defaultEffort) || null,
-    permissions: { mode: opts.permission, explicit_decisions: true, network: "disabled", remote_shell: "disabled" },
+    permissions: {
+      mode: opts.permission, explicit_decisions: true,
+      agent_network_tools: "disabled", agent_shell_tools: "disabled", remote_shell: "disabled",
+    },
     tools: [...declared].sort(),
     capability_packs: [...opts.capabilityPacks].sort(),
     warnings,
@@ -131,7 +135,7 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
     const ledger = controlLedger.accept(frame);
     if (!ledger.accepted) {
       writer.emit("control_result", { accepted: false, action: frame.action, error: ledger.error }, frame.correlation_id);
-      if (ledger.error === "duplicate control sequence") cancel("protocol");
+      cancel("protocol");
       return;
     }
     if (frame.action === "cancel") {
@@ -139,14 +143,18 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
       cancel("control");
       return;
     }
-    brain.control(frame.action, frame.note);
-    writer.emit("control_result", { accepted: true, action: frame.action }, frame.correlation_id);
+    writer.emit("control_result", {
+      accepted: false, action: frame.action, error: "unsupported in aether.exec/1; instruction was not applied",
+    }, frame.correlation_id);
   };
   const onStdin = (chunk: Buffer | string): void => {
-    for (const line of controls.push(String(chunk))) if (line.trim()) consumeControl(line);
+    for (const line of controls.push(String(chunk))) {
+      if (cancelled) break;
+      if (line.trim()) consumeControl(line);
+    }
   };
   const onStdinEnd = (): void => {
-    if (controls.rest().trim()) {
+    if (!cancelled && controls.rest().trim()) {
       writer.emit("control_result", { accepted: false, error: "truncated control frame" });
       cancel("protocol");
     }
@@ -229,8 +237,8 @@ export async function cmdExec(ctx: AppContext, argv: string[], flags: {
     return EXEC_EXIT.usage;
   }
   const permission = flags.str("permission") ?? "read-only";
-  if (!["deny", "read-only", "workspace-write", "shell"].includes(permission)) {
-    process.stderr.write("aether exec: --permission must be deny, read-only, workspace-write, or shell\n");
+  if (!["deny", "read-only", "workspace-write"].includes(permission)) {
+    process.stderr.write("aether exec: --permission must be deny, read-only, or workspace-write\n");
     return EXEC_EXIT.usage;
   }
   const timeout = Number(flags.str("timeout-ms") ?? "900000");
@@ -244,9 +252,19 @@ export async function cmdExec(ctx: AppContext, argv: string[], flags: {
     process.stderr.write(`aether exec: unknown --allow-tool ${unknown[0]}\n`);
     return EXEC_EXIT.usage;
   }
+  const forbidden = requested.filter((tool) => !(EXEC_V1_TOOLS as readonly string[]).includes(tool));
+  if (forbidden.length) {
+    process.stderr.write(`aether exec: --allow-tool ${forbidden[0]} is unavailable in v1 (shell, git, and network tools are disabled)\n`);
+    return EXEC_EXIT.usage;
+  }
   const packs = flags.list("capability-pack");
   if (packs.length > 16 || packs.some((pack) => !/^[a-z][a-z0-9._-]{0,127}$/.test(pack))) {
     process.stderr.write("aether exec: capability packs must be 1-16 bounded identifiers\n");
+    return EXEC_EXIT.usage;
+  }
+  const driver = flags.str("exec-driver") ?? "ollama";
+  if (driver !== "ollama" && driver !== "selftest") {
+    process.stderr.write("aether exec: --exec-driver must be ollama or selftest\n");
     return EXEC_EXIT.usage;
   }
   return runHeadlessExec(ctx, task, {
@@ -256,5 +274,6 @@ export async function cmdExec(ctx: AppContext, argv: string[], flags: {
     timeoutMs: timeout,
     verifyCommand: ctx.flags.testCmd,
     resume: ctx.flags.resume,
+    driver,
   });
 }

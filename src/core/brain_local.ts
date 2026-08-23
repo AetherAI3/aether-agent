@@ -19,6 +19,7 @@ import {
   type HostCommand,
 } from "./brain_protocol.js";
 import type { ToolResult } from "./tool_executor.js";
+import { terminateProcessTree } from "./process_tree_kill.js";
 
 /**
  * How the brain subprocess is started. Injected so the local path is testable
@@ -64,7 +65,10 @@ export class LocalBrain implements Brain {
     const start: BrainSpawner =
       this.opts.spawn ??
       ((command, args, options) =>
-        spawn(command, [...args], { ...options, stdio: ["pipe", "pipe", "pipe"] }) as ChildProcessWithoutNullStreams);
+        spawn(command, [...args], {
+          ...options, detached: process.platform !== "win32", windowsHide: true,
+          stdio: ["pipe", "pipe", "pipe"],
+        }) as ChildProcessWithoutNullStreams);
     const child = start(python, ["-m", mod], {
       cwd: task.cwd,
       // PYTHONUTF8 belt-and-suspenders alongside the ASCII-escaped wire: the
@@ -116,7 +120,7 @@ export class LocalBrain implements Brain {
   }
 
   close(): void {
-    if (this.child && !this.child.killed) this.child.kill();
+    terminateProcessTree(this.child);
     this.child = null;
     this.queue.end();
   }

@@ -26,10 +26,10 @@ either.
 ## New
 
 - **`aether exec` — a local, agent-driven JSONL interface.** It starts the
-  packaged local brain as a child process and emits `aether.exec/1` frames with
+  packaged Node/Ollama brain child and emits `aether.exec/1` frames with
   sequence and correlation IDs, explicit permission decisions, bounded tool
   receipts, structured stdin controls, and exactly one terminal result. Network
-  tools and remote shells are disabled; host-run verification is authoritative,
+  agent shell, Git, and network tools are disabled; host-run verification is authoritative,
   so a model claim can never turn a failing or absent gate into exit 0.
 - **A review → commit → pull request rail.** `aether review` reads the
   repository's real state, lets you pick what goes in, commits exactly that, and

@@ -109,6 +109,7 @@ export const DISPATCH_COMMANDS: DispatchedCommand[] = [
       "allow-tool": { type: "string", multiple: true },
       "capability-pack": { type: "string", multiple: true },
       "timeout-ms": { type: "string" },
+      "exec-driver": { type: "string" },
     },
     load: async () => {
       const { cmdExec } = await import("./exec.js");

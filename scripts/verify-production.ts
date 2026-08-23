@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NOT_APPLICABLE_CONTRACTS, deterministicRepositoryEvidence, releaseTruthFromRepository } from "./release-truth.js";
+import { validateHeadlessFrames } from "../src/core/headless_protocol.js";
 
 interface PackageManifest {
   name?: unknown;
@@ -246,6 +247,25 @@ function smokeInstallPackage(root: string, expectedVersion: string): string[] {
     const version = execFileSync(launch, [...launchArgs, "--version"], options).trim();
     if (version !== expectedVersion) errors.push(`installed CLI reported ${version}, expected ${expectedVersion}`);
     execFileSync(launch, [...launchArgs, "--help"], options);
+    const verifyCommand = `${JSON.stringify(process.execPath)} -e "process.exit(0)"`;
+    const output = execFileSync(launch, [
+      ...launchArgs, "exec", "--cwd", temp, "--exec-driver", "selftest",
+      "--permission", "read-only", "--test-cmd", verifyCommand,
+      "verify the installed headless child protocol",
+    ], options);
+    const lines = output.trim().split(/\r?\n/);
+    const protocolErrors = validateHeadlessFrames(lines);
+    if (protocolErrors.length) errors.push(`installed exec protocol invalid: ${protocolErrors.join("; ")}`);
+    const frames = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    const session = frames[0];
+    const terminal = frames.at(-1);
+    if (session?.["backend"] !== "bundled-selftest-child") errors.push("installed exec did not use the bundled child selftest driver");
+    if ((session?.["tools"] as unknown[] | undefined)?.some((tool) => ["run_shell", "run_tests", "git_commit", "web_search", "web_fetch"].includes(String(tool)))) {
+      errors.push("installed exec advertised a shell, git, or network tool");
+    }
+    if (terminal?.["type"] !== "terminal" || terminal["exit_code"] !== 0 || terminal["ok"] !== true) {
+      errors.push("installed exec did not finish with one verified successful terminal frame");
+    }
   } catch (error) {
     errors.push(`install smoke failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
