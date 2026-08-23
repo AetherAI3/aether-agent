@@ -93,7 +93,7 @@ tool execution.
 Use `aether models` to inspect the catalogue returned for the signed-in account.
 
 <!-- MODEL-CATALOGUE:START -->
-A dated, sanitized public snapshot is available as [HTML](docs/model-catalogue/index.html), [JSON](docs/model-catalogue/catalogue.json), and [Markdown](docs/generated/model-catalogue.md). It was generated at `2026-08-06T00:00:00.000Z` from the hashed public release-note section named “Aether Agent — August 2026 fleet update”. Runtime availability remains account-scoped; use `aether models` while signed in.
+A dated, sanitized offline fallback snapshot is available as [HTML](docs/model-catalogue/index.html), [JSON](docs/model-catalogue/catalogue.json), and [Markdown](docs/generated/model-catalogue.md). It was generated at `2026-08-23T00:00:00.000Z` from Cloud public projection `model-catalogue-v1` with verified digest `sha256:2bd01b255f3a7a5ff5f6c3d098dd6d3483b678359ab377c2c5f5b31faddabc9d`. Listed availability is not an account entitlement; use `aether models` while signed in.
 <!-- MODEL-CATALOGUE:END -->
 Model availability and service terms are server-owned and are intentionally not
 copied into a hand-maintained table here.

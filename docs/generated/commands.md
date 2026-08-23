@@ -1,8 +1,8 @@
 <!-- GENERATED FILE: run `npm run docs:generate`; do not edit by hand. -->
-<!-- manifest-digest: sha256:dd0558096f3f9b9f4d036d534e817e7cacd2ef5ef84d67d4c8616f263e1f8c7f -->
+<!-- manifest-digest: sha256:816d1bc9b8b476feafa09e05702f22fd0b87a46f22646e5d7a0d8ee42fdc432f -->
 # Generated command reference
 
-This reference is generated from the validated runtime command manifest. Availability is evaluated at runtime; a listed command may still require authentication, a hosted capability, or local tooling.
+This reference is generated from the validated, versioned command manifest. Availability is evaluated at runtime; a listed command may still require authentication, a hosted capability, or local tooling.
 
 Global shell flags accepted by the manifest:
 

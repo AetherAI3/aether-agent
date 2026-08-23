@@ -1,19 +1,520 @@
 {
-  "schema": "aether-agent/public-model-catalogue-source@1",
-  "asOf": "2026-08-06T00:00:00.000Z",
-  "source": {
-    "kind": "repository-markdown-section",
-    "path": "RELEASE_NOTES.md",
-    "section": "Aether Agent — August 2026 fleet update",
-    "digest": "sha256:d5c88b3013ee5c9967eb3379bcddcdac8d5298b9d6a55b0ca17ead0581e75e09"
-  },
-  "scopeNote": "This sanitized snapshot contains the six Pro/Team frontier-model additions explicitly announced in the public August 2026 release notes. It is a documented subset, not a live entitlement catalogue.",
+  "schema": "aether-cloud/public-model-projection@1",
+  "sourceVersion": "model-catalogue-v1",
+  "generatedAt": "2026-08-23T00:00:00.000Z",
+  "availabilitySemantics": "listed-not-entitled",
+  "scopeNote": "Sanitized Cloud public model projection. Listed availability describes publication status, not account entitlement.",
   "models": [
-    { "id": "opus5", "label": "Claude Opus 5", "provider": "unknown", "kind": "model", "tierMin": "pro", "modality": "unknown", "hosting": "hosted", "availability": "unknown", "evidence": "`opus5`" },
-    { "id": "gpt56_sol", "label": "GPT-5.6 Sol", "provider": "unknown", "kind": "model", "tierMin": "pro", "modality": "unknown", "hosting": "hosted", "availability": "unknown", "evidence": "`gpt56_sol`" },
-    { "id": "gpt56_terra", "label": "GPT-5.6 Terra", "provider": "unknown", "kind": "model", "tierMin": "pro", "modality": "unknown", "hosting": "hosted", "availability": "unknown", "evidence": "`gpt56_terra`" },
-    { "id": "gpt56_luna", "label": "GPT-5.6 Luna", "provider": "unknown", "kind": "model", "tierMin": "pro", "modality": "unknown", "hosting": "hosted", "availability": "unknown", "evidence": "`gpt56_luna`" },
-    { "id": "kimi_k3", "label": "Kimi K3", "provider": "unknown", "kind": "model", "tierMin": "pro", "modality": "unknown", "hosting": "hosted", "availability": "unknown", "evidence": "`kimi_k3`" },
-    { "id": "gemini36_flash", "label": "Gemini 3.6 Flash", "provider": "unknown", "kind": "model", "tierMin": "pro", "modality": "unknown", "hosting": "hosted", "availability": "unknown", "evidence": "`gemini36_flash`" }
-  ]
+    {
+      "id": "dsv4_flash",
+      "label": "DeepSeek V4 Flash",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "free",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "gemma4_31b_free",
+      "label": "Gemma 4 31B (free)",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "free",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "unavailable"
+    },
+    {
+      "id": "haiku",
+      "label": "Claude Haiku 4.5",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "free",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_nano_pro",
+      "label": "Nano Banana Pro",
+      "provider": "image",
+      "kind": "model",
+      "tierMin": "free",
+      "modality": "image",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "dsv4_pro",
+      "label": "DeepSeek V4 Pro",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "gemini36_flash",
+      "label": "Gemini 3.6 Flash",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "gemma4_26b_moe",
+      "label": "Gemma 4 26B MoE",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "unavailable"
+    },
+    {
+      "id": "gemma4_31b",
+      "label": "Gemma 4 31B",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "gpt55",
+      "label": "GPT-5.5",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "gpt56_luna",
+      "label": "GPT-5.6 Luna",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "gpt56_sol",
+      "label": "GPT-5.6 Sol",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "gpt56_terra",
+      "label": "GPT-5.6 Terra",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "kimi_k26",
+      "label": "Kimi K2.6",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "kimi_k26_thinking",
+      "label": "Kimi K2.6 Thinking",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "unavailable"
+    },
+    {
+      "id": "kimi_k3",
+      "label": "Kimi K3",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "opus",
+      "label": "Claude Opus 4.8",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "opus5",
+      "label": "Claude Opus 5",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_grok_video",
+      "label": "Grok Imagine Video",
+      "provider": "video",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "video",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_hailuo23",
+      "label": "Hailuo 2.3",
+      "provider": "video",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "video",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_happyhorse",
+      "label": "HappyHorse 1.0",
+      "provider": "video",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "video",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_kling",
+      "label": "Kling 3.0 Standard",
+      "provider": "video",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "video",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_kling_o1",
+      "label": "Kling Video O1",
+      "provider": "video",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "video",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_kling_pro",
+      "label": "Kling 3.0 Pro",
+      "provider": "video",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "video",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_seedance",
+      "label": "Seedance 2.0",
+      "provider": "video",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "video",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_seedance15_pro",
+      "label": "Seedance 1.5 Pro",
+      "provider": "video",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "video",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_seedance_fast",
+      "label": "Seedance 2.0 Fast",
+      "provider": "video",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "video",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_sora2_pro",
+      "label": "Sora 2 Pro",
+      "provider": "video",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "video",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_veo31",
+      "label": "Veo 3.1",
+      "provider": "video",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "video",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_veo31_fast",
+      "label": "Veo 3.1 Fast",
+      "provider": "video",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "video",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_veo31_lite",
+      "label": "Veo 3.1 Lite",
+      "provider": "video",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "video",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_wan26",
+      "label": "Wan 2.6",
+      "provider": "video",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "video",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_wan27",
+      "label": "Wan 2.7",
+      "provider": "video",
+      "kind": "model",
+      "tierMin": "pro",
+      "modality": "video",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "gpt54_mini",
+      "label": "GPT-5.4 mini",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "solo",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "sonnet",
+      "label": "Claude Sonnet 5",
+      "provider": "text",
+      "kind": "model",
+      "tierMin": "solo",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_flux2_flex",
+      "label": "FLUX.2 Flex",
+      "provider": "image",
+      "kind": "model",
+      "tierMin": "solo",
+      "modality": "image",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_flux2_klein",
+      "label": "FLUX.2 Klein 4B",
+      "provider": "image",
+      "kind": "model",
+      "tierMin": "solo",
+      "modality": "image",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_flux2_max",
+      "label": "FLUX.2 Max",
+      "provider": "image",
+      "kind": "model",
+      "tierMin": "solo",
+      "modality": "image",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_flux2_pro",
+      "label": "FLUX.2 Pro",
+      "provider": "image",
+      "kind": "model",
+      "tierMin": "solo",
+      "modality": "image",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_gpt5_image",
+      "label": "GPT-5 Image",
+      "provider": "image",
+      "kind": "model",
+      "tierMin": "solo",
+      "modality": "image",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_gpt5_image_mini",
+      "label": "GPT-5 Image Mini",
+      "provider": "image",
+      "kind": "model",
+      "tierMin": "solo",
+      "modality": "image",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_gpt_image2",
+      "label": "GPT Image 2",
+      "provider": "image",
+      "kind": "model",
+      "tierMin": "solo",
+      "modality": "image",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_nano_banana",
+      "label": "Nano Banana",
+      "provider": "image",
+      "kind": "model",
+      "tierMin": "solo",
+      "modality": "image",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_nano_banana2",
+      "label": "Nano Banana 2",
+      "provider": "image",
+      "kind": "model",
+      "tierMin": "solo",
+      "modality": "image",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_recraft",
+      "label": "Recraft V3",
+      "provider": "image",
+      "kind": "model",
+      "tierMin": "solo",
+      "modality": "image",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_recraft_v4",
+      "label": "Recraft V4",
+      "provider": "image",
+      "kind": "model",
+      "tierMin": "solo",
+      "modality": "image",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_riverflow_fast",
+      "label": "Riverflow V2 Fast",
+      "provider": "image",
+      "kind": "model",
+      "tierMin": "solo",
+      "modality": "image",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_riverflow_pro",
+      "label": "Riverflow V2 Pro",
+      "provider": "image",
+      "kind": "model",
+      "tierMin": "solo",
+      "modality": "image",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "vision_seedream45",
+      "label": "Seedream 4.5",
+      "provider": "image",
+      "kind": "model",
+      "tierMin": "solo",
+      "modality": "image",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "aether-kronus-v2.4",
+      "label": "AETHER Kronus V2.4",
+      "provider": "aether",
+      "kind": "orchestrator",
+      "tierMin": "pro",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "aether-vision",
+      "label": "AETHER Vision",
+      "provider": "aether",
+      "kind": "orchestrator",
+      "tierMin": "pro",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    },
+    {
+      "id": "aether-neo-5.1t",
+      "label": "AETHER Neo 5.1T",
+      "provider": "aether",
+      "kind": "orchestrator",
+      "tierMin": "solo",
+      "modality": "text",
+      "hosting": "hosted",
+      "availability": "available"
+    }
+  ],
+  "digest": "sha256:2bd01b255f3a7a5ff5f6c3d098dd6d3483b678359ab377c2c5f5b31faddabc9d"
 }

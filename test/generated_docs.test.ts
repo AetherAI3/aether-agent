@@ -13,28 +13,23 @@ import {
 } from "../scripts/generate-docs.js";
 import { deterministicRepositoryEvidence } from "../scripts/release-truth.js";
 
-const provenanceText = "## Public release\n\nDocumented model `model_a` is hosted for Pro accounts.\n";
-const source = {
+const unsignedSource = {
   schema: PUBLIC_CATALOGUE_SCHEMA,
-  asOf: "2026-08-06T00:00:00.000Z",
-  source: {
-    kind: "repository-markdown-section",
-    path: "RELEASE_NOTES.md",
-    section: "Public release",
-    digest: sha256(provenanceText),
-  },
+  sourceVersion: "cloud-test-v1",
+  generatedAt: "2026-08-23T00:00:00.000Z",
+  availabilitySemantics: "listed-not-entitled",
   scopeNote: "A sanitized, dated subset; live availability remains account-scoped.",
   models: [
-    { id: "model_a", label: "Model A", provider: "unknown", kind: "model", tierMin: "pro", modality: "unknown", hosting: "hosted", availability: "unknown", evidence: "`model_a`" },
+    { id: "model_a", label: "Model A", provider: "unknown", kind: "model", tierMin: "pro", modality: "unknown", hosting: "hosted", availability: "unknown" },
   ],
 } as const;
+const source = { ...unsignedSource, digest: sha256(unsignedSource) } as const;
 
 function fixtureRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "aether-docgen-"));
   mkdirSync(join(root, "docs", "model-catalogue"), { recursive: true });
   writeFileSync(join(root, "README.md"), "# Readme\n\n<!-- MODEL-CATALOGUE:START -->\nold\n<!-- MODEL-CATALOGUE:END -->\n", "utf8");
   writeFileSync(join(root, "COMMANDS.md"), "# Commands\n\n<!-- GENERATED-COMMAND-REFERENCE:START -->\nold\n<!-- GENERATED-COMMAND-REFERENCE:END -->\n", "utf8");
-  writeFileSync(join(root, "RELEASE_NOTES.md"), provenanceText, "utf8");
   writeFileSync(join(root, "docs", "model-catalogue", "catalogue.source.json"), `${JSON.stringify(source)}\n`, "utf8");
   return root;
 }
@@ -91,39 +86,27 @@ test("empty or invalid catalogue refresh preserves the last-known-good output se
   for (const path of paths) assert.equal(readFileSync(join(root, path), "utf8"), before.get(path));
 });
 
-test("provenance must exist, match its digest, and exactly evidence every non-generic model id", () => {
+test("Cloud projection digest, freshness, schema, and safe model fields are mandatory", () => {
   const root = fixtureRoot();
   generateDocumentation({ root });
   const lastGood = readFileSync(join(root, "docs", "model-catalogue", "catalogue.json"), "utf8");
-  const nonexistent = { ...source, source: { ...source.source, path: "MISSING.md" } };
-  assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify(nonexistent) }), /provenance file does not exist/);
-  const changed = { ...source, source: { ...source.source, digest: `sha256:${"0".repeat(64)}` } };
+  const changed = { ...source, digest: `sha256:${"0".repeat(64)}` };
   assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify(changed) }), /digest does not match/);
-  const invented = {
-    ...source,
-    models: [...source.models, { ...source.models[0], id: "invented", label: "Invented", evidence: "`invented`" }],
-  };
-  assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify(invented) }), /invented has no exact backticked evidence/);
-  const generic = { ...source, models: [{ ...source.models[0], id: "model", evidence: "model" }] };
+  const genericUnsigned = { ...unsignedSource, models: [{ ...source.models[0], id: "model" }] };
+  const generic = { ...genericUnsigned, digest: sha256(genericUnsigned) };
   assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify(generic) }), /invalid or generic id/);
-  const substringText = "## Public release\n\nDocumented preview `model_a_preview` is hosted for Pro accounts.\n";
-  writeFileSync(join(root, "RELEASE_NOTES.md"), substringText, "utf8");
-  const substring = {
-    ...source,
-    source: { ...source.source, digest: sha256(substringText) },
-    models: [{ ...source.models[0], evidence: "model_a" }],
-  };
-  assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify(substring) }), /no exact backticked evidence/);
-  const fencedText = "## Public release\n\nA generic fenced value is not inline evidence: ```model_a```.\n";
-  writeFileSync(join(root, "RELEASE_NOTES.md"), fencedText, "utf8");
-  const fenced = { ...source, source: { ...source.source, digest: sha256(fencedText) } };
-  assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify(fenced) }), /no exact backticked evidence/);
+  const staleUnsigned = { ...unsignedSource, generatedAt: "2026-01-01T00:00:00.000Z" };
+  assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify({ ...staleUnsigned, digest: sha256(staleUnsigned) }) }), /projection is stale/);
+  assert.doesNotThrow(() => generateDocumentation({ root, catalogueLiveSourceText: "network unavailable" }));
+  const fallback = JSON.parse(readFileSync(join(root, "docs", "model-catalogue", "catalogue.json"), "utf8")) as Record<string, unknown>;
+  assert.equal(fallback["offlineFallback"], true);
   assert.equal(readFileSync(join(root, "docs", "model-catalogue", "catalogue.json"), "utf8"), lastGood);
 });
 
 test("future timestamps and hostile public strings are rejected without leaking their values", () => {
   const root = fixtureRoot();
-  const future = { ...source, asOf: "2999-01-01T00:00:00.000Z" };
+  const futureUnsigned = { ...unsignedSource, generatedAt: "2999-01-01T00:00:00.000Z" };
+  const future = { ...futureUnsigned, digest: sha256(futureUnsigned) };
   assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify(future) }), /materially in the future/);
   const hostile = [
     ["Bearer top.secret.value", /credential-shaped/],
@@ -144,7 +127,8 @@ test("future timestamps and hostile public strings are rejected without leaking 
   ] as const;
   for (const [scopeNote, expected] of hostile) {
     let message = "";
-    try { generateDocumentation({ root, catalogueSourceText: JSON.stringify({ ...source, scopeNote }) }); }
+    const hostileUnsigned = { ...unsignedSource, scopeNote };
+    try { generateDocumentation({ root, catalogueSourceText: JSON.stringify({ ...hostileUnsigned, digest: sha256(hostileUnsigned) }) }); }
     catch (error) { message = error instanceof Error ? error.message : String(error); }
     assert.match(message, expected);
     assert.doesNotMatch(message, /top\.secret\.value|hunter2|plain-secret-value|abcdefghijklmnop|user:password|evil\.test/);
@@ -202,7 +186,10 @@ test("catalogue outputs are sanitized, deterministic, responsive, and useful wit
   generateDocumentation({ root });
   const json = JSON.parse(readFileSync(join(root, "docs", "model-catalogue", "catalogue.json"), "utf8")) as Record<string, unknown>;
   assert.match(String(json["digest"]), /^sha256:[a-f0-9]{64}$/);
-  assert.equal(json["generatedAt"], source.asOf);
+  assert.equal(json["generatedAt"], source.generatedAt);
+  assert.equal(json["offlineFallback"], true);
+  assert.equal((json["source"] as Record<string, unknown>)["kind"], "cloud-public-projection");
+  assert.equal(json["availabilitySemantics"], "listed-not-entitled");
   const html = readFileSync(join(root, "docs", "model-catalogue", "index.html"), "utf8");
   assert.match(html, /<meta name="viewport"/);
   assert.match(html, /<noscript>/);
@@ -217,4 +204,9 @@ test("catalogue outputs are sanitized, deterministic, responsive, and useful wit
   assert.doesNotMatch(html, /href="[^\"]*RELEASE_NOTES/);
   const markdown = readFileSync(join(root, "docs", "generated", "model-catalogue.md"), "utf8");
   assert.doesNotMatch(markdown, /\]\([^)]*RELEASE_NOTES/);
+  const ids = (json["models"] as Array<Record<string, unknown>>).map((model) => String(model["id"]));
+  for (const id of ids) {
+    assert.match(html, new RegExp(`<code>${id}</code>`));
+    assert.match(markdown, new RegExp("\\| `" + id + "` \\|"));
+  }
 });

@@ -1,5 +1,5 @@
-// JSON-safe product metadata over the existing command registries. Runtime
-// loaders stay separate so consumers never receive executable functions.
+// Public command authority. Runtime functions are bound separately so this
+// versioned manifest stays serializable and safe for docs/tooling consumers.
 import {
   commandNames,
   completeCommand,
@@ -8,8 +8,10 @@ import {
   type CommandSpec,
 } from "../core/command_registry.js";
 import type { DispatchedCommand, FlagSpec, FlagTable } from "../core/command_dispatch.js";
-import { ALL_CLI_COMMANDS, DISPATCH_COMMANDS, GLOBAL_FLAGS } from "./cli_registry.js";
-import { SLASH_COMMANDS } from "./slash_registry.js";
+import { DISPATCH_COMMANDS, GLOBAL_FLAGS } from "./cli_registry.js";
+import { COMMAND_MANIFEST_SCHEMA, COMMAND_MANIFEST_SOURCE } from "./command_manifest_data.js";
+
+export { COMMAND_MANIFEST_SCHEMA };
 
 export const COMMAND_SURFACES = ["shell", "slash", "headless"] as const;
 export type CommandSurface = (typeof COMMAND_SURFACES)[number];
@@ -25,7 +27,7 @@ export type ReleaseDisposition = (typeof RELEASE_DISPOSITIONS)[number];
 
 export interface CommandHandlerIdentity { id: string; kind: "host" | "lazy"; module: string; symbol: string }
 export interface CommandDocsBinding {
-  kind: "registry-help"; module: string; symbol: string; target: string; usage: string;
+  kind: "manifest"; module: string; symbol: string; target: string; usage: string;
   visible: boolean; disposition: DocsDisposition;
 }
 export interface CommandReleaseBinding { disposition: ReleaseDisposition; note: string | null }
@@ -58,46 +60,6 @@ export interface CommandRegistrySources {
 }
 export interface ManifestValidationOptions { reservedShellFlags?: FlagTable }
 
-// Release history is deliberately independent of the runtime registries. A
-// registry addition must land here (with an intentional disposition) or its
-// manifest row remains unclassified and the release gate fails closed.
-const EXISTING_COMMAND_KEYS = [
-  "shell:help", "shell:agent", "shell:chat", "shell:resume", "shell:run", "shell:models",
-  "shell:agents", "shell:auth", "shell:login", "shell:logout", "shell:github", "shell:vault",
-  "shell:workflow", "shell:memory", "shell:skills", "shell:capabilities", "shell:image", "shell:video",
-  "shell:output", "shell:audit", "shell:receipt", "shell:support-bundle", "shell:mcp", "shell:config",
-  "shell:doctor", "shell:sessions", "shell:review", "shell:ship",
-  "slash:help", "slash:models", "slash:model", "slash:agent", "slash:agents", "slash:tier",
-  "slash:effort", "slash:audit", "slash:doctor", "slash:clear", "slash:exit", "slash:mcp",
-  "slash:autonomous-execution", "slash:subagent-driven-execution", "slash:self-review", "slash:recon",
-  "slash:plan", "slash:research", "slash:project-review", "slash:code-review", "slash:writing-skills",
-  "slash:writing-plans", "slash:queue", "slash:steer", "slash:btw", "slash:pin", "slash:drop",
-  "slash:snapshot", "slash:limit", "slash:token-budget", "slash:audit-receipt", "slash:rollback",
-  "slash:logs-view", "slash:goal", "slash:goals", "slash:memory", "slash:workflow",
-  "slash:workflow-templates", "slash:workflow-template", "slash:vault", "slash:vault-context",
-  "slash:vault-search", "slash:vault-recent", "slash:vault-project", "slash:vault-tag", "slash:vault-tree",
-  "slash:delegate", "slash:tree", "slash:broadcast", "slash:gather", "slash:scaffold", "slash:port",
-  "slash:test-drive", "slash:bench", "slash:purge", "slash:stage-diff", "slash:review", "slash:ship",
-  "slash:revert", "slash:photogen", "slash:frame", "slash:re-frame", "slash:videogen", "slash:sequence",
-  "slash:animate", "slash:re-cut", "slash:output", "slash:storyboard", "slash:add", "slash:hud",
-] as const satisfies readonly CommandManifestKey[];
-
-const COMMAND_RELEASE_ENTRIES: ReadonlyArray<readonly [CommandManifestKey, CommandReleaseBinding]> = [
-  ...EXISTING_COMMAND_KEYS.map((key): readonly [CommandManifestKey, CommandReleaseBinding] => [
-    key, { disposition: "existing", note: null },
-  ]),
-  ["shell:exec", {
-    disposition: "new",
-    note: "Local child-process agent driver with compatible aether.exec/1 and repository-bound aether.exec/2 JSONL sessions.",
-  }],
-  ["shell:setup", { disposition: "new", note: "v0.3.0 adds bounded local setup diagnosis." }],
-  ["shell:local", { disposition: "new", note: "v0.3.0 adds explicit Ollama diagnosis and management." }],
-  ["shell:preview", { disposition: "new", note: "v0.3.0 adds a consent-gated, managed loopback preview lifecycle." }],
-  ["slash:preview", { disposition: "new", note: "v0.3.0 adds the same managed preview lifecycle inside the REPL." }],
-];
-export const COMMAND_RELEASE_CONTRACT: ReadonlyMap<CommandManifestKey, CommandReleaseBinding> =
-  new Map(COMMAND_RELEASE_ENTRIES);
-
 const COMMAND_TOKEN = /^[a-z0-9][a-z0-9-]*$/;
 const FLAG_NAME = /^[a-z][a-z0-9-]*$/;
 const CAPABILITY_NAME = /^[a-z][a-z0-9._:-]*$/;
@@ -107,36 +69,10 @@ const KNOWN_HANDLER_OWNERS: Readonly<Record<CommandSurface, readonly string[]>> 
   headless: ["host:src/main.ts#main"],
 };
 const KNOWN_DOCS_OWNERS: Readonly<Record<CommandSurface, readonly string[]>> = {
-  shell: ["src/commands/cli_registry.ts#ALL_CLI_COMMANDS"],
-  slash: ["src/commands/slash_registry.ts#SLASH_COMMANDS"],
-  headless: ["src/commands/cli_registry.ts#ALL_CLI_COMMANDS"],
+  shell: ["src/commands/command_manifest_data.ts#COMMAND_MANIFEST_SOURCE"],
+  slash: ["src/commands/command_manifest_data.ts#COMMAND_MANIFEST_SOURCE"],
+  headless: ["src/commands/command_manifest_data.ts#COMMAND_MANIFEST_SOURCE"],
 };
-
-const READ_ONLY_COMMANDS = new Set(["help", "models", "agents", "audit", "capabilities", "setup"]);
-const ACCOUNT_COMMANDS = new Set(["auth", "login", "logout", "github"]);
-const LOCAL_WRITE_COMMANDS = new Set(["resume", "sessions", "review", "skills", "memory", "output", "support-bundle", "config", "local", "preview"]);
-const DESTRUCTIVE_COMMANDS = new Set(["ship"]);
-const HOSTED_CAPABILITY_COMMANDS = new Set(["chat", "run", "models", "agents", "image", "video", "vault", "workflow", "receipt"]);
-
-function permissionFor(surface: CommandSurface, name: string): PermissionClass {
-  if (name === "preview") return "local-write";
-  if (surface === "slash") return name === "rollback" || name === "revert" ? "destructive" : "unknown";
-  if (READ_ONLY_COMMANDS.has(name)) return "read-only";
-  if (ACCOUNT_COMMANDS.has(name)) return "account";
-  if (DESTRUCTIVE_COMMANDS.has(name)) return "destructive";
-  if (LOCAL_WRITE_COMMANDS.has(name) || name === "agent" || name === "exec") return "local-write";
-  return "network";
-}
-
-function capabilitiesFor(surface: CommandSurface, name: string): string[] {
-  if (surface === "shell" && (name === "setup" || name === "local")) return ["ollama.local"];
-  if (name === "preview") return ["aether.local-preview"];
-  if (surface === "shell" && HOSTED_CAPABILITY_COMMANDS.has(name)) return ["aether.hosted"];
-  if (surface === "shell" && name === "agent") return ["aether.hosted-or-local"];
-  if (surface === "shell" && name === "exec") return ["aether.local-child", "aether.headless.v1", "aether.headless.v2"];
-  if (surface === "slash" && ["models", "model", "agents", "agent", "tier"].includes(name)) return ["aether.catalogue"];
-  return [];
-}
 
 function usageOf(surface: CommandSurface, command: Pick<CommandSpec, "name" | "args">): string {
   return `${surface === "shell" ? "aether " : "/"}${command.name}${command.args ? ` ${command.args}` : ""}`;
@@ -160,22 +96,19 @@ function normalizeCommand(
 ): CommandManifestEntry {
   const usage = usageOf(surface, command);
   const key: CommandManifestKey = `${surface}:${command.name}`;
-  const registry = surface === "shell"
-    ? { module: "src/commands/cli_registry.ts", symbol: "ALL_CLI_COMMANDS" }
-    : { module: "src/commands/slash_registry.ts", symbol: "SLASH_COMMANDS" };
   return {
     key, surface, name: command.name,
     aliases: [...(command.aliases ?? [])], compatibilityAliases: [...(command.aliases ?? [])], deprecatedAliases: [],
     ...(command.args === undefined ? {} : { args: command.args }),
     summary: command.summary, detailedHelp: `${usage}\n${command.summary}`, section: command.section,
-    hidden: command.hidden === true, permissionClass: permissionFor(surface, command.name),
-    availability: { state: "runtime-dependent", capabilityRequirements: capabilitiesFor(surface, command.name) },
+    hidden: command.hidden === true, permissionClass: "unknown",
+    availability: { state: "runtime-dependent", capabilityRequirements: [] },
     telemetryName: `${surface}.${command.name}`,
     acceptedGlobalFlags: surface === "shell" ? Object.keys(globalFlags).sort() : [],
     ownedFlags: copyFlags(lazy?.flags),
     handler: handlerOf(surface, command.name, lazy),
-    docs: { kind: "registry-help", ...registry, target: command.name, usage, visible: command.hidden !== true, disposition: "generated" },
-    release: COMMAND_RELEASE_CONTRACT.get(key) ?? null,
+    docs: { kind: "manifest", module: "src/commands/command_manifest_data.ts", symbol: "COMMAND_MANIFEST_SOURCE", target: command.name, usage, visible: command.hidden !== true, disposition: "generated" },
+    release: null,
   };
 }
 export function createCommandManifest(sources: CommandRegistrySources): readonly CommandManifestEntry[] {
@@ -198,7 +131,7 @@ function validateBindings(label: string, entry: CommandManifestEntry, errors: st
   const handlerOwner = `${entry.handler.kind}:${entry.handler.module}#${entry.handler.symbol}`;
   const handlerOwners = KNOWN_HANDLER_OWNERS[entry.surface];
   if (!handlerOwners || !handlerOwners.includes(handlerOwner)) errors.push(`${label}: unknown handler owner '${handlerOwner}'`);
-  if (entry.docs.kind !== "registry-help") errors.push(`${label}: invalid docs kind`);
+  if (entry.docs.kind !== "manifest") errors.push(`${label}: invalid docs kind`);
   const docsOwner = `${entry.docs.module}#${entry.docs.symbol}`;
   const docsOwners = KNOWN_DOCS_OWNERS[entry.surface];
   if (!docsOwners || !docsOwners.includes(docsOwner)) errors.push(`${label}: unknown docs owner '${docsOwner}'`);
@@ -207,6 +140,9 @@ function validateBindings(label: string, entry: CommandManifestEntry, errors: st
   if (entry.docs.usage !== usage) errors.push(`${label}: docs usage must be '${usage}'`);
   if (entry.docs.visible !== !entry.hidden) errors.push(`${label}: docs visibility disagrees with hidden metadata`);
   if (!(DOCS_DISPOSITIONS as readonly string[]).includes(entry.docs.disposition)) errors.push(`${label}: invalid docs disposition '${entry.docs.disposition}'`);
+  if (entry.docs.visible && entry.docs.disposition !== "generated" && entry.docs.disposition !== "external") {
+    errors.push(`${label}: visible command is undocumented`);
+  }
 }
 function validateProductMetadata(label: string, entry: CommandManifestEntry, errors: string[]): void {
   if (!entry.detailedHelp.trim()) errors.push(`${label}: missing detailed help`);
@@ -308,15 +244,23 @@ export function validateCommandManifest(entries: readonly CommandManifestEntry[]
   return errors;
 }
 
-export const COMMAND_MANIFEST = createCommandManifest({
-  shell: ALL_CLI_COMMANDS,
-  slash: SLASH_COMMANDS,
-  lazyShell: DISPATCH_COMMANDS,
-  globalShellFlags: GLOBAL_FLAGS,
-});
+export const COMMAND_MANIFEST: readonly CommandManifestEntry[] = COMMAND_MANIFEST_SOURCE;
 export const COMMAND_RUNTIME_LOADERS = createCommandRuntimeLoaders(DISPATCH_COMMANDS);
+export function validateRuntimeHandlerBindings(
+  entries: readonly CommandManifestEntry[], handlerKeys: Iterable<CommandManifestKey>,
+): string[] {
+  const declared = new Set(entries.filter((entry) => entry.handler.kind === "lazy").map((entry) => entry.key));
+  const runtime = new Set(handlerKeys);
+  return [
+    ...[...runtime].filter((key) => !declared.has(key)).map((key) => `${key}: orphan runtime handler`),
+    ...[...declared].filter((key) => !runtime.has(key)).map((key) => `${key}: manifest handler is missing at runtime`),
+  ];
+}
 const manifestErrors = validateCommandManifest(COMMAND_MANIFEST, { reservedShellFlags: GLOBAL_FLAGS });
 if (manifestErrors.length) throw new Error(`Invalid command manifest: ${manifestErrors.join("; ")}`);
+const runtimeErrors = validateRuntimeHandlerBindings(COMMAND_MANIFEST, COMMAND_RUNTIME_LOADERS.keys());
+if (runtimeErrors.length) throw new Error(`Invalid command runtime bindings: ${runtimeErrors.join("; ")}`);
+if (COMMAND_MANIFEST_SCHEMA !== "aether.command-manifest/1") throw new Error("Unsupported command manifest schema");
 
 export function findManifestCommand(
   surface: CommandSurface, name: string, entries: readonly CommandManifestEntry[] = COMMAND_MANIFEST,

@@ -2,12 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { commandNames, type CommandSpec } from "../src/core/command_registry.js";
 import type { FlagTable } from "../src/core/command_dispatch.js";
-import { ALL_CLI_COMMANDS, DISPATCH_COMMANDS, GLOBAL_FLAGS } from "../src/commands/cli_registry.js";
+import { ALL_CLI_COMMANDS, DISPATCH_COMMANDS, GLOBAL_FLAGS, SHELL_RUNTIME_HANDLERS } from "../src/commands/cli_registry.js";
 import { SLASH_COMMANDS, findCommand as findSlashCommand } from "../src/commands/slash_registry.js";
 import {
-  COMMAND_MANIFEST, COMMAND_PARSE_OPTIONS, COMMAND_RUNTIME_LOADERS, completeManifestSlash,
+  COMMAND_MANIFEST, COMMAND_MANIFEST_SCHEMA, COMMAND_PARSE_OPTIONS, COMMAND_RUNTIME_LOADERS, completeManifestSlash,
   createCommandManifest, findManifestCommand, manifestCommandNames, projectLegacyCommandSpecs,
-  renderManifestHelp, suggestManifestCommand, validateCommandManifest, type CommandManifestEntry,
+  renderManifestHelp, suggestManifestCommand, validateCommandManifest, validateRuntimeHandlerBindings, type CommandManifestEntry,
 } from "../src/commands/command_manifest.js";
 
 test("adapter preserves registries and additive old-client projections", () => {
@@ -86,8 +86,16 @@ test("validator rejects nonexistent handler and docs ownership", () => {
   ]);
   const docs = { ...base, docs: { ...base.docs, module: "src/commands/does_not_exist.ts" } };
   assert.deepEqual(validateCommandManifest([docs]), [
-    "shell:alpha: unknown docs owner 'src/commands/does_not_exist.ts#ALL_CLI_COMMANDS'",
+    "shell:alpha: unknown docs owner 'src/commands/does_not_exist.ts#COMMAND_MANIFEST_SOURCE'",
   ]);
+});
+
+test("the versioned manifest is authoritative and runtime registries contain handlers only", () => {
+  assert.equal(COMMAND_MANIFEST_SCHEMA, "aether.command-manifest/1");
+  assert.ok(SHELL_RUNTIME_HANDLERS.every((handler) => Object.keys(handler).sort().join(",") === "load,name"));
+  assert.deepEqual(validateRuntimeHandlerBindings(COMMAND_MANIFEST, COMMAND_RUNTIME_LOADERS.keys()), []);
+  assert.match(validateRuntimeHandlerBindings(COMMAND_MANIFEST, ["shell:orphan"]).join("\n"), /orphan runtime handler/);
+  assert.match(validateRuntimeHandlerBindings(COMMAND_MANIFEST, [] as const).join("\n"), /manifest handler is missing at runtime/);
 });
 
 test("validator detects owned flag collisions, reserved shadows, and malformed specs", () => {
@@ -114,6 +122,9 @@ test("validator detects product, alias, docs, and release metadata drift", () =>
   );
   assert.deepEqual(validateCommandManifest([{ ...base, docs: { ...base.docs, target: "beta" } }]), [
     "shell:alpha: docs target 'beta' does not match command name",
+  ]);
+  assert.deepEqual(validateCommandManifest([{ ...base, docs: { ...base.docs, disposition: "omitted" } }]), [
+    "shell:alpha: visible command is undocumented",
   ]);
   assert.deepEqual(validateCommandManifest([{ ...base, release: { disposition: "existing", note: "" } }]), ["shell:alpha: empty release note"]);
 });

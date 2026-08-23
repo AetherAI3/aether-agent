@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -11,8 +11,9 @@ import {
 import { GLOBAL_FLAGS } from "../src/commands/cli_registry.js";
 import { redactForBundle } from "../src/core/redaction.js";
 
-export const PUBLIC_CATALOGUE_SCHEMA = "aether-agent/public-model-catalogue-source@1" as const;
-export const GENERATED_CATALOGUE_SCHEMA = "aether-agent/public-model-catalogue@1" as const;
+export const PUBLIC_CATALOGUE_SCHEMA = "aether-cloud/public-model-projection@1" as const;
+export const GENERATED_CATALOGUE_SCHEMA = "aether-agent/public-model-catalogue@2" as const;
+export const CATALOGUE_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
 
 export interface PublicCatalogueModel {
   id: string;
@@ -23,18 +24,14 @@ export interface PublicCatalogueModel {
   modality: "text" | "image" | "video" | "audio" | "multimodal" | "unknown";
   hosting: "local" | "hosted" | "unknown";
   availability: "available" | "unavailable" | "unknown";
-  evidence: string;
 }
 
 export interface PublicCatalogueSource {
   schema: typeof PUBLIC_CATALOGUE_SCHEMA;
-  asOf: string;
-  source: {
-    kind: "repository-markdown-section";
-    path: string;
-    section: string;
-    digest: string;
-  };
+  sourceVersion: string;
+  generatedAt: string;
+  digest: string;
+  availabilitySemantics: "listed-not-entitled";
   scopeNote: string;
   models: readonly PublicCatalogueModel[];
 }
@@ -43,7 +40,9 @@ export interface GeneratedCatalogue {
   schema: typeof GENERATED_CATALOGUE_SCHEMA;
   generatedAt: string;
   digest: string;
-  source: { kind: "repository-markdown-section"; citation: string; digest: string };
+  source: { kind: "cloud-public-projection"; version: string; digest: string };
+  availabilitySemantics: "listed-not-entitled";
+  offlineFallback: boolean;
   scopeNote: string;
   models: readonly PublicCatalogueModel[];
 }
@@ -54,6 +53,7 @@ export interface GenerateDocsOptions {
   check?: boolean;
   commands?: readonly CommandManifestEntry[];
   catalogueSourceText?: string;
+  catalogueLiveSourceText?: string;
 }
 
 const COMMAND_MARKERS = [
@@ -142,60 +142,32 @@ export function sha256(value: unknown): string {
   return `sha256:${createHash("sha256").update(typeof value === "string" ? value : canonicalJson(value)).digest("hex")}`;
 }
 
-export function extractMarkdownSection(text: string, heading: string): string {
-  const normalized = normalizeEol(text);
-  const lines = normalized.split("\n");
-  const marker = `## ${heading}`;
-  const start = lines.findIndex((line) => line === marker);
-  if (start < 0) throw new Error("public catalogue provenance section does not exist");
-  const next = lines.findIndex((line, index) => index > start && /^##\s+/.test(line));
-  const end = next < 0 ? lines.length : next;
-  return `${lines.slice(start, end).join("\n").trimEnd()}\n`;
-}
-
-function hasExactBacktickedToken(text: string, token: string): boolean {
-  for (const match of text.matchAll(/(^|[^`])`([^`\r\n]+)`(?!`)/gm)) {
-    if (match[2] === token) return true;
-  }
-  return false;
-}
-
-function parseCatalogue(text: string, root: string): PublicCatalogueSource {
+export function parseCatalogue(text: string, now = Date.now()): PublicCatalogueSource {
   let value: unknown;
   try { value = JSON.parse(text); } catch { throw new Error("public catalogue source is not valid JSON"); }
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("public catalogue source must be an object");
   const source = value as Partial<PublicCatalogueSource>;
-  const sourceKeys = new Set(["schema", "asOf", "source", "scopeNote", "models"]);
+  const sourceKeys = new Set(["schema", "sourceVersion", "generatedAt", "digest", "availabilitySemantics", "scopeNote", "models"]);
   const unexpectedSourceKeys = Object.keys(source).filter((key) => !sourceKeys.has(key));
   if (unexpectedSourceKeys.length) throw new Error(`public catalogue source contains unsupported fields: ${unexpectedSourceKeys.join(", ")}`);
   if (source.schema !== PUBLIC_CATALOGUE_SCHEMA) throw new Error(`public catalogue source must use schema ${PUBLIC_CATALOGUE_SCHEMA}`);
-  if (typeof source.asOf !== "string") throw new Error("public catalogue source has an invalid asOf timestamp");
-  validatePublicString(source.asOf, "public catalogue asOf");
-  if (!Number.isFinite(Date.parse(source.asOf))) throw new Error("public catalogue source has an invalid asOf timestamp");
-  if (Date.parse(source.asOf) > Date.now() + 5 * 60_000) throw new Error("public catalogue generatedAt is materially in the future");
+  const sourceVersion = validatePublicString(source.sourceVersion, "public catalogue sourceVersion");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(sourceVersion)) throw new Error("public catalogue sourceVersion is invalid");
+  if (typeof source.generatedAt !== "string") throw new Error("public catalogue source has an invalid generatedAt timestamp");
+  validatePublicString(source.generatedAt, "public catalogue generatedAt");
+  const generated = Date.parse(source.generatedAt);
+  if (!Number.isFinite(generated) || new Date(generated).toISOString() !== source.generatedAt) throw new Error("public catalogue source has an invalid generatedAt timestamp");
+  if (generated > now + 5 * 60_000) throw new Error("public catalogue generatedAt is materially in the future");
+  if (now - generated > CATALOGUE_MAX_AGE_MS) throw new Error("public catalogue projection is stale");
+  if (source.availabilitySemantics !== "listed-not-entitled") throw new Error("public catalogue availability semantics are invalid");
+  if (typeof source.digest !== "string" || !DIGEST.test(source.digest)) throw new Error("public catalogue projection digest is invalid");
   validatePublicString(source.scopeNote, "public catalogue scopeNote", { markdown: true });
-  if (source.source === null || typeof source.source !== "object" || Array.isArray(source.source)) throw new Error("public catalogue source provenance is required");
-  const provenance = source.source as Partial<PublicCatalogueSource["source"]>;
-  const provenanceKeys = new Set(["kind", "path", "section", "digest"]);
-  const unexpectedProvenanceKeys = Object.keys(provenance).filter((key) => !provenanceKeys.has(key));
-  if (unexpectedProvenanceKeys.length) throw new Error(`public catalogue provenance contains unsupported fields: ${unexpectedProvenanceKeys.join(", ")}`);
-  if (provenance.kind !== "repository-markdown-section") throw new Error("public catalogue provenance kind is invalid");
-  if (typeof provenance.path !== "string") throw new Error("public catalogue provenance path must be repository-relative");
-  validatePublicString(provenance.path, "public catalogue provenance path");
-  if (!/^(?![A-Za-z]:|\/|.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._/-]+$/.test(provenance.path)) throw new Error("public catalogue provenance path must be repository-relative");
-  const sectionName = validatePublicString(provenance.section, "public catalogue provenance section", { markdown: true });
-  if (typeof provenance.digest !== "string" || !DIGEST.test(provenance.digest)) throw new Error("public catalogue provenance digest is invalid");
-  const provenancePath = resolve(root, provenance.path);
-  const rootPrefix = `${resolve(root)}${process.platform === "win32" ? "\\" : "/"}`;
-  if (!provenancePath.startsWith(rootPrefix) || !existsSync(provenancePath) || lstatSync(provenancePath).isSymbolicLink() || !statSync(provenancePath).isFile()) throw new Error("public catalogue provenance file does not exist as a regular repository file");
-  const section = extractMarkdownSection(readFileSync(provenancePath, "utf8"), sectionName);
-  if (sha256(section) !== provenance.digest) throw new Error("public catalogue provenance digest does not match its source section");
   if (!Array.isArray(source.models) || source.models.length === 0) throw new Error("public catalogue refresh is empty; last-known-good outputs were preserved");
   const ids = new Set<string>();
   for (const [index, item] of source.models.entries()) {
     if (item === null || typeof item !== "object" || Array.isArray(item)) throw new Error(`public catalogue model ${index} must be an object`);
     const model = item as Partial<PublicCatalogueModel>;
-    const modelKeys = new Set(["id", "label", "provider", "kind", "tierMin", "modality", "hosting", "availability", "evidence"]);
+    const modelKeys = new Set(["id", "label", "provider", "kind", "tierMin", "modality", "hosting", "availability"]);
     const unexpectedModelKeys = Object.keys(model).filter((key) => !modelKeys.has(key));
     if (unexpectedModelKeys.length) throw new Error(`public catalogue model ${index} contains unsupported fields: ${unexpectedModelKeys.join(", ")}`);
     if (typeof model.id !== "string") throw new Error(`public catalogue model ${index} has an invalid id`);
@@ -212,12 +184,9 @@ function parseCatalogue(text: string, root: string): PublicCatalogueSource {
     if (!(["text", "image", "video", "audio", "multimodal", "unknown"] as const).includes(model.modality as "text")) throw new Error(`public catalogue model ${model.id} has an invalid modality`);
     if (!(["local", "hosted", "unknown"] as const).includes(model.hosting as "local")) throw new Error(`public catalogue model ${model.id} has an invalid hosting state`);
     if (!(["available", "unavailable", "unknown"] as const).includes(model.availability as "available")) throw new Error(`public catalogue model ${model.id} has an invalid availability state`);
-    const evidence = validatePublicString(model.evidence, `public catalogue model ${model.id} evidence`);
-    const expectedEvidence = `\`${model.id}\``;
-    if (evidence !== expectedEvidence || !hasExactBacktickedToken(section, model.id)) {
-      throw new Error(`public catalogue model ${model.id} has no exact backticked evidence in its provenance section`);
-    }
   }
+  const { digest: _digest, ...unsigned } = source as PublicCatalogueSource;
+  if (sha256(unsigned) !== source.digest) throw new Error("public catalogue projection digest does not match its canonical payload");
   return source as PublicCatalogueSource;
 }
 
@@ -255,7 +224,7 @@ export function renderCommandReference(commands: readonly CommandManifestEntry[]
     `<!-- manifest-digest: ${digest} -->`,
     "# Generated command reference",
     "",
-    "This reference is generated from the validated runtime command manifest. Availability is evaluated at runtime; a listed command may still require authentication, a hosted capability, or local tooling.",
+    "This reference is generated from the validated, versioned command manifest. Availability is evaluated at runtime; a listed command may still require authentication, a hosted capability, or local tooling.",
     "",
     "Global shell flags accepted by the manifest:",
     "",
@@ -289,17 +258,18 @@ export function renderCommandReference(commands: readonly CommandManifestEntry[]
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-function generatedCatalogue(source: PublicCatalogueSource): GeneratedCatalogue {
+function generatedCatalogue(source: PublicCatalogueSource, offlineFallback: boolean): GeneratedCatalogue {
   const models = [...source.models].map((model) => ({ ...model })).sort((a, b) => a.id.localeCompare(b.id));
-  const digest = sha256({ ...source, models });
-  return {
+  const catalogue = {
     schema: GENERATED_CATALOGUE_SCHEMA,
-    generatedAt: new Date(source.asOf).toISOString(),
-    digest,
-    source: { kind: source.source.kind, citation: source.source.section, digest: source.source.digest },
+    generatedAt: source.generatedAt,
+    source: { kind: "cloud-public-projection" as const, version: source.sourceVersion, digest: source.digest },
+    availabilitySemantics: source.availabilitySemantics,
+    offlineFallback,
     scopeNote: source.scopeNote,
     models,
   };
+  return { ...catalogue, digest: sha256(catalogue) };
 }
 
 export function renderCatalogueMarkdown(catalogue: GeneratedCatalogue): string {
@@ -311,8 +281,10 @@ export function renderCatalogueMarkdown(catalogue: GeneratedCatalogue): string {
     escapeMarkdown(catalogue.scopeNote),
     "",
     `- Snapshot time: ${inlineCode(catalogue.generatedAt)}`,
-    `- Provenance: ${escapeMarkdown(catalogue.source.citation)}`,
-    `- Provenance digest: ${inlineCode(catalogue.source.digest)}`,
+    `- Source: Cloud public projection ${inlineCode(catalogue.source.version)}`,
+    `- Source digest: ${inlineCode(catalogue.source.digest)}`,
+    `- Availability: ${inlineCode(catalogue.availabilitySemantics)}`,
+    `- Offline fallback snapshot: ${catalogue.offlineFallback ? "yes" : "no"}`,
     `- Digest: ${inlineCode(catalogue.digest)}`,
     "",
     "| Model | ID | Provider | Modality | Tier | Hosting | Availability |",
@@ -340,7 +312,7 @@ export function renderCatalogueHtml(catalogue: GeneratedCatalogue): string {
 <meta name="generator" content="aether-agent docs generator"><title>Aether Agent public model catalogue</title>
 <style>:root{color-scheme:light dark;font-family:system-ui,sans-serif;line-height:1.5}body{max-width:72rem;margin:auto;padding:clamp(1rem,4vw,3rem);background:#0c1018;color:#eef2ff}a{color:#8bd5ff}.lede{max-width:70ch}.meta{color:#bac4d8}.controls{display:none;grid-template-columns:repeat(auto-fit,minmax(10rem,1fr));gap:.75rem;margin:2rem 0}.controls label{display:grid;gap:.3rem}.controls label:first-child{grid-column:span 2}input,select{font:inherit;padding:.65rem;border:1px solid #65708a;border-radius:.45rem;background:#151c2a;color:inherit}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:1rem}.card{border:1px solid #3c465b;border-radius:.8rem;padding:1rem;background:#141b29}.card h2{margin:.1rem 0}.card p{margin:.2rem 0 1rem}dl{margin:0}dl div{display:flex;justify-content:space-between;gap:1rem;border-top:1px solid #30394b;padding:.4rem 0}dt{color:#bac4d8}dd{margin:0;text-align:right}body[data-enhanced] .controls{display:grid}.hidden{display:none}@media(max-width:38rem){body[data-enhanced] .controls{grid-template-columns:1fr}.controls label:first-child{grid-column:auto}dl div{display:block}dd{text-align:left}}@media(prefers-reduced-motion:no-preference){.card{transition:opacity .15s}}</style></head>
 <body><main><h1>Public model catalogue snapshot</h1><p class="lede">${escapeHtml(catalogue.scopeNote)}</p>
-<p class="meta">Snapshot: <time datetime="${catalogue.generatedAt}">${catalogue.generatedAt}</time> · Provenance: ${escapeHtml(catalogue.source.citation)} · Source digest: <code>${catalogue.source.digest}</code> · Catalogue digest: <code>${catalogue.digest}</code></p>
+<p class="meta">Snapshot: <time datetime="${catalogue.generatedAt}">${catalogue.generatedAt}</time> · Cloud source: ${escapeHtml(catalogue.source.version)} · Source digest: <code>${catalogue.source.digest}</code> · Catalogue digest: <code>${catalogue.digest}</code> · Offline fallback: ${catalogue.offlineFallback ? "yes" : "no"}</p>
 <p>This page is useful without JavaScript. Runtime availability is account-scoped; use <code>aether models</code> while signed in for the authoritative live result. No prices or spend caps are asserted here.</p>
 <form class="controls" role="search" onsubmit="return false"><label>Search<input id="q" type="search" autocomplete="off" placeholder="Model, ID, or provider"></label><label>Provider<select id="provider"><option value="">All providers</option>${providers.map((item) => `<option>${escapeHtml(item)}</option>`).join("")}</select></label><label>Modality<select id="modality"><option value="">All modalities</option>${modalities.map((item) => `<option>${item}</option>`).join("")}</select></label><label>Tier<select id="tier"><option value="">All tiers</option>${tiers.map((item) => `<option>${item}</option>`).join("")}</select></label><label>Local or hosted<select id="hosting"><option value="">All hosting states</option>${hostingStates.map((item) => `<option>${item}</option>`).join("")}</select></label><label>Availability<select id="availability"><option value="">All availability states</option>${availabilityStates.map((item) => `<option>${item}</option>`).join("")}</select></label></form>
 <p id="status" aria-live="polite"></p><section class="grid" aria-label="Documented catalogue models">${cards}
@@ -359,14 +331,19 @@ function replaceBounded(text: string, markers: readonly [string, string], body: 
 export function buildGeneratedOutputs(options: GenerateDocsOptions): GeneratedOutput[] {
   const root = resolve(options.root);
   const commands = options.commands ?? COMMAND_MANIFEST;
-  const sourceText = normalizeEol(options.catalogueSourceText ?? readFileSync(join(root, "docs", "model-catalogue", "catalogue.source.json"), "utf8"));
-  const source = parseCatalogue(sourceText, root);
-  const catalogue = generatedCatalogue(source);
+  const fallbackText = normalizeEol(options.catalogueSourceText ?? readFileSync(join(root, "docs", "model-catalogue", "catalogue.source.json"), "utf8"));
+  let source: PublicCatalogueSource;
+  let offlineFallback = options.catalogueSourceText === undefined;
+  if (options.catalogueLiveSourceText !== undefined) {
+    try { source = parseCatalogue(normalizeEol(options.catalogueLiveSourceText)); offlineFallback = false; }
+    catch { source = parseCatalogue(fallbackText); offlineFallback = true; }
+  } else source = parseCatalogue(fallbackText);
+  const catalogue = generatedCatalogue(source, offlineFallback);
   const commandReference = renderCommandReference(commands);
   const commandsDoc = readFileSync(join(root, "COMMANDS.md"), "utf8");
   const readme = readFileSync(join(root, "README.md"), "utf8");
   const commandBody = "The complete manifest-derived reference is [docs/generated/commands.md](docs/generated/commands.md). Regenerate it with `npm run docs:generate`; verify drift with `npm run docs:check`.";
-  const catalogueBody = `A dated, sanitized public snapshot is available as [HTML](docs/model-catalogue/index.html), [JSON](docs/model-catalogue/catalogue.json), and [Markdown](docs/generated/model-catalogue.md). It was generated at \`${catalogue.generatedAt}\` from the hashed public release-note section named “${escapeMarkdown(catalogue.source.citation)}”. Runtime availability remains account-scoped; use \`aether models\` while signed in.`;
+  const catalogueBody = `A dated, sanitized ${catalogue.offlineFallback ? "offline fallback " : ""}snapshot is available as [HTML](docs/model-catalogue/index.html), [JSON](docs/model-catalogue/catalogue.json), and [Markdown](docs/generated/model-catalogue.md). It was generated at \`${catalogue.generatedAt}\` from Cloud public projection \`${catalogue.source.version}\` with verified digest \`${catalogue.source.digest}\`. Listed availability is not an account entitlement; use \`aether models\` while signed in.`;
   const json = `${JSON.stringify(catalogue, null, 2)}\n`;
   return [
     { path: "docs/generated/commands.md", content: commandReference },
