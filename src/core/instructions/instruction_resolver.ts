@@ -2,6 +2,7 @@
 // Pure over discovered sources; no filesystem access here.
 
 import { INSTRUCTION_PRECEDENCE, type InstructionConflict, type InstructionGraph, type InstructionSource } from "./instruction_types.js";
+import { sanitizeForTransport } from "../skills/context_packet.js";
 import { discoverInstructionSources } from "./instruction_discovery.js";
 
 /** Cursor-subset glob → RegExp ( ** , * , ? only — discovery rejected the rest). */
@@ -25,6 +26,10 @@ function globToRegExp(glob: string): RegExp {
 }
 
 /** Does one source apply to a project-relative file path (posix separators)? */
+// One sanitizer for every channel content can leave on: the composed brief
+// goes through it via fenceSafe, and the typed packet goes through it here.
+// Two channels carrying the same bytes must not disagree about what is safe.
+
 export function sourceAppliesTo(source: InstructionSource, relativePath: string | null): boolean {
   if (source.parseStatus === "unsupported-syntax") return false;
   if (relativePath == null) {
@@ -119,11 +124,48 @@ export function sourceLabel(source: InstructionSource): string {
   }
 }
 
-/** Build the full graph for a project: discovery + global-scope conflict pass. */
+/**
+ * Sources that govern a whole-repo RUN, precedence-ordered.
+ *
+ * applicableSources(sources, null) answers a different question — "which
+ * sources apply with no file open" — and correctly excludes anything scoped to
+ * a subtree or a glob. An agent run has no single open file but may touch every
+ * file, so a nested src/AGENTS.md unquestionably governs it. Using the
+ * no-file-open set for a run silently dropped every nested source: its rules
+ * never reached the model, and a root-vs-nested conflict could never be
+ * detected because only one side was ever in the comparison.
+ *
+ * Scope and globs are not discarded — they ride with each source so the reader
+ * can see which subtree or file pattern a rule speaks for.
+ */
+export function runScopedSources(sources: readonly InstructionSource[]): InstructionSource[] {
+  return sources
+    .filter((source) => source.parseStatus !== "unsupported-syntax")
+    .sort((a, b) => {
+      const rank = INSTRUCTION_PRECEDENCE[b.kind] - INSTRUCTION_PRECEDENCE[a.kind];
+      if (rank !== 0) return rank;
+      return b.scopeDir.length - a.scopeDir.length;
+    });
+}
+
+/** Build the full graph for a project: discovery + run-scope conflict pass. */
 export function resolveInstructionGraph(projectRoot: string): InstructionGraph {
   const { sources, skipped } = discoverInstructionSources(projectRoot);
-  const ordered = applicableSources(sources, null);
-  return { sources, conflicts: detectConflicts(ordered), skipped };
+  // runScopedSources drops a source whose glob frontmatter would not parse: its
+  // scope is unknown, so applying it to the whole run would be a guess about
+  // which files it governs. Dropping it is right; dropping it SILENTLY is not —
+  // discovery found the file, read it, and the user believes it is in force.
+  const unparsable = sources
+    .filter((source) => source.parseStatus === "unsupported-syntax")
+    .map((source) => ({
+      path: source.displayPath,
+      reason: "its scope could not be parsed, so it governs no known files and was NOT sent",
+    }));
+  return {
+    sources,
+    conflicts: detectConflicts(runScopedSources(sources)),
+    skipped: [...skipped, ...unparsable],
+  };
 }
 
 export const INSTRUCTION_CONTEXT_CONTRACT_VERSION = 1;
@@ -134,6 +176,13 @@ export interface InstructionContextSource {
   scope: string;
   digest: string;
   content: string;
+  /**
+   * File patterns this source is limited to (Cursor rules), or null for "the
+   * whole scope". Additive and optional: a source whose applicability is
+   * narrower than its directory must say so, or the reader treats a rule for
+   * `*.tsx` as a rule for everything.
+   */
+  globs?: readonly string[];
 }
 
 export interface InstructionContextPacket {
@@ -149,14 +198,33 @@ export function buildInstructionContextPacket(
   sources: readonly InstructionSource[],
   relativePath: string | null,
 ): InstructionContextPacket {
+  return packetOf(applicableSources(sources, relativePath));
+}
+
+/**
+ * The packet for a whole-repo run: every source that can govern it, each
+ * carrying the subtree and file patterns it speaks for. See runScopedSources.
+ */
+export function buildRunInstructionContextPacket(
+  sources: readonly InstructionSource[],
+): InstructionContextPacket {
+  return packetOf(runScopedSources(sources));
+}
+
+function packetOf(ordered: readonly InstructionSource[]): InstructionContextPacket {
   return {
     contract_version: INSTRUCTION_CONTEXT_CONTRACT_VERSION,
-    sources: applicableSources(sources, relativePath).map((source) => ({
+    sources: ordered.map((source) => ({
       kind: source.kind,
       path: source.displayPath,
       scope: source.scopeDir === "" ? "project" : source.scopeDir,
       digest: "sha256:" + source.sha256,
-      content: source.content,
+      // Same treatment the skill packet gives skill bodies. An instruction file
+      // is attacker-influenced content too (any repo you clone carries one), and
+      // it must not reach a transport — or a consumer that reads this packet
+      // instead of the composed brief — carrying raw control bytes.
+      content: sanitizeForTransport(source.content),
+      ...(source.globs ? { globs: source.globs } : {}),
     })),
   };
 }

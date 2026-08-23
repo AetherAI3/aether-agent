@@ -12,7 +12,29 @@ import type { Writable } from "node:stream";
 import type { AppContext } from "../core/context.js";
 import { SpawnGitRunner, type GitRunner } from "../core/git_commit_guard.js";
 import { theme } from "../ui/theme.js";
-import { generateDiff } from "../core/stage_diff.js";
+import { readRepoState } from "../core/review_state.js";
+import { suggestCommitMessage } from "../core/review_actions.js";
+import { defaultRunner, type Runner } from "../core/worktree.js";
+import {
+  formatCount,
+  formatTotals,
+  readLineCounts,
+  spawnAsyncRun,
+  sumCounts,
+  type AsyncRun,
+} from "./review_counts.js";
+
+/** /stage-diff reads the repository through the shared state module, so it can
+ *  never disagree with what /review shows. Injected for tests. */
+export interface StageDiffDeps {
+  cwd: string;
+  run: Runner;
+  runAsync: AsyncRun;
+}
+
+export function defaultStageDiffDeps(cwd: string): StageDiffDeps {
+  return { cwd, run: defaultRunner(), runAsync: spawnAsyncRun() };
+}
 
 /** Injected so the destructive paths are testable without a real repository. */
 export interface GitToolDeps {
@@ -132,48 +154,67 @@ export async function rollbackSlash(
 
 // ── /stage-diff ───────────────────────────────
 
-export async function stageDiffSlash(_ctx: AppContext, out: Writable): Promise<void> {
-  try {
-    const r = generateDiff();
-
-    if (r.files.length === 0) {
-      out.write("(working tree clean — nothing to stage)\n");
-      return;
-    }
-
-    out.write(theme.cyan("📋  Stage Diff\n"));
-    out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
-
-    out.write(`  ${r.stats.filesChanged} files  +${r.stats.additions} -${r.stats.deletions}\n\n`);
-
-    for (const f of r.files.slice(0, 15)) {
-      out.write(`  ${theme.muted(f)}\n`);
-    }
-    if (r.files.length > 15) {
-      out.write(`  ${theme.dim(`... and ${r.files.length - 15} more`)}\n`);
-    }
-
-    out.write(`\n${theme.bold("Suggested commit:")}\n`);
-    out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
-    out.write(r.commitMessage + "\n");
-    out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
-
-    const diffLines = r.diff.split("\n").slice(0, 30);
-    out.write(`\n${theme.dim("Diff preview (first 30 lines):")}\n`);
-    for (const line of diffLines) {
-      if (line.startsWith("+")) out.write(theme.dim(line) + "\n");
-      else if (line.startsWith("-")) out.write(theme.muted(line) + "\n");
-      else out.write(theme.dim(line) + "\n");
-    }
-
-    if (r.diff.split("\n").length > 30) {
-      out.write(theme.dim("  ... (truncated)\n"));
-    }
-
-    out.write(`\n${theme.dim("  Copy the commit message above and commit when ready.")}\n`);
-  } catch (err) {
-    out.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+/**
+ * /stage-diff — what changed, in both halves, with measured counts.
+ *
+ * Rewritten off three defects, each of which produced a confident wrong answer:
+ *
+ *  1. It scraped `git diff --stat` with a regex over the human summary line.
+ *     `--stat` is a rendering: it abbreviates paths, it is width-dependent, and
+ *     a binary file's columns are `-`, which the regex turned into 0. Counts
+ *     now come from `git diff --numstat -z`, and a count git did not report
+ *     renders "?" — never 0.
+ *  2. It read the UNSTAGED diff only, so anything already staged was invisible
+ *     to a command whose whole job is "show me what I am about to commit".
+ *     Both halves are read and labelled now.
+ *  3. It was synchronous (three execSync calls), which freezes the REPL key
+ *     loop for the length of a `git diff` on a large repository. The counts are
+ *     read asynchronously.
+ *
+ * And it no longer ends with "copy the commit message above": /review and /ship
+ * are commands that exist and act on it.
+ */
+export async function stageDiffSlash(
+  ctx: AppContext,
+  out: Writable,
+  deps: StageDiffDeps = defaultStageDiffDeps(ctx.flags.cwd),
+): Promise<void> {
+  const state = readRepoState(deps.run, deps.cwd);
+  if (!state.ok) {
+    out.write(`✗ ${state.reason}\n`);
+    return;
   }
+  if (state.files.length === 0) {
+    out.write("(working tree clean — nothing to stage)\n");
+    return;
+  }
+  const counts = await readLineCounts(deps.runAsync, state.root);
+  const paths = state.files.map((file) => file.path);
+
+  out.write(theme.cyan("📋  Stage Diff\n"));
+  out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
+  out.write(`  ${formatTotals(sumCounts(paths, counts))}\n\n`);
+
+  // Every row, not the first 15. This is a review surface, and a review that
+  // hides rows is how work gets committed that nobody looked at.
+  for (const file of state.files) {
+    const half = file.untracked
+      ? "untracked"
+      : file.staged && file.unstaged
+        ? "staged + more"
+        : file.staged
+          ? "staged"
+          : "unstaged";
+    out.write(`  ${theme.muted(file.path)}  ${formatCount(counts.get(file.path))}  ${theme.dim(half)}\n`);
+  }
+
+  out.write(`\n${theme.bold("Suggested commit:")}\n`);
+  out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
+  out.write(suggestCommitMessage(paths) + "\n");
+  out.write(theme.dim("──────────────────────────────────────────────────────────────\n"));
+
+  out.write(`\n${theme.dim("  /review          pick files or hunks, stage, revert, and commit")}\n`);
+  out.write(`${theme.dim("  /ship            publish the branch and open a pull request")}\n`);
 }
 
 // ── /revert ─────────────────────────────────────

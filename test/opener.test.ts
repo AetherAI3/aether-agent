@@ -47,6 +47,40 @@ test("each platform gets an executable plus an argument array, never a shell str
     executable: "explorer.exe",
     args: ["C:\\out\\a.png"],
   });
+  // URLs also unchanged on darwin/linux — `open`/`xdg-open` already route a
+  // URL to the default browser, no separate launcher needed.
+  assert.deepEqual(resolveOpenCommand("https://example.invalid/x", "darwin", true), {
+    executable: "open",
+    args: ["https://example.invalid/x"],
+  });
+  assert.deepEqual(resolveOpenCommand("https://example.invalid/x", "linux", true), {
+    executable: "xdg-open",
+    args: ["https://example.invalid/x"],
+  });
+});
+
+test("a win32 URL is routed to rundll32's FileProtocolHandler, not explorer.exe", () => {
+  // explorer.exe opens a File Explorer window for a URL instead of the
+  // default browser — this is the bug: `aether auth login` never opened the
+  // device-approval page. rundll32 url.dll,FileProtocolHandler is the
+  // no-shell equivalent of ShellExecute on a URL: two argv elements, the URL
+  // never re-interpreted by cmd.exe or PowerShell string interpolation.
+  assert.deepEqual(resolveOpenCommand("https://aethersystems.net/platform/device", "win32", true), {
+    executable: "rundll32.exe",
+    args: ["url.dll,FileProtocolHandler", "https://aethersystems.net/platform/device"],
+  });
+});
+
+test("a win32 file path still goes through explorer.exe, unaffected by the URL fix", () => {
+  assert.deepEqual(resolveOpenCommand("C:\\out\\a.png", "win32", false), {
+    executable: "explorer.exe",
+    args: ["C:\\out\\a.png"],
+  });
+  // Default (omitted) isUrl argument behaves like a file path too.
+  assert.deepEqual(resolveOpenCommand("C:\\out\\a.png", "win32"), {
+    executable: "explorer.exe",
+    args: ["C:\\out\\a.png"],
+  });
 });
 
 test("only http and https URLs without embedded credentials are openable", () => {
@@ -57,6 +91,23 @@ test("only http and https URLs without embedded credentials are openable", () =>
   assert.equal(isAllowedUrl("data:text/html,<script>"), false);
   assert.equal(isAllowedUrl("https://user:pass@example.invalid/a"), false);
   assert.equal(isAllowedUrl("not a url"), false);
+  // Scheme-less input never reaches the URL branch's launcher path either.
+  assert.equal(isAllowedUrl("example.invalid/a"), false);
+});
+
+test("a URL with control characters or whitespace is refused, not silently normalized", () => {
+  // The WHATWG URL parser trims leading/trailing C0-and-space and strips any
+  // tab/CR/LF from the middle. We launch the raw string (never parsed.href),
+  // so a raw target with these would either mismatch what was "approved" or
+  // — worse — smuggle bytes past the allowlist check into the argv element
+  // handed to rundll32. Reject outright instead.
+  assert.equal(isAllowedUrl("https://example.invalid/\t/a"), false);
+  assert.equal(isAllowedUrl("https://example.invalid/\n/a"), false);
+  assert.equal(isAllowedUrl("https://example.invalid/\r/a"), false);
+  assert.equal(isAllowedUrl("https://example.invalid/\x00/a"), false);
+  assert.equal(isAllowedUrl(" https://example.invalid/a"), false);
+  assert.equal(isAllowedUrl("https://example.invalid/a "), false);
+  assert.equal(isAllowedUrl("https://example.invalid/a b"), false);
 });
 
 test("a bare Windows path is not mistaken for a URL", () => {
@@ -185,4 +236,57 @@ test("planOpen validates without launching so doctor can report read-only", () =
   assert.equal(plan.status, "spawned");
   assert.equal(plan.executable, "explorer.exe");
   assert.deepEqual(plan.args, [file]);
+});
+
+test("planOpen picks rundll32 for a win32 URL, not explorer.exe", () => {
+  // This is the live bug end to end: `aether auth login` calls openBrowser,
+  // which calls openTarget, which used to hand the device-approval URL to
+  // explorer.exe — opening a File Explorer window instead of the browser.
+  const plan = planOpen("https://aethersystems.net/platform/device", {
+    platform: "win32",
+    env: DESKTOP_ENV,
+  });
+  assert.equal(plan.status, "spawned");
+  assert.equal(plan.executable, "rundll32.exe");
+  assert.deepEqual(plan.args, [
+    "url.dll,FileProtocolHandler",
+    "https://aethersystems.net/platform/device",
+  ]);
+});
+
+test("openTarget spawns rundll32 with the URL as its own argv element, no shell", () => {
+  const spawned = recorder();
+  const outcome = openTarget("https://aethersystems.net/platform/device", {
+    platform: "win32",
+    env: DESKTOP_ENV,
+    spawnFn: spawned.fn as never,
+  });
+  assert.equal(outcome.status, "spawned");
+  assert.equal(spawned.calls.length, 1);
+  const call = spawned.calls[0]!;
+  assert.equal(call.file, "rundll32.exe");
+  assert.deepEqual(call.args, [
+    "url.dll,FileProtocolHandler",
+    "https://aethersystems.net/platform/device",
+  ]);
+  assert.equal(call.options["shell"], false);
+});
+
+test("a disallowed win32 target (javascript:, file:, scheme-less, control chars) is refused, never launched", () => {
+  const spawned = recorder();
+  for (const target of [
+    "javascript:alert(1)",
+    "file:///C:/Windows/System32/cmd.exe",
+    "not a url",
+    "https://example.invalid/\n/a",
+    " https://example.invalid/a",
+  ]) {
+    const outcome = openTarget(target, {
+      platform: "win32",
+      env: DESKTOP_ENV,
+      spawnFn: spawned.fn as never,
+    });
+    assert.equal(outcome.status, "rejected", `expected rejection for ${JSON.stringify(target)}`);
+  }
+  assert.equal(spawned.calls.length, 0);
 });

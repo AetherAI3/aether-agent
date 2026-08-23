@@ -27,6 +27,8 @@ export interface GlobalFlags {
   /** Output path (--out) for the commands that write a file. Global for the
    *  same reason as --all. */
   out?: string;
+  /** The verification command (--test-cmd), handed to the VerifyRunner. */
+  testCmd?: string;
 }
 
 export interface AppContext {
