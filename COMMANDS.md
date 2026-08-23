@@ -551,6 +551,7 @@ an error naming the bad value, instead of failing later as "cannot reach Ollama"
 | `0` | Success. |
 | `1` | Runtime error (network, server error, etc.). |
 | `2` | Usage error (bad/missing arguments). |
+| `3` | Routing refused. `aether agent` needs a transport with local authority (the dev-session protocol, where tools run in *this* checkout). When the server refuses it — `403 agent dev sessions disabled`, or `404` on an older server — the run prints a `ROUTING_DRIFT` line and stops rather than degrading to the one-way chat stream, whose tools run server-side and would change nothing on disk. Ask the operator to set `AETHER_AGENT_DEV_ENABLED=1`, or run `aether agent --local`. |
 
 ---
 

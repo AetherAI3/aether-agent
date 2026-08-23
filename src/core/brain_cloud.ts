@@ -13,10 +13,16 @@
 // route (404) or the feature is off (403), CloudBrain degrades to the
 // pre-existing /agent/chat/stream behavior, where sendToolResult/control are
 // documented no-ops because the server runs its tools server-side.
+//
+// That downgrade is NEVER silent. It moves execution off this machine, so it
+// always emits a `routing_drift` event first (rendered as a ROUTING_DRIFT
+// line, carried structurally under --json), and a run that needs local
+// authority (`aether agent`, or an explicit --model) refuses to take it at all
+// rather than hand the user a transcript that changed nothing on disk.
 
 import type { Brain, TaskCommand } from "./brain.js";
 import { EventQueue } from "./brain.js";
-import type { BrainEvent } from "./brain_protocol.js";
+import type { BrainEvent, RoutingDriftFrame } from "./brain_protocol.js";
 import { TOOLS } from "./brain_protocol.js";
 import type { ToolResult } from "./tool_executor.js";
 import type { ApiClient } from "./transport.js";
@@ -29,6 +35,7 @@ import {
   devSessionControlPath,
   devSessionPath,
   defaultStreamTimeoutMs,
+  sanitizeServerText,
 } from "./transport.js";
 import { buildChatRequest, buildDevSessionRequest } from "./envelope.js";
 import { decodeSse, type StreamFrame } from "./stream.js";
@@ -120,6 +127,72 @@ export function checkDevSession(created: unknown, speaks: readonly number[]): st
   return null;
 }
 
+/** What a legacy downgrade actually costs the user, in plain words. */
+const DRIFT_CONSEQUENCE =
+  "tools run on the server, not in this checkout; no files here will change";
+/** The one line the operator (or the user) can act on. */
+const DRIFT_REMEDIATION =
+  "the server has agent dev sessions disabled; ask the operator to set AETHER_AGENT_DEV_ENABLED=1, or run `aether agent --local`";
+
+/**
+ * The server's own explanation for the refusal, made safe to print.
+ *
+ * toHttpError() already folds `detail` into the Error message through
+ * sanitizeServerText, but the raw body is still attached and is the better
+ * source for a structured field (it carries the detail alone, without the
+ * "HTTP 403: " prefix). Either way it goes back through the SAME shared
+ * sanitizer — server-controlled text never reaches a terminal or a JSON line
+ * carrying C0/C1 escapes.
+ */
+export function refusalReason(err: unknown): string {
+  const body = err instanceof HttpError ? err.body : undefined;
+  if (body && typeof body === "object") {
+    for (const k of ["detail", "message", "reason", "error"]) {
+      const v = (body as Record<string, unknown>)[k];
+      if (typeof v === "string" && v.trim()) return sanitizeServerText(v);
+    }
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  return sanitizeServerText(msg);
+}
+
+/**
+ * Build the drift event for a refused dev-session create.
+ *
+ * Exported so the decision — what the user is told, and whether the run may
+ * continue — is assertable without a socket.
+ */
+export function routingDrift(status: number, reason: string, failClosed: boolean): RoutingDriftFrame {
+  return {
+    type: "routing_drift",
+    kind: "routing_drift",
+    requested: "dev_session",
+    // Honest about which of the two things happened. A fail-closed run never
+    // reached the chat stream, so reporting "chat_stream" would be the same
+    // class of lie this whole event exists to stop.
+    resolved: failClosed ? "refused" : "chat_stream",
+    status,
+    reason,
+    consequence: DRIFT_CONSEQUENCE,
+    remediation: DRIFT_REMEDIATION,
+    fatal: failClosed,
+  };
+}
+
+export interface CloudBrainOptions {
+  /**
+   * Refuse the legacy downgrade instead of taking it.
+   *
+   * Set by any caller whose run needs LOCAL authority — `aether agent` is a
+   * coding session over THIS checkout, and the one-way chat stream runs its
+   * tools server-side against the cloud vault. Degrading such a run produces a
+   * plausible-looking transcript that changed nothing on disk, which is worse
+   * than a refusal. Left false by default so existing callers (and library
+   * embedders) keep the old fail-soft behavior.
+   */
+  requireLocalAuthority?: boolean;
+}
+
 export class CloudBrain implements Brain {
   private aborted = false;
   private net: AbortController | null = null;
@@ -140,6 +213,7 @@ export class CloudBrain implements Brain {
   constructor(
     private readonly api: ApiClient,
     capabilities?: ResolvedCapabilities,
+    private readonly opts: CloudBrainOptions = {},
   ) {
     this.speaks = devProtocolVersions(capabilities?.contract);
   }
@@ -166,6 +240,29 @@ export class CloudBrain implements Brain {
         );
       } catch (err) {
         if (isLegacyServer(err)) {
+          // The transport is about to change under the user. Say so BEFORE a
+          // byte of model output — an explanation printed after the answer is
+          // an explanation nobody reads, and one printed in colour alone is no
+          // explanation at all (see host_render's ROUTING_DRIFT line).
+          const status = (err as HttpError).status;
+          // Fail closed when the run needs local authority: the caller asked
+          // for it (`aether agent`), or the user pinned a model by hand, which
+          // is an explicit contract about WHAT runs — and the legacy envelope's
+          // model_pick_source:"manual" is a request, not a guarantee.
+          const failClosed = Boolean(this.opts.requireLocalAuthority) || Boolean(task.model);
+          queue.push(routingDrift(status, refusalReason(err), failClosed));
+          if (failClosed) {
+            // Deliberately NOT a chat-stream request: nothing about this run
+            // may reach a transport that executes tools somewhere else.
+            queue.push({
+              type: "done",
+              ok: false,
+              result: "refused: " + DRIFT_REMEDIATION,
+              remaining: 0,
+              reason: "routing-drift",
+            });
+            return;
+          }
           await this.legacyPump(task, queue);
           return;
         }

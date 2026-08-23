@@ -18,7 +18,7 @@ import { ToolExecutor } from "../core/tool_executor.js";
 import { stdioPrompt } from "../ui/interact.js";
 import { defaultRunner } from "../core/worktree.js";
 import { isCurrentWorkspace } from "../core/workspace_scope.js";
-import { HostRenderer } from "../ui/host_render.js";
+import { HostRenderer, routingDriftLines } from "../ui/host_render.js";
 import { SessionLog } from "../core/session_log.js";
 import { finalVerify, type BrainDone } from "../core/verify_gate.js";
 import { StatusRenderer } from "../ui/status_renderer.js";
@@ -48,6 +48,21 @@ import type { SkillSessionProvenance } from "../core/skills/skill_session.js";
 import type { SkillRefusal } from "../core/skills/skill_errors.js";
 
 export { prepareWorkspace } from "./code_support.js";
+
+/**
+ * Exit code 3 — ROUTING REFUSED.
+ *
+ * The run asked for a transport with LOCAL authority and the server would not
+ * give it (agent dev sessions disabled / route absent), so the host refused to
+ * continue on a transport that executes tools somewhere else.
+ *
+ * Distinct from the existing table (COMMANDS.md "Exit codes"): 0 success, 1
+ * runtime error, 2 usage error — and 130/143 are the signal conventions the UI
+ * already uses. A refusal is neither a crash nor a mistyped argument: a script
+ * that sees 3 knows nothing ran and that retrying without an operator change
+ * will produce the same answer.
+ */
+export const EXIT_ROUTING_REFUSED = 3;
 
 /** Approve (or refuse) one brain-emitted tool call before the host executes it. */
 export type ToolGate = (call: { name: string; args: Record<string, unknown> }) => Promise<boolean>;
@@ -286,7 +301,10 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     ? chooseLocalBrain(process.env["AETHER_LOCAL_BRAIN"]) === "python"
       ? new LocalBrain()
       : new OllamaBrain()
-    : new CloudBrain(ctx.api);
+    : // `aether agent` is a coding session over THIS checkout, so it may not
+      // silently accept the one-way chat transport, whose tools run
+      // server-side against the cloud vault (brain_cloud CloudBrainOptions).
+      new CloudBrain(ctx.api, undefined, { requireLocalAuthority: true });
   const exec = new ToolExecutor(cwd, opts.testCmd);
   // Scope the session manifest to the ORIGINAL launch directory (ctx.flags.cwd),
   // not the possibly-substituted `cwd` (an auto-created worktree, or a manually
@@ -419,9 +437,13 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   // run is untrustworthy, so a coincidentally-green tree is reported "error", not "ok".
   let lastDone: BrainDone | null = null;
   let sawError = false;
+  // A refused transport downgrade (brain_cloud). Captured on BOTH presentation
+  // paths so the process exit code cannot depend on whether a TTY was attached.
+  let fatalDrift: Extract<BrainEvent, { type: "routing_drift" }> | null = null;
   const captureDone = (ev: BrainEvent): void => {
     if (ev.type === "done") lastDone = { ok: ev.ok, remaining: ev.remaining, reason: ev.reason };
     else if (ev.type === "error") sawError = true;
+    else if (ev.type === "routing_drift" && ev.fatal) fatalDrift = ev;
   };
 
   if (animated) {
@@ -445,6 +467,15 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
       if (ev.type === "memory") {
         log?.event(ev, nowIso());
         sr.memoryEvent(ev);
+        return;
+      }
+      if (ev.type === "routing_drift") {
+        // The animated path never touches HostRenderer, so without this the
+        // drift banner would exist only for piped runs — invisible to exactly
+        // the user sitting at the terminal it was written for.
+        log?.event(ev, nowIso());
+        captureDone(ev);
+        for (const line of routingDriftLines(ev)) sr.log(line);
         return;
       }
       log?.event(ev, nowIso());
@@ -514,6 +545,18 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     // A brain that throws mid-run must still clear the pinned status line and
     // print the ledger recap — otherwise stale animation sits over the error.
     teardown();
+  }
+
+  // ── Routing refused: nothing ran, so there is nothing to verify ──────────
+  // Returning BEFORE finalVerify is the point: the gate would run the project's
+  // test command and report on a tree no brain ever touched, dressing a refusal
+  // up as a red (or, on a green tree, a passing) run.
+  if (fatalDrift) {
+    const drift: Extract<BrainEvent, { type: "routing_drift" }> = fatalDrift;
+    log?.close("incomplete", nowIso(), 0);
+    if (!ctx.flags.json) process.stderr.write("\n  " + drift.remediation + "\n");
+    if (log) process.stderr.write(`  ⤷ log: ${log.dir}\n`);
+    return EXIT_ROUTING_REFUSED;
   }
 
   // ── Final verification gate: ground truth, never the brain's self-report ──
