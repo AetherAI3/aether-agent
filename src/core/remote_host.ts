@@ -28,11 +28,16 @@ import { atomicWriteFile, readJsonFile } from "./durable_store.js";
 import { sanitizeRemotePayload, type RcEventType } from "./remote_redaction.js";
 
 export const RC_PROTOCOL_VERSION = 1;
-export const RC_SESSIONS_PATH = "/remote-sessions";
+// Reconciled against the R1 broker routes shipped in AETHER-CLOUD PR #1328:
+// the base is `/remote/sessions` (register posts there), sub-resources hang off
+// `/remote/sessions/{id}/...`, and grant redemption lives under `/remote/grants`.
+export const RC_SESSIONS_PATH = "/remote/sessions";
 export const rcAttachPath = (id: string): string => `${RC_SESSIONS_PATH}/${encodeURIComponent(id)}/host/attach`;
 export const rcEventsPath = (id: string): string => `${RC_SESSIONS_PATH}/${encodeURIComponent(id)}/host/events`;
 export const rcHeartbeatPath = (id: string): string => `${RC_SESSIONS_PATH}/${encodeURIComponent(id)}/host/heartbeat`;
 export const rcRevokePath = (id: string): string => `${RC_SESSIONS_PATH}/${encodeURIComponent(id)}/revoke`;
+export const rcGrantsPath = (id: string): string => `${RC_SESSIONS_PATH}/${encodeURIComponent(id)}/grants`;
+export const RC_GRANT_REDEEM_PATH = "/remote/grants/redeem";
 
 /** Host heartbeat cadence (ADR-0007 §4). */
 export const RC_HEARTBEAT_MS = 15_000;
@@ -55,6 +60,11 @@ export interface RcRegisterResponse {
   viewer_url?: string;
   /** Single-use QR redemption URL — an id, never a reusable bearer token. */
   redemption_url?: string;
+  /** R1 (#1328) returns a single-use grant token at register; it is redeemed
+   *  via POST /remote/grants/redeem (a POST body, never a URL/log per ADR §2).
+   *  Captured for forward-compat; the QR still targets the redemption/viewer
+   *  URL, never the raw token. */
+  grant_token?: string;
   expires_at?: string;
 }
 interface RcAppendResponse { acked_seq?: number }
@@ -249,11 +259,34 @@ export class RemoteHostClient {
       const batch = this.state.outbox.slice(0, RC_BATCH_SIZE);
       let response: RcAppendResponse;
       try {
+        // R1's /host/events handler (#1328) authenticates the append with the
+        // host_secret and enforces G2 payload-bound idempotency: a re-sent
+        // (host_event_id, payload) pair returns the original seq, but the SAME
+        // id with a DIFFERENT payload is rejected 409 EventConflictError. We
+        // never mutate a queued event's payload — each publish() mints a fresh
+        // host_event_id over an already-sanitized, immutable payload — so a
+        // replay after a flaky connection always re-sends identical content.
         response = await this.options.transport.postJson<RcAppendResponse>(
           rcEventsPath(this.state.sessionId),
-          { events: batch },
+          {
+            ...(this.state.hostSecret ? { host_secret: this.state.hostSecret } : {}),
+            events: batch,
+          },
         );
       } catch (error) {
+        // A 409 on the append is R1's EventConflictError (a host_event_id
+        // re-used with a DIFFERENT payload) — NOT a host takeover, which only
+        // 409s on register/attach. By construction we never re-send changed
+        // content under an old id, so this means a single event in this batch
+        // is poisoned. Drop it (rather than requeue it forever and wedge the
+        // outbox) and keep the session; record it honestly.
+        if (error instanceof HttpError && error.status === 409) {
+          this.state.outbox.splice(0, batch.length);
+          this.dropped += batch.length;
+          this.persist();
+          this.detail = "an event was rejected as a payload conflict (409) and dropped; the session continues";
+          continue;
+        }
         this.degrade(error);
         return;
       }

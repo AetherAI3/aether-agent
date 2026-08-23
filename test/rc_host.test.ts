@@ -25,11 +25,14 @@ class MockBroker implements RcTransport {
   heartbeats = 0;
   networkDown = false;
   refuseSecondHost = false;
+  conflictNextAppend = false;
+  lastEventsBody: { host_secret?: string; events: BrokerEvent[] } | null = null;
   private counter = 0;
 
   async postJson<T>(path: string, body: unknown): Promise<T> {
     if (this.networkDown) throw new Error("ECONNREFUSED (mock)");
-    if (path === "/remote-sessions") {
+    // R1 (#1328) routes: register posts to /remote/sessions.
+    if (path === "/remote/sessions") {
       if (this.refuseSecondHost) throw new HttpError(409, "host already attached");
       this.counter += 1;
       return {
@@ -50,7 +53,12 @@ class MockBroker implements RcTransport {
     }
     if (path.endsWith("/host/events")) {
       this.appendCalls += 1;
-      const batch = (body as { events: BrokerEvent[] }).events;
+      this.lastEventsBody = body as { host_secret?: string; events: BrokerEvent[] };
+      if (this.conflictNextAppend) {
+        this.conflictNextAppend = false;
+        throw new HttpError(409, "EventConflictError"); // G2 payload-bound idempotency
+      }
+      const batch = this.lastEventsBody.events;
       for (const event of batch) {
         if (this.seenEventIds.has(event.host_event_id)) continue; // dedupe
         this.seenEventIds.add(event.host_event_id);
@@ -97,6 +105,26 @@ test("register, publish, flush: events land once and the cursor advances", async
   assert.equal(broker.events.length, 2);
   assert.equal(host.status().pendingEvents, 0);
   assert.equal(host.status().lastAckedSeq, 2);
+  // R1 (#1328) /host/events authenticates the append with the host_secret.
+  assert.equal(broker.lastEventsBody?.host_secret, "mock-host-secret");
+  host.stopLocal();
+});
+
+test("an events 409 is an EventConflictError (payload-bound idempotency), NOT a takeover: the batch is dropped and the session survives", async () => {
+  const broker = new MockBroker();
+  const host = client(broker, tempStatePath());
+  await host.start();
+  broker.conflictNextAppend = true;
+  host.publish("transcript", { role: "agent", summary: "conflicting content" });
+  await host.flush();
+  // The poisoned batch is dropped, not requeued forever; RC stays usable.
+  assert.notEqual(host.status().phase, "failed");
+  assert.equal(host.status().pendingEvents, 0);
+  assert.equal(host.status().droppedEvents, 1);
+  // A subsequent well-formed event still delivers.
+  host.publish("done", { status: "passed" });
+  await host.flush();
+  assert.equal(broker.events.length, 1);
   host.stopLocal();
 });
 

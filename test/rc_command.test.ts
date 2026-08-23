@@ -33,7 +33,7 @@ function context(token: string | null): AppContext {
 
 const okTransport: RcTransport = {
   async postJson<T>(path: string): Promise<T> {
-    if (path === "/remote-sessions") {
+    if (path === "/remote/sessions") {
       return {
         session_id: "rs_cmd", viewer_url: "https://viewer.invalid/code/rc/s",
         redemption_url: "https://viewer.invalid/r/red_9", expires_at: "2026-08-24T00:00:00.000Z",
