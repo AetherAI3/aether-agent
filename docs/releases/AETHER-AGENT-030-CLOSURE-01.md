@@ -76,6 +76,74 @@ the real production Predator system is callable, but an authorized owner must
 approve the repository's assurance profile before any qualifying run can
 start. No local profile, threshold change, or substitute scanner may close C1.
 
+## Closure implementation snapshot
+
+Recorded at `2026-08-23T20:03:30Z`. Cloud `main` was
+`478033bb531d2f165b930b142193d76802256a49` at this snapshot; its newest commit
+touches only Desktop login handling. The Cloud PRs remain based on the live
+`main` branch and mergeable. Their lane commits last incorporated
+`main@1ad05d8e8815758012466f6f83df9835498207c0`; hosted pull-request checks
+exercise GitHub's live merge ref and supersede local base-only observations.
+
+| Lane | Exact implementation state | Qualification at this snapshot |
+| --- | --- | --- |
+| C1 | Real production preflight against the intake head; no substitute added | Blocked on owner/security Predator assurance-profile onboarding. Any later Agent head requires a new real run. |
+| C2 | Draft [Cloud PR #1324](https://github.com/AetherAI3/AETHER-CLOUD/pull/1324), head `9886de21f946cccb92c1969b465a232b2a37d572` | 146 curated doctor/capability tests and the OpenAPI snapshot pass; Ruff and diff checks pass. No staging or production probe has run. |
+| C3 | Draft [Cloud PR #1329](https://github.com/AetherAI3/AETHER-CLOUD/pull/1329), head `0c5612dd65a3b65927c566aaf2497fa333ce9bfc` | 22 backend/API/migration/OpenAPI tests, seven browser intake tests, site typecheck, targeted ESLint, Ruff, and diff checks pass. Feature remains default-off and no migration or deployment has been applied. |
+| C4 | Integrated locally into the Agent spine through `c7d3087294db35229ff4f1392e95a938edcaf8e0` | `aether.exec/2` controls/checkpoints and the hosted text-model driver pass focused gates. The driver requires an exact model and positive UVT cap, rejects Aether orchestrator IDs, validates the server model, and keeps tool authority local. Actual Neo/Kronus controller dogfood remains open because Cloud has no orchestrator dev-session contract. |
+| C5 | Agent manifest/catalogue integration plus draft [Cloud PR #1327](https://github.com/AetherAI3/AETHER-CLOUD/pull/1327), head `1bb984068f8065f8dce579108f21faa8eda8c8c6` | Agent command/generated-reference gates pass. Cloud projection/API/OpenAPI tests and Ruff pass. Product-policy approval of the public projection is pending. |
+| C6 | Integrated locally into the Agent spine | All ten adversarial classes are covered; preview suite passes 15/15. An unrelated pre-existing ready URL now fails before child spawn, and denied PID probing no longer abandons a live owner. |
+| C7 | Agent changes remain local; remote [PR #107](https://github.com/AetherAI3/aether-agent/pull/107) intentionally remains draft at `121d98dba19823766bc34d71aedc388b74836fd2` | Withheld by the prescribed order: Cloud PR review/landing, staging proof, owner production canaries, exact-head Predator, and independent F0 precede integration-branch publication or release mutation. |
+
+### Exact local Agent qualification before the final closure commit
+
+- Full test matrix through the prior integration checkpoint: 1,574 passed,
+  two stale-evidence assertions failed, and three expected skips. Both stale
+  assertions were corrected; their focused reruns pass.
+- `npm run smoke`: four passed and three environment-dependent skips. The
+  Cloud turn passed; local Ollama was unavailable and is not counted as proof.
+- `npm run verify:production`: passed with 618 packed files and 3,669,584
+  unpacked bytes.
+- `npm pack --dry-run`, `npm run docs:check`, and `npm run release:truth` pass.
+- Headless cloud/dev/drift tests pass 35/35; headless v1/v2 tests pass 29/29;
+  manifest/generated-doc/release gates pass 64/64; final public-doc subset
+  passes 34/34.
+
+The mandatory full Agent matrix must run again after this register commit.
+Results are valid only for that resulting exact local head. The branch remains
+unpublished until the Cloud rollout dependencies above are satisfied.
+
+### Falsified actual-Aether shortcut
+
+The live registry exposes `aether-neo-5.1t` and `aether-kronus-v2.4`, but the
+current Cloud development-session path resolves both router IDs to `sonnet`.
+The exact orchestrator endpoint executes server-side and has no Agent-compatible
+local tool-result, receipt, replay, or control contract. The Agent driver
+therefore rejects all current Aether orchestrator IDs before network access;
+claiming that path as Neo/Kronus dogfood would be false.
+
+Closing C4 dogfood requires a versioned Cloud orchestrator development session
+that confirms the exact router, emits session-correlated local tool calls and
+durable receipts, supports pause/resume/steer/cancel and replay, and never falls
+back to server execution. Only then can a positive-UVT, owner-authorized
+packaged controller canary satisfy the actual-Aether gate.
+
+### Rollout dependencies still requiring authority or external state
+
+1. Owner/security onboards the real Predator assurance profile.
+2. Cloud reviewers approve and land the three draft PRs in C2, C3, then C5
+   order; the C5 public projection receives explicit product-policy approval.
+3. An authorized operator deploys staging, applies the reviewed C3 migration,
+   and runs doctor/redemption E2E with Protocol-C, zero-unexpected-UVT, and
+   zero-orphan evidence.
+4. An authorized owner runs the bounded production doctor, redemption, hosted
+   inference, and eventual actual-Aether controller canaries.
+5. Vercel's account-wide build-rate quota clears or an authorized owner changes
+   the plan; this is separate from repository tests.
+6. Only after those gates may the local Agent spine be published to PR #107,
+   receive fresh CI/CodeQL/SBOM/Predator evidence, enter F0, and proceed toward
+   draft removal, merge, tag, npm publication, or rollout.
+
 ## Evidence and rollback rules
 
 - Evidence must name repository, base, head, command or workflow, conclusion,
