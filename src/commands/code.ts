@@ -552,9 +552,10 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   // test command and report on a tree no brain ever touched, dressing a refusal
   // up as a red (or, on a green tree, a passing) run.
   if (fatalDrift) {
-    const drift: Extract<BrainEvent, { type: "routing_drift" }> = fatalDrift;
+    // No second copy of the remediation: the ROUTING_DRIFT banner already
+    // carried it (host_render.routingDriftLines prints it on a fatal drift),
+    // on this path and on the animated one alike.
     log?.close("incomplete", nowIso(), 0);
-    if (!ctx.flags.json) process.stderr.write("\n  " + drift.remediation + "\n");
     if (log) process.stderr.write(`  ⤷ log: ${log.dir}\n`);
     return EXIT_ROUTING_REFUSED;
   }
