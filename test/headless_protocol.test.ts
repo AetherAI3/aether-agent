@@ -17,6 +17,7 @@ import {
   validateHeadlessFrames,
 } from "../src/core/headless_protocol.js";
 import { runHeadlessExec } from "../src/commands/exec.js";
+import { OllamaBrain } from "../src/core/brain_ollama.js";
 
 class FakeBrain implements Brain {
   readonly results: Array<{ id: string; result: ToolResult }> = [];
@@ -52,21 +53,55 @@ test("writer sequences frames, redacts secrets, bounds large payloads, and write
     correlation_id: "evil", type: "terminal",
   });
   const bounded = writer.emit("result", { output: "x".repeat(HEADLESS_MAX_LINE_BYTES * 2) });
-  writer.terminal({ ok: true });
+  writer.terminal({ ok: true, exit_code: 0 });
   assert.equal(writer.terminal({ ok: false }), null);
   assert.deepEqual(validateHeadlessFrames(lines), []);
   assert.equal(JSON.parse(lines[0]!).token, "[REDACTED]");
-  assert.equal(JSON.parse(lines[0]!).message, "[REDACTED]");
+  assert.equal(JSON.parse(lines[0]!).message, "Bearer [REDACTED]");
   assert.match(JSON.parse(lines[0]!).remote, /\[REDACTED\]@/);
   assert.equal(JSON.parse(lines[0]!).aws, "[REDACTED]");
   assert.equal(JSON.parse(lines[0]!).gitlab, "[REDACTED]");
-  assert.equal(JSON.parse(lines[0]!).command, "[REDACTED]");
+  assert.equal(JSON.parse(lines[0]!).command, "aws_secret_access_key=[REDACTED]");
   assert.equal(JSON.parse(lines[0]!).protocol, "aether.exec/1");
   assert.equal(JSON.parse(lines[0]!).sequence, 0);
   assert.equal(JSON.parse(lines[0]!).type, "session");
   assert.equal(bounded["payload_bounded"], true);
   const artifact = (bounded["artifact"] as { path: string }).path;
   assert.match(readFileSync(join(root, artifact), "utf8"), /"output": "x+/);
+});
+
+test("headless redaction covers canonical and CLI credential shapes in frames and artifacts", () => {
+  const root = mkdtempSync(join(tmpdir(), "aether-headless-redact-"));
+  const lines: string[] = [];
+  const writer = new HeadlessWriter(root, (line) => lines.push(line.trimEnd()), "redact-session");
+  const leaks = [
+    "url-user-secret", "query-token-secret", "flag-password-secret", "env-token-secret",
+    "nested-token-secret", "glpat-abcdefghijklmnop", "AKIAABCDEFGHIJKLMNOP",
+    "aws-secret-value-abcdefghijklmnop",
+  ];
+  writer.emit("session", {
+    session: "redact-session",
+    repository: { remote: `https://user:${leaks[0]}@example.test/repo?access_token=${leaks[1]}` },
+    verification_command: `runner --password ${leaks[2]} AETHER_TOKEN=${leaks[3]}`,
+  });
+  writer.emit("tool_receipt", {
+    output: `nested TOKEN=${leaks[4]} ${leaks[5]} ${leaks[6]} aws_secret_access_key=${leaks[7]}`,
+  });
+  const bounded = writer.emit("agent_event", {
+    event: {
+      nested: { access_token: leaks[1] },
+      output:
+        `${"x".repeat(HEADLESS_MAX_LINE_BYTES * 2)} ` +
+        `https://user:${leaks[0]}@example.test/repo?access_token=${leaks[1]} ` +
+        `--password ${leaks[2]} AETHER_TOKEN=${leaks[3]} nested TOKEN=${leaks[4]} ` +
+        `${leaks[5]} ${leaks[6]} aws_secret_access_key=${leaks[7]}`,
+    },
+  });
+  writer.terminal({ ok: false, exit_code: 1 });
+  const artifact = (bounded["artifact"] as { path: string }).path;
+  const published = lines.join("\n") + readFileSync(join(root, artifact), "utf8");
+  for (const leak of leaks) assert.equal(published.includes(leak), false, `leaked ${leak}`);
+  assert.match(published, /\[REDACTED\]/);
 });
 
 test("frame validator catches malformed, duplicate, truncated, and duplicate-terminal streams", () => {
@@ -92,6 +127,31 @@ test("frame validator catches malformed, duplicate, truncated, and duplicate-ter
     JSON.stringify({ protocol: "aether.exec/1", sequence: 1, correlation_id: "other", type: "terminal" }),
   ];
   assert.match(validateHeadlessFrames(identityMismatch).join(";"), /session frame identity must match/);
+  const incompleteTerminal = [
+    JSON.stringify({ protocol: "aether.exec/1", sequence: 0, correlation_id: "x", type: "session", session: "x" }),
+    JSON.stringify({ protocol: "aether.exec/1", sequence: 1, correlation_id: "x", type: "terminal" }),
+  ];
+  assert.match(validateHeadlessFrames(incompleteTerminal).join(";"), /terminal ok must be boolean.*terminal exit_code must be an integer/s);
+});
+
+test("headless Ollama sees only the explicitly allowed schemas and truthful verification persona", async () => {
+  let names: string[] = [];
+  let system = "";
+  const brain = new OllamaBrain({
+    tools: ["read_file", "write_file", "repo_search"],
+    chat: async (messages, options) => {
+      names = (options?.tools ?? []).map((schema) => schema.function.name);
+      system = messages[0]?.content ?? "";
+      return { role: "assistant", content: "done" };
+    },
+  });
+  const events: BrainEvent[] = [];
+  for await (const event of brain.run({ type: "task", text: "inspect", cwd: ".", poolGb: 1 })) events.push(event);
+  assert.deepEqual(names, ["read_file", "write_file", "repo_search"]);
+  assert.equal(names.some((name) => ["run_shell", "run_tests", "git_commit", "web_search", "web_fetch"].includes(name)), false);
+  assert.doesNotMatch(system, /After editing, run the tests/);
+  assert.match(system, /host performs authoritative verification/);
+  assert.equal(events.at(-1)?.type, "done");
 });
 
 test("controls are versioned and reject duplicates and commands after cancellation", () => {
@@ -186,6 +246,9 @@ test("malformed and truncated control input terminal-fail", () => {
     assert.equal(run.frames.at(-1)?.["type"], "terminal");
     assert.equal(run.frames.at(-1)?.["exit_code"], 64);
   }
+  const oversized = runControlMutation(mkdtempSync(join(tmpdir(), "aether-headless-")), "x".repeat(HEADLESS_MAX_LINE_BYTES + 1));
+  assert.equal(oversized.status, 64);
+  assert.match(String(oversized.frames.find((frame) => frame["type"] === "control_result")?.["error"]), /unterminated control frame exceeds/);
 });
 
 test("pause, resume, and steer are explicitly rejected rather than acknowledged", () => {

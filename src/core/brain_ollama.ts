@@ -39,6 +39,8 @@ export interface OllamaBrainOptions {
   model?: string;
   /** Max chat<->tool turns before the loop breaks (runaway guard). */
   maxTurns?: number;
+  /** Model-facing tool allowlist. The host still enforces every call. */
+  tools?: readonly ToolName[];
   /** Test seam: inject a fake chat. Production omits it and uses ollamaChat. */
   chat?: OllamaChatFn;
 }
@@ -50,12 +52,18 @@ const DEFAULT_MAX_TURNS = 24;
 // them so the model can request them. Names are pinned by TOOLS (protocol v3).
 const TOOL_SCHEMAS: readonly ToolSchema[] = ollamaToolSchemas();
 
-const SYSTEM_PERSONA =
-  "You are Aether Code, an autonomous coding agent running locally. You work in " +
-  "a real repository and make progress by CALLING TOOLS, not by describing what " +
-  "you would do. Read before you write. After editing, run the tests. When the " +
-  "task is genuinely complete and the tests pass, reply with a short final " +
-  "answer and DO NOT call any tool — that ends the turn.";
+function systemPersona(tools: readonly ToolName[]): string {
+  const canTest = tools.includes("run_tests");
+  return (
+    "You are Aether Code, an autonomous coding agent running locally. You work in " +
+    "a real repository and make progress by CALLING ONLY THE ADVERTISED TOOLS, not by describing " +
+    "actions you cannot perform. Read before you write. " +
+    (canTest
+      ? "After editing, run the tests. When the task is genuinely complete and the tests pass, "
+      : "Do not claim to run tests; the host performs authoritative verification after you finish. When the task is complete, ") +
+    "reply with a short final answer and DO NOT call any tool — that ends the turn."
+  );
+}
 
 export class OllamaBrain implements Brain {
   private readonly queue = new EventQueue();
@@ -134,8 +142,10 @@ export class OllamaBrain implements Brain {
   private async loop(task: TaskCommand): Promise<void> {
     const model = this.opts.model || task.model || undefined;
     const maxTurns = this.opts.maxTurns ?? DEFAULT_MAX_TURNS;
+    const tools = this.opts.tools ?? TOOLS;
+    const schemas = this.opts.tools ? ollamaToolSchemas(tools) : TOOL_SCHEMAS;
     const messages: ChatMessage[] = [
-      { role: "system", content: SYSTEM_PERSONA },
+      { role: "system", content: systemPersona(tools) },
       { role: "user", content: task.text },
     ];
 
@@ -154,7 +164,7 @@ export class OllamaBrain implements Brain {
           reply = await this.chat(messages, {
             ...(model ? { model } : {}),
             ...(this.opts.host ? { host: this.opts.host } : {}),
-            tools: TOOL_SCHEMAS,
+            tools: schemas,
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -255,7 +265,7 @@ function parseArgs(raw: string): Record<string, unknown> {
  * nothing kept in step with the validator. Generating them means the host's
  * validator and the model's contract cannot drift.
  */
-export function ollamaToolSchemas(): readonly ToolSchema[] {
+export function ollamaToolSchemas(tools: readonly ToolName[] = TOOLS): readonly ToolSchema[] {
   const summaries: Readonly<Record<ToolName, string>> = {
     read_file: "Read a workspace file.",
     write_file: "Write or overwrite a workspace file.",
@@ -267,7 +277,7 @@ export function ollamaToolSchemas(): readonly ToolSchema[] {
     web_fetch: "Fetch a web page as readable text.",
   };
 
-  return TOOLS.map((name) => {
+  return tools.map((name) => {
     const definition = TOOL_DEFINITIONS[name];
     const properties: Record<string, Record<string, unknown>> = {};
     const required: string[] = [];

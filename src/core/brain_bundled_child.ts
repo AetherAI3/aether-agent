@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { Brain, TaskCommand } from "./brain.js";
 import { EventQueue } from "./brain.js";
-import { LineBuffer, type BrainEvent } from "./brain_protocol.js";
+import { LineBuffer, type BrainEvent, type ToolName } from "./brain_protocol.js";
 import type { ToolResult } from "./tool_executor.js";
 import { terminateProcessTree } from "./process_tree_kill.js";
 
@@ -11,6 +11,7 @@ export type BundledChildMode = "ollama" | "selftest";
 export interface BundledChildBrainOptions {
   mode?: BundledChildMode;
   diagnostic?: (text: string) => void;
+  allowedTools?: readonly ToolName[];
 }
 
 export class BundledChildBrain implements Brain {
@@ -59,7 +60,7 @@ export class BundledChildBrain implements Brain {
       if (this.lines.rest().trim()) this.queue.push({ type: "error", msg: "bundled brain emitted truncated JSONL" });
       this.queue.end();
     });
-    child.stdin.write(JSON.stringify(task) + "\n");
+    child.stdin.write(JSON.stringify({ ...task, allowed_tools: this.opts.allowedTools ?? [] }) + "\n");
     return this.queue.drain();
   }
 

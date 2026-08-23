@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { redactForBundle, SENSITIVE_KEY } from "./redaction.js";
 
 export const HEADLESS_PROTOCOL = "aether.exec/1";
 export const HEADLESS_CONTROL_PROTOCOL = "aether.exec.control/1";
@@ -17,15 +18,25 @@ export interface HeadlessFrame {
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const FRAME_TYPE = /^[a-z][a-z0-9_-]{0,63}$/;
 const RESERVED = new Set(["protocol", "sequence", "correlation_id", "type"]);
-const SECRET_KEY = /(?:authorization|api[-_]?key|(?:access[-_]?|refresh[-_]?)?token|password|passwd|secret|cookie|credential|private[-_]?key)/i;
-const SECRET_VALUE = /\b(?:Bearer\s+[A-Za-z0-9._~+\/-]{8,}|sk-[A-Za-z0-9_-]{8,}|gh[opusr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{8,}|glpat-[A-Za-z0-9_-]{8,}|npm_[A-Za-z0-9]{8,}|pypi-[A-Za-z0-9_-]{8,}|xox[baprs]-[A-Za-z0-9-]{8,}|AIza[A-Za-z0-9_-]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16}|aws_secret_access_key\s*[=:]\s*[A-Za-z0-9/+]{20,})\b/gi;
-const CREDENTIALED_URL = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi;
+const HEADLESS_SENSITIVE_KEY = /(?:token|secret|password|passwd|authorization|api[_-]?key|private[_-]?key|credential|pat|cookie|signature)/i;
+const SECRET_VALUE = /\b(?:sk-[A-Za-z0-9_-]{8,}|gh[opusr]_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{8,}|glpat-[A-Za-z0-9_-]{8,}|npm_[A-Za-z0-9]{8,}|pypi-[A-Za-z0-9_-]{8,}|xox[baprs]-[A-Za-z0-9-]{8,}|AIza[A-Za-z0-9_-]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16})\b/gi;
+const QUERY_SECRET = /([?&](?:access[_-]?token|refresh[_-]?token|token|api[_-]?key|password|passwd|secret|signature|sig)=)[^&#\s]*/gi;
+const FLAG_SECRET = /(--(?:password|passwd|token|api[_-]?key|secret)(?:=|\s+))(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+const ASSIGNMENT_SECRET = /\b([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL)[A-Za-z0-9_]*\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;"']+)/gi;
+const AWS_SECRET = /\b(aws_secret_access_key\s*[=:]\s*)[A-Za-z0-9/+]{20,}/gi;
+
+function redactHeadlessString(value: string): string {
+  return redactForBundle(value)
+    .replace(QUERY_SECRET, "$1[REDACTED]")
+    .replace(FLAG_SECRET, "$1[REDACTED]")
+    .replace(ASSIGNMENT_SECRET, "$1[REDACTED]")
+    .replace(AWS_SECRET, "$1[REDACTED]")
+    .replace(SECRET_VALUE, "[REDACTED]");
+}
 
 export function redactHeadless(value: unknown, key = ""): unknown {
-  if (SECRET_KEY.test(key)) return "[REDACTED]";
-  if (typeof value === "string") {
-    return value.replace(CREDENTIALED_URL, "$1[REDACTED]@").replace(SECRET_VALUE, "[REDACTED]");
-  }
+  if (SENSITIVE_KEY.test(key) || HEADLESS_SENSITIVE_KEY.test(key)) return "[REDACTED]";
+  if (typeof value === "string") return redactHeadlessString(value);
   if (Array.isArray(value)) return value.map((item) => redactHeadless(item));
   if (value && typeof value === "object") {
     return Object.fromEntries(
@@ -184,6 +195,8 @@ export function validateHeadlessFrames(lines: readonly string[]): string[] {
       if (terminal) errors.push(`line ${index + 1}: duplicate terminal frame`);
       terminal = true;
       if (sessionId && frame["correlation_id"] !== sessionId) errors.push("terminal correlation_id must match session");
+      if (typeof frame["ok"] !== "boolean") errors.push("terminal ok must be boolean");
+      if (!Number.isSafeInteger(frame["exit_code"])) errors.push("terminal exit_code must be an integer");
       if (index !== lines.length - 1) errors.push("terminal frame must be last");
     }
     expected++;

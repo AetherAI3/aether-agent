@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { OllamaBrain } from "./brain_ollama.js";
-import { LineBuffer, type BrainEvent } from "./brain_protocol.js";
+import { LineBuffer, TOOLS, type BrainEvent, type ToolName } from "./brain_protocol.js";
 import type { TaskCommand } from "./brain.js";
 
 type ChildMode = "ollama" | "selftest";
@@ -12,7 +12,7 @@ function emit(event: BrainEvent): void {
 
 export function runHeadlessBrainChild(mode: ChildMode): void {
   const lines = new LineBuffer();
-  const brain = mode === "ollama" ? new OllamaBrain() : null;
+  let brain: OllamaBrain | null = null;
   let started = false;
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (chunk: string) => {
@@ -29,6 +29,10 @@ export function runHeadlessBrainChild(mode: ChildMode): void {
           process.stdin.pause();
           return;
         }
+        const allowed = Array.isArray(message["allowed_tools"])
+          ? message["allowed_tools"].filter((tool): tool is ToolName => (TOOLS as readonly unknown[]).includes(tool))
+          : [];
+        brain = new OllamaBrain({ tools: allowed });
         const task = message as unknown as TaskCommand;
         void (async () => {
           for await (const event of brain!.run(task)) emit(event);

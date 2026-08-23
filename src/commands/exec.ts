@@ -8,7 +8,7 @@ import type { BrainDone, VerifyOutcome } from "../core/verify_gate.js";
 import { ToolExecutor, type ToolResult } from "../core/tool_executor.js";
 import { TOOLS, PROTOCOL_VERSION } from "../core/brain_protocol.js";
 import { toolDefinition } from "../core/tool_registry.js";
-import { ControlLedger, HeadlessWriter, HEADLESS_CONTROL_PROTOCOL, parseControlFrame, redactHeadless } from "../core/headless_protocol.js";
+import { ControlLedger, HeadlessWriter, HEADLESS_CONTROL_PROTOCOL, HEADLESS_MAX_LINE_BYTES, parseControlFrame, redactHeadless } from "../core/headless_protocol.js";
 import { LineBuffer } from "../core/brain_protocol.js";
 
 export const EXEC_EXIT = { ok: 0, failed: 1, usage: 2, unverified: 4, protocol: 64, timeout: 124, cancelled: 130 } as const;
@@ -69,8 +69,10 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
   if (opts.resume) warnings.push("resume is not supported by aether.exec/1; the request will be rejected without starting a brain");
   const driver = opts.driver ?? "ollama";
   if (driver === "selftest") warnings.push("selftest driver validates installed child/protocol wiring only; it performs no model work");
-  const brain = opts.brain ?? new BundledChildBrain({ mode: driver, diagnostic: (text) =>
-    process.stderr.write(String(redactHeadless(text))),
+  const brain = opts.brain ?? new BundledChildBrain({
+    mode: driver,
+    allowedTools: [...declared] as (typeof EXEC_V1_TOOLS)[number][],
+    diagnostic: (text) => process.stderr.write(String(redactHeadless(text))),
   });
   const exec = new ToolExecutor(cwd, opts.verifyCommand);
   const abort = new AbortController();
@@ -151,6 +153,10 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
     for (const line of controls.push(String(chunk))) {
       if (cancelled) break;
       if (line.trim()) consumeControl(line);
+    }
+    if (!cancelled && Buffer.byteLength(controls.rest(), "utf8") > HEADLESS_MAX_LINE_BYTES) {
+      writer.emit("control_result", { accepted: false, error: "unterminated control frame exceeds 16384 bytes" });
+      cancel("protocol");
     }
   };
   const onStdinEnd = (): void => {
