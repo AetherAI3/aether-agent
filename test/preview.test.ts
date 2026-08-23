@@ -34,11 +34,15 @@ test("preview contract accepts loopback only and strips hostile terminal control
 });
 
 test("preview command validation confines cwd and rejects hostile argv", () => {
-  const root = tempProject(); mkdirSync(join(root, "app"));
+  const root = tempProject(); const outside = tempProject(); mkdirSync(join(root, "app"));
   const command = validatePreviewCommand({ executable: "npm", args: ["run", "dev"], cwd: "app", readyUrl: "http://localhost:3000", timeoutMs: 1000 }, root);
   assert.equal(command.cwd, join(root, "app"));
   assert.equal(commandDigest(command), commandDigest({ ...command }));
-  assert.throws(() => resolvePreviewCwd(root, ".."), /inside the project/);
+  for (const hostilePath of ["..", "..\\", "../", "%2e%2e", "%2e%2e%2foutside", "/tmp"]) {
+    assert.throws(() => resolvePreviewCwd(root, hostilePath), /inside the project|existing directory/, hostilePath);
+  }
+  symlinkSync(outside, join(root, "linked-outside"), process.platform === "win32" ? "junction" : "dir");
+  assert.throws(() => resolvePreviewCwd(root, "linked-outside"), /escapes the project through a link/);
   assert.throws(() => validatePreviewCommand({ executable: "npm\ncalc", args: [], cwd: ".", timeoutMs: 1000 }, root), /control/);
   assert.throws(() => validatePreviewCommand({ executable: "npm", args: ["x\n--evil"], cwd: ".", timeoutMs: 1000 }, root), /controls/);
   for (const args of [

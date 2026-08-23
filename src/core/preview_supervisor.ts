@@ -5,7 +5,7 @@ import {
   readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync,
 } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { dirname, isAbsolute, join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   commandDigest, isLoopbackUrl, parsePreviewState, PREVIEW_SCHEMA, previewPathStillNames, previewPaths,
@@ -46,10 +46,12 @@ function reply(res: ServerResponse, status: number, body: unknown): void {
   res.end(text);
 }
 
-function consumeControlRequest(launch: PreviewLaunch, req: IncomingMessage): boolean {
+function consumeControlRequest(launch: PreviewLaunch, controlDir: string, req: IncomingMessage): boolean {
   const requestId = req.headers["x-aether-preview-control"];
   if (typeof requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) return false;
-  const requestPath = join(dirname(launch.statePath), `control-${requestId}.json`);
+  // controlDir comes from previewPaths(process.cwd()), not the launch payload.
+  // The request id is constrained to a UUID before it is interpolated.
+  const requestPath = join(controlDir, `control-${requestId}.json`);
   try {
     const stable = readStablePreviewFile(requestPath, 1_024);
     const value: unknown = JSON.parse(stable.bytes.toString("utf8"));
@@ -91,15 +93,21 @@ async function probe(url: string): Promise<boolean> {
 
 export async function runPreviewSupervisor(launchJson: string): Promise<number> {
   let launch: PreviewLaunch;
+  let controlDir: string;
   try {
     const parsed: unknown = JSON.parse(launchJson);
     if (!validLaunch(parsed)) throw new Error("invalid launch contract");
-    const projectRoot = realpathSync(parsed.projectRoot);
+    // The parent starts this detached process with cwd set to the declared
+    // project. Treat that inherited OS state, rather than stdin JSON, as the
+    // filesystem authority. A hand-crafted payload may describe a project but
+    // can never redirect supervisor reads, writes, or cleanup outside this cwd.
+    const projectRoot = realpathSync(process.cwd());
     const paths = previewPaths(projectRoot);
     const command = validatePreviewCommand(parsed.command as PreviewCommand, projectRoot);
     if (parsed.projectRoot !== projectRoot || parsed.statePath !== paths.statePath || parsed.logPath !== paths.logPath ||
         parsed.commandDigest !== commandDigest(command)) throw new Error("launch contract confinement or digest mismatch");
-    launch = { ...parsed, projectRoot, command };
+    launch = { ...parsed, projectRoot, statePath: paths.statePath, logPath: paths.logPath, command };
+    controlDir = paths.dir;
   } catch { return 2; }
 
   let child: ChildProcess | null = null;
@@ -114,7 +122,7 @@ export async function runPreviewSupervisor(launchJson: string): Promise<number> 
     // The request is authorized by a one-use file created inside the private
     // project state directory. A browser cannot create it, another OS user
     // cannot access that directory, and no reusable bearer credential exists.
-    if (!consumeControlRequest(launch, req)) return reply(res, 403, { ok: false });
+    if (!consumeControlRequest(launch, controlDir, req)) return reply(res, 403, { ok: false });
     if (req.url === "/status" && req.method === "GET") return reply(res, 200, state);
     if (req.url === "/stop" && req.method === "POST") {
       if (!stopping) {
