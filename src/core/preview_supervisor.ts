@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   chmodSync, closeSync, constants, existsSync, fstatSync, ftruncateSync, lstatSync, openSync,
-  readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync,
+  readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync,
 } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { isAbsolute, join } from "node:path";
@@ -49,9 +49,14 @@ function reply(res: ServerResponse, status: number, body: unknown): void {
 function consumeControlRequest(launch: PreviewLaunch, controlDir: string, req: IncomingMessage): boolean {
   const requestId = req.headers["x-aether-preview-control"];
   if (typeof requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) return false;
-  // controlDir comes from previewPaths(process.cwd()), not the launch payload.
-  // The request id is constrained to a UUID before it is interpolated.
-  const requestPath = join(controlDir, `control-${requestId}.json`);
+  // The header is never used to construct a path. Select an existing, exact
+  // control entry from the private directory instead; directory entries cannot
+  // contain a path separator and the pattern rejects every non-owned sibling.
+  const controlName = readdirSync(controlDir).find((name) =>
+    name === `control-${requestId}.json` && /^control-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/i.test(name),
+  );
+  if (!controlName) return false;
+  const requestPath = join(controlDir, controlName);
   try {
     const stable = readStablePreviewFile(requestPath, 1_024);
     const value: unknown = JSON.parse(stable.bytes.toString("utf8"));

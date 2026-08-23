@@ -3,7 +3,7 @@ import {
   closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync,
   readSync, realpathSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { redactForBundle } from "./redaction.js";
 
 export const PREVIEW_SCHEMA = "aether.preview/1" as const;
@@ -72,9 +72,13 @@ export function commandDigest(command: PreviewCommand): string {
   })).digest("hex");
 }
 
-function inside(root: string, target: string): boolean {
-  const rel = relative(root, target);
-  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
+/**
+ * CodeQL recognizes the normalized literal-prefix check at the filesystem
+ * boundary. Keep the separator in the prefix: `/safe/project-two` must never
+ * be accepted as a child of `/safe/project`.
+ */
+function assertContained(root: string, target: string, message: string): void {
+  if (target !== root && !target.startsWith(`${root}${sep}`)) throw new Error(message);
 }
 
 export function isOwnerPrivateMode(mode: number, kind: "directory" | "file"): boolean {
@@ -117,9 +121,11 @@ export function previewPathStillNames(path: string, identity: PreviewFileIdentit
 export function resolvePreviewCwd(projectRoot: string, requested = "."): string {
   const root = realpathSync(resolve(projectRoot));
   const candidate = resolve(root, requested);
-  if (!inside(root, candidate) || !existsSync(candidate)) throw new Error("preview cwd must be an existing directory inside the project");
+  assertContained(root, candidate, "preview cwd must be an existing directory inside the project");
+  if (!existsSync(candidate)) throw new Error("preview cwd must be an existing directory inside the project");
   const real = realpathSync(candidate);
-  if (!inside(root, real) || !lstatSync(real).isDirectory()) throw new Error("preview cwd escapes the project through a link");
+  assertContained(root, real, "preview cwd escapes the project through a link");
+  if (!lstatSync(real).isDirectory()) throw new Error("preview cwd escapes the project through a link");
   return real;
 }
 
@@ -131,9 +137,11 @@ export function previewPaths(projectRoot: string): { dir: string; statePath: str
   for (const path of [aether, dir]) {
     if (existsSync(path)) {
       const stat = lstatSync(path);
-      if (stat.isSymbolicLink() || !stat.isDirectory() || !inside(root, realpathSync(path))) {
+      const real = realpathSync(path);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
         throw new Error("refusing preview state through a symlink, junction, or non-directory path");
       }
+      assertContained(root, real, "refusing preview state through a symlink, junction, or non-directory path");
     } else {
       mkdirSync(path, { mode: 0o700 });
     }
