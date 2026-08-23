@@ -128,10 +128,12 @@ Both flags work on `aether chat` and the REPL too.
 
 ### `aether exec "<task>"` — headless packaged agent
 
-Runs the packaged Ollama child by default, or an authenticated Aether dev session with
+Runs the packaged Ollama child by default, or an authenticated hosted Cloud text-model dev session with
 `--exec-driver cloud`. The cloud path keeps tool authority in this host and refuses any
 legacy server-executed downgrade; it requires explicit `--model <id>` so resumable authority
-cannot drift with a changed server default. Stdout contains only versioned JSONL protocol frames;
+cannot drift with a changed server default, plus `--max-uvt <positive-integer>` as a per-session
+hosted spend ceiling. Both bindings are persisted for v2 resume. Neo/Kronus `aether-*` orchestrator IDs are rejected
+because this endpoint cannot preserve their router identity. Stdout contains only versioned JSONL protocol frames;
 diagnostics use stderr. Protocol v1 remains
 the default. Select `--exec-protocol 2` for repository-bound checkpoints, pause/resume/steer,
 bounded idempotent controls, and confined reusable agent definitions. The default tool envelope
@@ -142,7 +144,8 @@ requires the verification result to remain bound to the same commit and workspac
 | Flag | Meaning |
 |---|---|
 | `--exec-protocol <1\|2>` | Select the headless protocol; v1 remains the compatibility default. |
-| `--exec-driver <ollama\|cloud\|selftest>` | Use the local model child, local-authority Aether dev session (with explicit `--model`), or model-free installation selftest. |
+| `--exec-driver <ollama\|cloud\|selftest>` | Use the local model child, local-authority hosted text-model dev session (with explicit `--model`), or model-free installation selftest. |
+| `--max-uvt <positive-integer>` | Required cloud-driver per-session hosted spend ceiling; unavailable to local drivers and immutable on v2 resume. |
 | `--permission <deny\|read-only\|workspace-write>` | Set the host-enforced permission ceiling. |
 | `--allow-tool <name>` | Declare a safe file/search tool; repeat to declare more than one. |
 | `--capability-pack <id>` | Record a bounded capability-pack identifier; repeatable. |

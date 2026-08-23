@@ -191,7 +191,7 @@ flags and checks.
 |---|---|
 | `aether agent [task]` | Open the agent REPL or run a coding task. |
 | `aether agent --local [task]` | Use the built-in Ollama brain. |
-| `aether exec --exec-driver cloud --exec-protocol 2 --model <id> "task"` | Run headless JSONL through a model-bound, local-authority Aether dev session. |
+| `aether exec --exec-driver cloud --exec-protocol 2 --model <text-model-id> --max-uvt <limit> "task"` | Run budget- and model-bound headless JSONL through a local-authority hosted Cloud dev session. |
 | `aether auth login` | Authorize a hosted account. |
 | `aether models` | Read the current hosted model catalogue. |
 | `aether doctor` | Inspect setup and optionally run live diagnostics. |

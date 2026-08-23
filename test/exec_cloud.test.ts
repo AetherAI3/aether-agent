@@ -13,6 +13,7 @@ import { runHeadlessExec } from "../src/commands/exec.js";
 
 const encoder = new TextEncoder();
 const successfulVerify = `${JSON.stringify(process.execPath)} -e "process.exit(0)"`;
+const hostedTextModel = "sonnet";
 
 function repository(): string {
   const root = mkdtempSync(join(tmpdir(), "aether-exec-cloud-"));
@@ -32,7 +33,7 @@ function repository(): string {
 function context(cwd: string, api: AppContext["api"], model?: string): AppContext {
   return {
     cfg: {
-      baseUrl: "https://stub.test", defaultModel: "gpt56_sol", permissionMode: "ask",
+      baseUrl: "https://stub.test", defaultModel: hostedTextModel, permissionMode: "ask",
       autoApply: false, telemetry: false, defaultEffort: "LOW", backend: "cloud",
     },
     api,
@@ -58,7 +59,7 @@ test("cloud controls await and validate the Aether acknowledgement, failing clos
     postJson: async (path: string, body: unknown) => {
       calls.push({ path, body });
       if (path === "/agent/dev/sessions") {
-        return { session_id: "devs_cloud", protocol_version: 1, model: "gpt56_sol" };
+        return { session_id: "devs_cloud", protocol_version: 1, model: hostedTextModel };
       }
       if (path.endsWith("/control")) {
         const action = (body as Record<string, unknown>)["action"];
@@ -79,7 +80,7 @@ test("cloud controls await and validate the Aether acknowledgement, failing clos
     localToolCapabilities: ["read_file"],
   });
   const iterator = brain.run({
-    type: "task", text: "inspect", cwd: ".", poolGb: 1, model: "gpt56_sol",
+    type: "task", text: "inspect", cwd: ".", poolGb: 1, model: hostedTextModel,
   })[Symbol.asyncIterator]();
   assert.equal((await iterator.next()).value?.type, "stage");
 
@@ -118,19 +119,20 @@ test("packaged cloud driver uses local-authority CloudBrain and emits one termin
   const api = {
     postJson: async (path: string, body: unknown) => {
       calls.push({ path, body });
-      return { session_id: "devs_packaged", protocol_version: 1, model: "gpt56_sol" };
+      return { session_id: "devs_packaged", protocol_version: 1, model: hostedTextModel };
     },
     stream: async () => sse({ type: "done", seq: 1, ok: true, uvt: 1, cents: 0 }),
     deleteJson: async () => undefined,
   } as unknown as AppContext["api"];
   const lines: string[] = [];
-  const code = await runHeadlessExec(context(root, api, "gpt56_sol"), "inspect the repository", {
+  const code = await runHeadlessExec(context(root, api, hostedTextModel), "inspect the repository", {
     permission: "read-only",
     allowedTools: ["read_file"],
     capabilityPacks: ["core.read.v1"],
     timeoutMs: 30_000,
     verifyCommand: successfulVerify,
     driver: "cloud",
+    maxUvt: 2_000,
     protocol: HEADLESS_PROTOCOL_V2,
     checkpointDirectory,
     sessionId: "cloud-session",
@@ -140,33 +142,36 @@ test("packaged cloud driver uses local-authority CloudBrain and emits one termin
   assert.deepEqual(validateHeadlessFrames(lines, HEADLESS_PROTOCOL_V2), []);
   const frames = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
   assert.equal(frames[0]?.["backend"], "aether-cloud-dev-session");
-  assert.equal(frames[0]?.["model"], "gpt56_sol");
+  assert.equal(frames[0]?.["model"], hostedTextModel);
   assert.equal(frames.filter((frame) => frame["type"] === "terminal").length, 1);
   const create = calls.find((call) => call.path === "/agent/dev/sessions");
   assert.ok(create);
-  assert.equal((create.body as Record<string, unknown>)["model"], "gpt56_sol");
+  assert.equal((create.body as Record<string, unknown>)["model"], hostedTextModel);
   assert.deepEqual((create.body as Record<string, unknown>)["capabilities"], ["read_file"]);
+  assert.equal((create.body as Record<string, unknown>)["max_uvt"], 2_000);
   const checkpoint = JSON.parse(readFileSync(join(checkpointDirectory, "cloud-session.json"), "utf8"));
   assert.equal(checkpoint.driver, "cloud");
-  assert.equal(checkpoint.model, "gpt56_sol");
+  assert.equal(checkpoint.model, hostedTextModel);
   assert.equal(checkpoint.model_tag, null);
+  assert.equal(checkpoint.max_uvt, 2_000);
 });
 
 test("packaged cloud driver preserves the aether.exec/1 contract", async () => {
   const root = repository();
   const api = {
-    postJson: async () => ({ session_id: "devs_v1", protocol_version: 1, model: "gpt56_sol" }),
+    postJson: async () => ({ session_id: "devs_v1", protocol_version: 1, model: hostedTextModel }),
     stream: async () => sse({ type: "done", seq: 1, ok: true, uvt: 1, cents: 0 }),
     deleteJson: async () => undefined,
   } as unknown as AppContext["api"];
   const lines: string[] = [];
-  const code = await runHeadlessExec(context(root, api, "gpt56_sol"), "inspect the repository", {
+  const code = await runHeadlessExec(context(root, api, hostedTextModel), "inspect the repository", {
     permission: "read-only",
     allowedTools: ["read_file"],
     capabilityPacks: ["core.read.v1"],
     timeoutMs: 30_000,
     verifyCommand: successfulVerify,
     driver: "cloud",
+    maxUvt: 2_000,
     writeLine: (line) => lines.push(line.trimEnd()),
   });
   assert.equal(code, 0);
@@ -185,11 +190,17 @@ test("packaged cloud driver requires an exact hosted model and refuses local mod
     stream: async () => { calls += 1; return sse(); },
     deleteJson: async () => undefined,
   } as unknown as AppContext["api"];
-  for (const model of [undefined, "ollama:qwen2.5-coder:7b"]) {
+  for (const model of [
+    undefined,
+    "ollama:qwen2.5-coder:7b",
+    "aether-neo-5.1t",
+    "aether-kronus-v2.4",
+    "aether-vision",
+  ]) {
     const lines: string[] = [];
     const code = await runHeadlessExec(context(root, api, model), "inspect", {
       permission: "read-only", allowedTools: ["read_file"], capabilityPacks: [], timeoutMs: 5000,
-      driver: "cloud", writeLine: (line) => lines.push(line.trimEnd()),
+      driver: "cloud", maxUvt: 2_000, writeLine: (line) => lines.push(line.trimEnd()),
     });
     assert.equal(code, 2);
     assert.deepEqual(lines, []);
@@ -207,6 +218,7 @@ test("v2 cloud checkpoints cannot be created or resumed without an exact hosted 
     driver: "cloud" as const,
     model: null,
     modelTag: null,
+    maxUvt: 2_000,
     effort: "LOW",
     permission: "read-only" as const,
     allowedTools: ["read_file"],
@@ -216,12 +228,79 @@ test("v2 cloud checkpoints cannot be created or resumed without an exact hosted 
     authorityTtlMs: 60_000,
   };
   assert.throws(() => store.create(input), /checkpoint model binding is invalid/);
+  assert.throws(
+    () => store.create({ ...input, model: hostedTextModel, maxUvt: null }),
+    /checkpoint UVT budget binding is invalid/,
+  );
 
-  const checkpoint = store.create({ ...input, model: "gpt56_sol" });
+  const checkpoint = store.create({ ...input, model: hostedTextModel });
   checkpoint.model = null;
   checkpoint.owner_pid = 2_147_483_647;
   store.write(checkpoint);
   assert.throws(() => store.loadForResume("cloud-model-binding"), /checkpoint model binding is invalid/);
+});
+
+test("cloud driver requires a positive UVT ceiling and refuses budget override on resume", async () => {
+  const root = repository();
+  const directory = mkdtempSync(join(tmpdir(), "aether-exec-cloud-budget-"));
+  let calls = 0;
+  const api = {
+    postJson: async () => { calls += 1; return {}; },
+    stream: async () => { calls += 1; return sse(); },
+    deleteJson: async () => undefined,
+  } as unknown as AppContext["api"];
+  for (const maxUvt of [undefined, 0, -1, 1.5]) {
+    const code = await runHeadlessExec(context(root, api, hostedTextModel), "inspect", {
+      permission: "read-only", allowedTools: ["read_file"], capabilityPacks: [], timeoutMs: 5000,
+      driver: "cloud", maxUvt, writeLine: () => undefined,
+    });
+    assert.equal(code, 2, String(maxUvt));
+  }
+
+  const store = new HeadlessCheckpointStore(root, directory);
+  const checkpoint = store.create({
+    session: "cloud-budget-binding", task: "inspect", driver: "cloud", model: hostedTextModel,
+    modelTag: null, maxUvt: 2_000, effort: "LOW", permission: "read-only",
+    allowedTools: ["read_file"], capabilityPacks: [], agent: null,
+    verifyCommand: successfulVerify, authorityTtlMs: 60_000,
+  });
+  checkpoint.state = "paused";
+  checkpoint.owner_pid = 2_147_483_647;
+  store.write(checkpoint);
+  const code = await runHeadlessExec(context(root, api), "", {
+    permission: "deny", allowedTools: [], capabilityPacks: [], timeoutMs: 5000,
+    driver: "cloud", maxUvt: 3_000, protocol: HEADLESS_PROTOCOL_V2,
+    checkpointDirectory: directory, resume: "cloud-budget-binding",
+    verifyCommand: successfulVerify, writeLine: () => undefined,
+  });
+  assert.equal(code, 2);
+  assert.equal(calls, 0, "invalid or overridden cloud budget reached the API");
+  const unchanged = JSON.parse(readFileSync(store.path("cloud-budget-binding"), "utf8"));
+  assert.equal(unchanged.state, "paused");
+  assert.equal(unchanged.owner_pid, 2_147_483_647);
+  unchanged.max_uvt = null;
+  writeFileSync(store.path("cloud-budget-binding"), JSON.stringify(unchanged), "utf8");
+  assert.throws(() => store.loadForResume("cloud-budget-binding"), /checkpoint UVT budget binding is invalid/);
+});
+
+test("cloud brain tears down a session whose model acknowledgement drifted", async () => {
+  let streams = 0;
+  const deleted: string[] = [];
+  const api = {
+    postJson: async () => ({ session_id: "devs_model_drift", protocol_version: 1, model: "sonnet" }),
+    stream: async () => { streams += 1; return sse(); },
+    deleteJson: async (path: string) => { deleted.push(path); },
+  } as unknown as AppContext["api"];
+  const brain = new CloudBrain(api, undefined, { requireLocalAuthority: true, maxUvt: 2_000 });
+  const events = [];
+  for await (const event of brain.run({
+    type: "task", text: "inspect", cwd: ".", poolGb: 1, model: "gpt55",
+  })) events.push(event);
+  assert.equal(streams, 0);
+  assert.deepEqual(deleted, ["/agent/dev/sessions/devs_model_drift"]);
+  const terminalEvent = events.at(-1);
+  assert.equal(terminalEvent?.type, "error");
+  assert.match(terminalEvent?.type === "error" ? terminalEvent.msg : "", /did not preserve/);
 });
 
 test("packaged cloud driver refuses server-side downgrade without opening legacy chat", async () => {
@@ -233,9 +312,9 @@ test("packaged cloud driver refuses server-side downgrade without opening legacy
     deleteJson: async () => undefined,
   } as unknown as AppContext["api"];
   const lines: string[] = [];
-  const code = await runHeadlessExec(context(root, api, "gpt56_sol"), "inspect", {
+  const code = await runHeadlessExec(context(root, api, hostedTextModel), "inspect", {
     permission: "read-only", allowedTools: ["read_file"], capabilityPacks: [], timeoutMs: 5000,
-    driver: "cloud", writeLine: (line) => lines.push(line.trimEnd()),
+    driver: "cloud", maxUvt: 2_000, writeLine: (line) => lines.push(line.trimEnd()),
   });
   assert.equal(code, 1);
   assert.equal(streams, 0, "local-authority driver opened a legacy server-executed stream");

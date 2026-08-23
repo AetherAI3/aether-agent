@@ -1,5 +1,5 @@
 <!-- GENERATED FILE: run `npm run docs:generate`; do not edit by hand. -->
-<!-- manifest-digest: sha256:d2ae53b89767b2dd4763e957e4851d97fb953d305304b3a581a3596c82bbf6c4 -->
+<!-- manifest-digest: sha256:7bd034ba1a1aa2fd9c87609a29aeac2eae7dae211901b71a23d60fd8e212fd55 -->
 # Generated command reference
 
 This reference is generated from the validated, versioned command manifest. Availability is evaluated at runtime; a listed command may still require authentication, a hosted capability, or local tooling.
@@ -66,6 +66,7 @@ Command flags:
 - `--allow-tool <value>…`
 - `--capability-pack <value>…`
 - `--timeout-ms <value>`
+- `--max-uvt <value>`
 - `--exec-driver <value>`
 - `--exec-protocol <value>`
 - `--agent-definition <value>`

@@ -1910,6 +1910,9 @@ export const COMMAND_MANIFEST_SOURCE: readonly CommandManifestEntry[] = [
       "timeout-ms": {
         "type": "string"
       },
+      "max-uvt": {
+        "type": "string"
+      },
       "exec-driver": {
         "type": "string"
       },
@@ -1940,7 +1943,7 @@ export const COMMAND_MANIFEST_SOURCE: readonly CommandManifestEntry[] = [
     },
     "release": {
       "disposition": "new",
-      "note": "Packaged Ollama, Aether cloud-dev-session, and model-free selftest drivers with compatible aether.exec/1 and repository-bound aether.exec/2 JSONL sessions."
+      "note": "Packaged Ollama, model-and-UVT-bound local-authority hosted text-model cloud-dev-session, and model-free selftest drivers with compatible aether.exec/1 and repository-bound aether.exec/2 JSONL sessions."
     }
   },
   {

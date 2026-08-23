@@ -96,6 +96,7 @@ export interface HeadlessCheckpoint {
   driver: HeadlessDriver;
   model: string | null;
   model_tag: string | null;
+  max_uvt: number | null;
   effort: string | null;
   permission: HeadlessPermission;
   allowed_tools: string[];
@@ -117,6 +118,7 @@ export interface CreateCheckpointInput {
   driver: HeadlessDriver;
   model: string | null;
   modelTag: string | null;
+  maxUvt?: number | null;
   effort: string | null;
   permission: HeadlessPermission;
   allowedTools: readonly string[];
@@ -322,10 +324,18 @@ function validateCheckpoint(value: unknown, expectedSession: string): HeadlessCh
       || checkpoint.model === null
       || !checkpoint.model.trim()
       || checkpoint.model.startsWith("ollama:")
+      || checkpoint.model.startsWith("aether-")
       || Buffer.byteLength(checkpoint.model, "utf8") > 256
     ))
   ) {
     throw new Error("checkpoint model binding is invalid");
+  }
+  if (checkpoint.max_uvt === undefined && checkpoint.driver !== "cloud") checkpoint.max_uvt = null;
+  if (
+    (checkpoint.driver === "cloud" && (!Number.isSafeInteger(checkpoint.max_uvt) || (checkpoint.max_uvt ?? 0) <= 0))
+    || (checkpoint.driver !== "cloud" && checkpoint.max_uvt !== null)
+  ) {
+    throw new Error("checkpoint UVT budget binding is invalid");
   }
   if (checkpoint.effort !== null && (typeof checkpoint.effort !== "string" || checkpoint.effort.length > 32)) {
     throw new Error("checkpoint effort is invalid");
@@ -438,6 +448,7 @@ export class HeadlessCheckpointStore {
       driver: input.driver,
       model: input.model,
       model_tag: input.modelTag,
+      max_uvt: input.maxUvt ?? null,
       effort: input.effort,
       permission: input.permission,
       allowed_tools: [...input.allowedTools].sort(),

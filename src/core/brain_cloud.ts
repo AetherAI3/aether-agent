@@ -193,6 +193,8 @@ export interface CloudBrainOptions {
   requireLocalAuthority?: boolean;
   /** Advertise only tools the local host is prepared to authorize. */
   localToolCapabilities?: readonly string[];
+  /** Per-session hosted spend ceiling. Required by the headless cloud driver. */
+  maxUvt?: number;
 }
 
 export class CloudBrain implements Brain {
@@ -238,6 +240,7 @@ export class CloudBrain implements Brain {
             model: task.model,
             effort: task.effort,
             capabilities: this.opts.localToolCapabilities ?? TOOLS,
+            maxUvt: this.opts.maxUvt,
             protocolVersion: DEV_PROTOCOL_VERSION,
           }),
         );
@@ -277,6 +280,11 @@ export class CloudBrain implements Brain {
       const refusal = checkDevSession(created, this.speaks);
       if (refusal) throw new Error(refusal);
       this.sessionId = created.session_id;
+      if (task.model && created.model !== task.model) {
+        try { await this.api.deleteJson(devSessionPath(created.session_id)); } catch { /* refusal remains authoritative */ }
+        this.sessionId = null;
+        throw new Error("cloud dev session did not preserve the explicitly requested model");
+      }
       this.controlState = "running";
       queue.push({ type: "stage", name: "execute", face: "⟨◉⟩" }); // uplink face
       await this.devPump(queue);

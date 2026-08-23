@@ -63,6 +63,7 @@ export interface ExecOptions {
   protocol?: HeadlessProtocol;
   agentDefinition?: string;
   authorityTtlMs?: number;
+  maxUvt?: number;
   checkpointDirectory?: string;
   now?: () => Date;
 }
@@ -145,6 +146,7 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
   let effort = (ctx.flags.effort ?? ctx.cfg.defaultEffort) || null;
   let localModel: { tag: string; id: string } | null = null;
   let cloudModel: string | null = null;
+  let maxUvt: number | null = opts.maxUvt ?? null;
   let agentDefinition: LoadedHeadlessAgentDefinition | null = null;
   let checkpointStore: HeadlessCheckpointStore | null = null;
   let checkpoint: HeadlessCheckpoint | null = null;
@@ -153,8 +155,9 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
     if (v2) {
       checkpointStore = new HeadlessCheckpointStore(cwd, opts.checkpointDirectory);
       if (opts.resume) {
-        checkpoint = checkpointStore.loadForResume(opts.resume, now());
         if (ctx.flags.model?.trim()) throw new Error("--model cannot replace checkpoint authority during resume");
+        if (opts.maxUvt !== undefined) throw new Error("--max-uvt cannot replace checkpoint authority during resume");
+        checkpoint = checkpointStore.loadForResume(opts.resume, now());
         if (commandDigest(opts.verifyCommand) !== checkpoint.verification.command_digest) {
           throw new Error("--test-cmd must match the checkpoint verification command");
         }
@@ -164,6 +167,7 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
         allowedTools = [...checkpoint.allowed_tools];
         capabilityPacks = [...checkpoint.capability_packs];
         effort = checkpoint.effort;
+        maxUvt = checkpoint.max_uvt;
         if (checkpoint.agent) {
           agentDefinition = loadHeadlessAgentDefinition(cwd, checkpoint.agent.path, now());
         }
@@ -194,7 +198,17 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
         if (requestedModel.startsWith("ollama:")) {
           throw new Error("an ollama: model cannot be sent to the Aether cloud driver");
         }
+        if (requestedModel.startsWith("aether-")) {
+          throw new Error(
+            "aether-* orchestrator ids are not supported by the local-authority cloud dev-session contract",
+          );
+        }
+        if (!Number.isSafeInteger(maxUvt) || (maxUvt ?? 0) <= 0) {
+          throw new Error("--exec-driver cloud requires --max-uvt <positive integer>");
+        }
         cloudModel = requestedModel;
+      } else if (maxUvt !== null) {
+        throw new Error("--max-uvt is available only with --exec-driver cloud");
       }
     }
   } catch (error) {
@@ -215,6 +229,7 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
         driver,
         model: driver === "cloud" ? cloudModel : localModel?.id ?? null,
         modelTag: localModel?.tag ?? null,
+        maxUvt: driver === "cloud" ? maxUvt : null,
         effort,
         permission,
         allowedTools,
@@ -236,12 +251,13 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
   if (!opts.verifyCommand) warnings.push("no verification command configured; successful agent completion remains non-zero/unverified");
   if (!v2 && opts.resume) warnings.push("resume is not supported by aether.exec/1; the request will be rejected without starting a brain");
   if (driver === "selftest") warnings.push("selftest driver validates installed child/protocol wiring only; it performs no model work");
-  if (driver === "cloud") warnings.push("cloud driver requires an Aether dev session and refuses any server-side execution downgrade");
+  if (driver === "cloud") warnings.push("cloud driver requires a hosted Cloud text-model dev session and refuses any server-side execution downgrade");
   if (v2 && opts.resume) warnings.push("resumed from a workspace checkpoint; model conversation state is not replayed");
   const brain = opts.brain ?? (driver === "cloud"
     ? new CloudBrain(ctx.api, undefined, {
         requireLocalAuthority: true,
         localToolCapabilities: [...declared],
+        maxUvt: maxUvt ?? undefined,
       })
     : new BundledChildBrain({
         mode: driver as BundledChildMode,
@@ -273,6 +289,7 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
     backend: driver === "selftest" ? "bundled-selftest-child"
       : driver === "cloud" ? "aether-cloud-dev-session" : "bundled-ollama-child",
     model: driver === "cloud" ? cloudModel : localModel?.id ?? null,
+    max_uvt: driver === "cloud" ? maxUvt : null,
     effort,
     permissions: {
       mode: permission, explicit_decisions: true,
@@ -636,6 +653,12 @@ export async function cmdExec(ctx: AppContext, argv: string[], flags: {
     process.stderr.write("aether exec: --exec-driver must be ollama, cloud, or selftest\n");
     return EXEC_EXIT.usage;
   }
+  const rawMaxUvt = flags.str("max-uvt");
+  const maxUvt = rawMaxUvt === undefined ? undefined : Number(rawMaxUvt);
+  if (rawMaxUvt !== undefined && (!Number.isSafeInteger(maxUvt) || (maxUvt ?? 0) <= 0)) {
+    process.stderr.write("aether exec: --max-uvt must be a positive integer\n");
+    return EXEC_EXIT.usage;
+  }
   const ttl = Number(flags.str("authority-ttl-ms") ?? "3600000");
   if (!Number.isSafeInteger(ttl) || ttl < 1000 || ttl > 14_400_000) {
     process.stderr.write("aether exec: --authority-ttl-ms must be an integer from 1000 to 14400000\n");
@@ -649,9 +672,9 @@ export async function cmdExec(ctx: AppContext, argv: string[], flags: {
   if (protocol === HEADLESS_PROTOCOL_V2 && ctx.flags.resume) {
     const authorityOverride = flags.str("permission") || requested.length || packs.length
       || flags.str("exec-driver") || flags.str("authority-ttl-ms") || agentDefinition
-      || ctx.flags.model || ctx.flags.effort;
+      || rawMaxUvt || ctx.flags.model || ctx.flags.effort;
     if (authorityOverride) {
-      process.stderr.write("aether exec: resume refuses model, driver, permission, tool, pack, agent, effort, or TTL overrides\n");
+      process.stderr.write("aether exec: resume refuses model, driver, permission, tool, pack, agent, effort, TTL, or UVT overrides\n");
       return EXEC_EXIT.usage;
     }
   }
@@ -665,6 +688,7 @@ export async function cmdExec(ctx: AppContext, argv: string[], flags: {
     driver,
     protocol,
     authorityTtlMs: ttl,
+    maxUvt,
     ...(agentDefinition ? { agentDefinition } : {}),
   });
 }

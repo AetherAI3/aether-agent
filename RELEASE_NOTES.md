@@ -40,9 +40,14 @@ either.
 
 - **`aether exec` — a packaged, agent-driven JSONL interface.** It starts the
   packaged Node/Ollama brain child by default; explicit `--exec-driver cloud` uses an
-  authenticated Aether dev session with required local tool authority and no server-side
-  downgrade. Cloud runs require explicit `--model`, binding v2 resume to the same model
-  instead of a mutable server default. It emits `aether.exec/1` frames by default, with
+  authenticated hosted Cloud text-model dev session with required local tool authority and no server-side
+  downgrade. Cloud runs require explicit `--model` and `--max-uvt`, binding v2 resume to the same model
+  and per-session hosted spend ceiling instead of a mutable server default; the client
+  rejects a mismatched acknowledgement.
+  Neo/Kronus `aether-*` orchestrator IDs are rejected because the dev-session endpoint cannot
+  preserve their identity. Actual-Aether headless dogfood remains an external product dependency:
+  it needs a versioned orchestrator dev-session contract with router confirmation, local tool
+  receipts, controls/replay/cancel, and no server fallback. It emits `aether.exec/1` frames by default, with
   an opt-in `aether.exec/2` session protocol for durable repository/workspace-bound
   checkpoints, authority-expiring resume, confined `aether.exec.agent/1` definitions,
   and session-correlated pause, resume, steer, and cancellation acknowledgements. It retains
@@ -52,7 +57,7 @@ either.
   so a model claim can never turn a failing, absent, or workspace-mutating gate into exit 0.
   Cloud pause, resume, and steer are accepted only after the dev-session endpoint returns a
   valid acknowledgement; transport loss or malformed state fails closed. The packaged
-  Aether-model production dogfood remains an acceptance dependency and has not been run by
+  hosted-text-model production dogfood remains an acceptance dependency and has not been run by
   this implementation change. Ollama and the model-free installation selftest are not
   substitutes for that acceptance run.
 - **Bounded local setup.** `aether setup --local` and `aether local doctor`
