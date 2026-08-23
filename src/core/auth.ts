@@ -8,18 +8,24 @@
 // TODO: prefer the OS keychain over the file store; the TokenStore
 // interface keeps that swappable.
 
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   chmodSync,
   closeSync,
   constants as fsConstants,
   existsSync,
+  fsyncSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readSync,
-  rmSync,
+  renameSync,
+  rmdirSync,
+  statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { configDir } from "./config.js";
 import { LOGIN_PATH, defaultRequestTimeoutMs, isCredentialSafeUrl, sanitizeServerText } from "./transport.js";
 
@@ -33,20 +39,114 @@ export interface TokenStore {
   update?(token: string): Promise<void>;
 }
 
+/**
+ * O_NOFOLLOW is kept as defense-in-depth where the platform has it, but it is
+ * NOT a portable guard: libuv does not define O_NOFOLLOW on Windows, so
+ * `fsConstants.O_NOFOLLOW` is `undefined` there (verified on win32/Node 24) and
+ * the flag degrades to 0 — every open silently followed whatever symlink,
+ * junction or reparse point was planted at the token path. The explicit lstat
+ * checks below are the guard that actually holds on both platforms.
+ */
+const O_NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
+
+/**
+ * True when `path` is a symlink or a Windows reparse point (junction / mount
+ * point) rather than a plain entry. lstat never follows, so this reports on the
+ * entry itself. On win32 a junction created with `symlink(..., "junction")`
+ * reports `isSymbolicLink() === true` (verified empirically), which is what
+ * makes one check cover both platforms.
+ *
+ * A missing entry is NOT link-like — nothing is planted, so callers proceed.
+ */
+function isLinkLike(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Refuse to persist a credential into a directory we cannot vouch for: it must
+ * be a real directory (not a symlink/junction redirecting the write elsewhere),
+ * owned by us, and not writable by other local accounts who could otherwise
+ * swap `.token` for a symlink between our check and our write.
+ *
+ * The uid/mode half is POSIX-only: Windows has no `process.getuid` and models
+ * this with ACLs, which Node does not expose — that half is deliberately
+ * skipped there and called out as a residual risk rather than faked.
+ */
+function assertSafeConfigDir(dir: string): void {
+  if (isLinkLike(dir)) {
+    throw new Error(`refusing to write the token: config dir ${dir} is a symlink or reparse point, not a real directory`);
+  }
+  const st = statSync(dir);
+  if (!st.isDirectory()) throw new Error(`refusing to write the token: ${dir} is not a directory`);
+  const getuid = (process as { getuid?: () => number }).getuid;
+  if (typeof getuid !== "function") return; // win32: see doc comment above.
+  const uid = getuid.call(process);
+  if (st.uid !== uid) {
+    throw new Error(`refusing to write the token: config dir ${dir} is owned by uid ${st.uid}, not ${uid}`);
+  }
+  // Group/world-WRITABLE only. Readable (0755) is left alone on purpose: dirs
+  // created by older versions are common and a read bit does not let another
+  // account swap the token file.
+  if (st.mode & 0o022) {
+    throw new Error(
+      `refusing to write the token: config dir ${dir} is group/world-writable (mode 0${(st.mode & 0o777).toString(8)})`,
+    );
+  }
+}
+
+/**
+ * Windows only: MoveFileEx cannot replace a destination that another process
+ * currently has open, and fails EPERM (a sharing violation surfaced as EPERM by
+ * libuv). This is not theoretical — a reader doing exactly what `get()` does in
+ * a second process reproduces it in well under 200 attempts on win32/Node 24,
+ * verified by this repo's concurrency test.
+ *
+ * POSIX rename() has no such restriction, so the retry is a win32 accommodation
+ * only. It is bounded (~350ms worst case) and gives up loudly rather than
+ * looping: a login that cannot store its token must not report success.
+ */
+const RENAME_RETRY_DELAYS_MS = [2, 5, 10, 20, 40, 60, 80, 120] as const;
+
+async function renameWithWindowsRetry(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      renameSync(from, to);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const retryable = process.platform === "win32" && (code === "EPERM" || code === "EACCES" || code === "EBUSY");
+      const delay = RENAME_RETRY_DELAYS_MS[attempt];
+      if (!retryable || delay === undefined) throw err;
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
 /** File-backed token store (0600). Fallback until keychain is wired. */
 export class FileTokenStore implements TokenStore {
   private path = join(configDir(), ".token");
 
   async get(): Promise<string | null> {
     if (!existsSync(this.path)) return null;
-    // O_NOFOLLOW refuses to transparently follow a symlink planted at the
-    // token path by another local account — mirrors tool_executor.ts's
-    // writeFile() guard. An open failure (including ELOOP) is treated the
-    // same as "no token", not an error.
-    const noFollow = fsConstants.O_NOFOLLOW ?? 0;
+    // A symlink/junction planted at the token path by another local account is
+    // treated exactly like "no token" — never read through it. This lstat is
+    // the portable half of the guard; O_NOFOLLOW below is defense-in-depth on
+    // the platforms that define it.
+    //
+    // Residual TOCTOU: on POSIX the open's O_NOFOLLOW closes the window between
+    // this lstat and the open. On Windows there is no such flag, so an attacker
+    // who can win that microsecond-wide race AND create symlinks (which needs
+    // SeCreateSymbolicLinkPrivilege or Developer Mode) could still swap the
+    // entry after the check. Documented, not fixable without a native handle
+    // API Node does not expose.
+    if (isLinkLike(this.path)) return null;
     let fd: number;
     try {
-      fd = openSync(this.path, fsConstants.O_RDONLY | noFollow);
+      fd = openSync(this.path, fsConstants.O_RDONLY | O_NOFOLLOW);
     } catch {
       return null;
     }
@@ -55,6 +155,9 @@ export class FileTokenStore implements TokenStore {
       const bytes = readSync(fd, buf, 0, buf.length, 0);
       const t = buf.subarray(0, bytes).toString("utf8").trim();
       return t || null;
+    } catch {
+      // e.g. EISDIR when the path is a directory — same as "no token".
+      return null;
     } finally {
       closeSync(fd);
     }
@@ -65,15 +168,58 @@ export class FileTokenStore implements TokenStore {
     // config dir before first login, so omitting this throws ENOENT (verified
     // bug on HEAD's side). Creating dir 0700 / file 0600 AT CREATION (rather
     // than write-then-chmod) closes the race window where the token would
-    // otherwise be briefly world-readable. O_NOFOLLOW refuses a symlinked
-    // .token path instead of transparently writing through it.
-    mkdirSync(configDir(), { recursive: true, mode: 0o700 });
-    const noFollow = fsConstants.O_NOFOLLOW ?? 0;
-    const fd = openSync(this.path, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | noFollow, 0o600);
+    // otherwise be briefly world-readable.
+    const dir = dirname(this.path);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    assertSafeConfigDir(dir);
+    // Never write THROUGH a planted link. Failing loudly (rather than the old
+    // silent O_NOFOLLOW-that-is-0 pass-through on Windows) is the point: a
+    // login that cannot store its token safely must not report success.
+    if (isLinkLike(this.path)) {
+      throw new Error(
+        `refusing to write the token: ${this.path} is a symlink or reparse point, not a regular file`,
+      );
+    }
+
+    // Write-to-temp + rename instead of the old O_TRUNC-in-place write. In
+    // place, a crash (or a full disk) between truncate and write left an EMPTY
+    // or partial .token, and a concurrent reader in another process saw a
+    // truncated credential and reported "not logged in". rename() is atomic on
+    // POSIX and, on Windows, replaces an existing destination via MoveFileEx
+    // REPLACE_EXISTING semantics (verified empirically on win32/Node 24, and
+    // covered by a test). rename() also never follows a symlink at the
+    // destination, so it replaces a planted link rather than writing into its
+    // target — a second layer under the lstat guard above.
+    //
+    // The temp file is a sibling (same directory, therefore same volume, so the
+    // rename cannot degrade to a copy), is created O_EXCL so it can never
+    // adopt an attacker's pre-planted file, and is 0600 from creation.
+    const tmp = join(dir, `.token.${process.pid}.${randomBytes(8).toString("hex")}.tmp`);
     try {
-      writeFileSync(fd, token, "utf8");
-    } finally {
-      closeSync(fd);
+      const fd = openSync(tmp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | O_NOFOLLOW, 0o600);
+      try {
+        writeFileSync(fd, token, "utf8");
+        // Durability before the rename: without it a crash can land the rename
+        // while the data blocks are still unwritten, i.e. the empty-file
+        // failure mode we just removed, reintroduced by the page cache.
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      try {
+        chmodSync(tmp, 0o600);
+      } catch {
+        // non-fatal on filesystems that don't support POSIX modes.
+      }
+      await renameWithWindowsRetry(tmp, this.path);
+    } catch (err) {
+      // Never leave a partial credential lying beside the real one.
+      try {
+        unlinkSync(tmp);
+      } catch {
+        // already gone (e.g. the open itself failed) — nothing to clean.
+      }
+      throw err;
     }
     try {
       chmodSync(this.path, 0o600);
@@ -83,7 +229,31 @@ export class FileTokenStore implements TokenStore {
   }
 
   async clear(): Promise<void> {
-    if (existsSync(this.path)) rmSync(this.path);
+    let st;
+    try {
+      st = lstatSync(this.path);
+    } catch {
+      return; // already absent — logging out twice is not an error.
+    }
+    // unlink on a link removes the LINK, never the file it points at, so
+    // `aether auth logout` can never delete another account's file even if one
+    // was planted here. On win32 a directory junction also unlinks cleanly and
+    // leaves its target's contents intact (verified empirically); rmdirSync is
+    // the fallback for the platforms/kernels where unlink refuses a directory
+    // reparse point. Neither path ever recurses INTO the junction.
+    try {
+      unlinkSync(this.path);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (st.isSymbolicLink() || st.isDirectory()) {
+        if (code === "EPERM" || code === "EISDIR" || code === "EACCES") {
+          rmdirSync(this.path);
+          return;
+        }
+      }
+      if (code === "ENOENT") return; // raced with another logout.
+      throw err;
+    }
   }
 }
 
