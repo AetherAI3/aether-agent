@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -19,13 +19,21 @@ export interface PublicCatalogueModel {
   provider: string;
   kind: "model" | "orchestrator";
   tierMin: "free" | "solo" | "pro" | "team";
+  modality: "text" | "image" | "video" | "audio" | "multimodal" | "unknown";
+  hosting: "local" | "hosted" | "unknown";
+  availability: "available" | "unavailable" | "unknown";
+  evidence: string;
 }
 
 export interface PublicCatalogueSource {
   schema: typeof PUBLIC_CATALOGUE_SCHEMA;
   asOf: string;
-  sourcePath: string;
-  sourceSection: string;
+  source: {
+    kind: "repository-markdown-section";
+    path: string;
+    section: string;
+    digest: string;
+  };
   scopeNote: string;
   models: readonly PublicCatalogueModel[];
 }
@@ -34,7 +42,7 @@ export interface GeneratedCatalogue {
   schema: typeof GENERATED_CATALOGUE_SCHEMA;
   generatedAt: string;
   digest: string;
-  source: { path: string; section: string };
+  source: { kind: "repository-markdown-section"; citation: string; digest: string };
   scopeNote: string;
   models: readonly PublicCatalogueModel[];
 }
@@ -56,7 +64,26 @@ const CATALOGUE_MARKERS = [
   "<!-- MODEL-CATALOGUE:END -->",
 ] as const;
 const ID = /^[a-z0-9][a-z0-9._-]*$/;
-const PROVIDER = /^[A-Za-z0-9][A-Za-z0-9 .&+-]*$/;
+const PROVIDER = /^(?:unknown|[A-Za-z0-9][A-Za-z0-9 .&+-]*)$/;
+const DIGEST = /^sha256:[a-f0-9]{64}$/;
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+const SECRET = /(?:\bBearer\s+[A-Za-z0-9._-]+|\b(?:aek_|gh[opusr]_)[A-Za-z0-9._-]+|\bsk-[A-Za-z0-9]{16,}|\b(?:sk|pk)_(?:live|test)_[A-Za-z0-9]+|\bAKIA[A-Z0-9]{16}|\b(?:AETHER_TOKEN|NPM_TOKEN|GITHUB_TOKEN|API_KEY|ACCESS_TOKEN)\s*=)/i;
+const CREDENTIALED_URL = /\bhttps?:\/\/[^\s/@:]+:[^\s/@]+@/i;
+const INTERNAL_ROUTE = /(?:\/(?:api\/)?internal(?:\/|\b)|\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(?::\d+)?\b|\b[A-Za-z0-9.-]+\.internal\b)/i;
+const PRICING_ASSERTION = /(?:[$€£]\s*\d|\b(?:usd|eur|gbp)\b|\b(?:price|pricing|costs?|rates?)\b[^.\n]{0,40}\b(?:token|request|image|video|month|hour)\b)/i;
+
+export function normalizeEol(value: string): string { return value.replace(/\r\n?/g, "\n"); }
+
+function validatePublicString(value: unknown, label: string, options: { markdown?: boolean } = {}): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${label} is required`);
+  if (CONTROL.test(value)) throw new Error(`${label} contains control characters`);
+  if (SECRET.test(value)) throw new Error(`${label} contains credential-shaped content`);
+  if (CREDENTIALED_URL.test(value)) throw new Error(`${label} contains a credentialed URL`);
+  if (INTERNAL_ROUTE.test(value)) throw new Error(`${label} contains an internal route`);
+  if (PRICING_ASSERTION.test(value)) throw new Error(`${label} contains a pricing assertion`);
+  if (options.markdown && /(?:<\/?[A-Za-z][^>]*>|\[[^\]]*\]\([^)]*\)|!\[|^\s{0,3}#{1,6}\s)/m.test(value)) throw new Error(`${label} contains markdown injection`);
+  return value.trim();
+}
 
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -71,39 +98,78 @@ export function sha256(value: unknown): string {
   return `sha256:${createHash("sha256").update(typeof value === "string" ? value : canonicalJson(value)).digest("hex")}`;
 }
 
-function parseCatalogue(text: string): PublicCatalogueSource {
+export function extractMarkdownSection(text: string, heading: string): string {
+  const normalized = normalizeEol(text);
+  const lines = normalized.split("\n");
+  const marker = `## ${heading}`;
+  const start = lines.findIndex((line) => line === marker);
+  if (start < 0) throw new Error("public catalogue provenance section does not exist");
+  const next = lines.findIndex((line, index) => index > start && /^##\s+/.test(line));
+  const end = next < 0 ? lines.length : next;
+  return `${lines.slice(start, end).join("\n").trimEnd()}\n`;
+}
+
+function parseCatalogue(text: string, root: string): PublicCatalogueSource {
   let value: unknown;
   try { value = JSON.parse(text); } catch { throw new Error("public catalogue source is not valid JSON"); }
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("public catalogue source must be an object");
   const source = value as Partial<PublicCatalogueSource>;
-  const sourceKeys = new Set(["schema", "asOf", "sourcePath", "sourceSection", "scopeNote", "models"]);
+  const sourceKeys = new Set(["schema", "asOf", "source", "scopeNote", "models"]);
   const unexpectedSourceKeys = Object.keys(source).filter((key) => !sourceKeys.has(key));
   if (unexpectedSourceKeys.length) throw new Error(`public catalogue source contains unsupported fields: ${unexpectedSourceKeys.join(", ")}`);
   if (source.schema !== PUBLIC_CATALOGUE_SCHEMA) throw new Error(`public catalogue source must use schema ${PUBLIC_CATALOGUE_SCHEMA}`);
   if (typeof source.asOf !== "string" || !Number.isFinite(Date.parse(source.asOf))) throw new Error("public catalogue source has an invalid asOf timestamp");
-  if (typeof source.sourcePath !== "string" || !/^(?![A-Za-z]:|\/|.*\.\.)(?:[A-Za-z0-9._/-]+)$/.test(source.sourcePath)) throw new Error("public catalogue sourcePath must be a repository-relative path");
-  if (typeof source.sourceSection !== "string" || !source.sourceSection.trim()) throw new Error("public catalogue sourceSection is required");
-  if (typeof source.scopeNote !== "string" || !source.scopeNote.trim()) throw new Error("public catalogue scopeNote is required");
+  if (Date.parse(source.asOf) > Date.now() + 5 * 60_000) throw new Error("public catalogue generatedAt is materially in the future");
+  validatePublicString(source.scopeNote, "public catalogue scopeNote", { markdown: true });
+  if (source.source === null || typeof source.source !== "object" || Array.isArray(source.source)) throw new Error("public catalogue source provenance is required");
+  const provenance = source.source as Partial<PublicCatalogueSource["source"]>;
+  const provenanceKeys = new Set(["kind", "path", "section", "digest"]);
+  const unexpectedProvenanceKeys = Object.keys(provenance).filter((key) => !provenanceKeys.has(key));
+  if (unexpectedProvenanceKeys.length) throw new Error(`public catalogue provenance contains unsupported fields: ${unexpectedProvenanceKeys.join(", ")}`);
+  if (provenance.kind !== "repository-markdown-section") throw new Error("public catalogue provenance kind is invalid");
+  if (typeof provenance.path !== "string" || !/^(?![A-Za-z]:|\/|.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._/-]+$/.test(provenance.path)) throw new Error("public catalogue provenance path must be repository-relative");
+  const sectionName = validatePublicString(provenance.section, "public catalogue provenance section", { markdown: true });
+  if (typeof provenance.digest !== "string" || !DIGEST.test(provenance.digest)) throw new Error("public catalogue provenance digest is invalid");
+  const provenancePath = resolve(root, provenance.path);
+  const rootPrefix = `${resolve(root)}${process.platform === "win32" ? "\\" : "/"}`;
+  if (!provenancePath.startsWith(rootPrefix) || !existsSync(provenancePath) || lstatSync(provenancePath).isSymbolicLink() || !statSync(provenancePath).isFile()) throw new Error("public catalogue provenance file does not exist as a regular repository file");
+  const section = extractMarkdownSection(readFileSync(provenancePath, "utf8"), sectionName);
+  if (sha256(section) !== provenance.digest) throw new Error("public catalogue provenance digest does not match its source section");
   if (!Array.isArray(source.models) || source.models.length === 0) throw new Error("public catalogue refresh is empty; last-known-good outputs were preserved");
   const ids = new Set<string>();
   for (const [index, item] of source.models.entries()) {
     if (item === null || typeof item !== "object" || Array.isArray(item)) throw new Error(`public catalogue model ${index} must be an object`);
     const model = item as Partial<PublicCatalogueModel>;
-    const modelKeys = new Set(["id", "label", "provider", "kind", "tierMin"]);
+    const modelKeys = new Set(["id", "label", "provider", "kind", "tierMin", "modality", "hosting", "availability", "evidence"]);
     const unexpectedModelKeys = Object.keys(model).filter((key) => !modelKeys.has(key));
     if (unexpectedModelKeys.length) throw new Error(`public catalogue model ${index} contains unsupported fields: ${unexpectedModelKeys.join(", ")}`);
     if (typeof model.id !== "string" || !ID.test(model.id)) throw new Error(`public catalogue model ${index} has an invalid id`);
+    validatePublicString(model.id, `public catalogue model ${index} id`);
     if (ids.has(model.id)) throw new Error(`public catalogue contains duplicate model id ${model.id}`);
     ids.add(model.id);
-    if (typeof model.label !== "string" || !model.label.trim()) throw new Error(`public catalogue model ${model.id} has no label`);
+    validatePublicString(model.label, `public catalogue model ${model.id} label`, { markdown: true });
     if (typeof model.provider !== "string" || !PROVIDER.test(model.provider)) throw new Error(`public catalogue model ${model.id} has an invalid provider`);
+    validatePublicString(model.provider, `public catalogue model ${model.id} provider`, { markdown: true });
     if (model.kind !== "model" && model.kind !== "orchestrator") throw new Error(`public catalogue model ${model.id} has an invalid kind`);
     if (!(["free", "solo", "pro", "team"] as const).includes(model.tierMin as "free")) throw new Error(`public catalogue model ${model.id} has an invalid tierMin`);
+    if (!(["text", "image", "video", "audio", "multimodal", "unknown"] as const).includes(model.modality as "text")) throw new Error(`public catalogue model ${model.id} has an invalid modality`);
+    if (!(["local", "hosted", "unknown"] as const).includes(model.hosting as "local")) throw new Error(`public catalogue model ${model.id} has an invalid hosting state`);
+    if (!(["available", "unavailable", "unknown"] as const).includes(model.availability as "available")) throw new Error(`public catalogue model ${model.id} has an invalid availability state`);
+    const evidence = validatePublicString(model.evidence, `public catalogue model ${model.id} evidence`, { markdown: true });
+    if (!evidence.includes(model.id) || !section.includes(evidence)) throw new Error(`public catalogue model ${model.id} has no literal evidence in its provenance section`);
   }
   return source as PublicCatalogueSource;
 }
 
-function escapeMarkdown(value: string): string { return value.replaceAll("|", "\\|").replaceAll("\n", " "); }
+function escapeMarkdown(value: string): string {
+  return value.replace(/([\\`*_{}\[\]()#+\-.!|<>])/g, "\\$1").replace(/\s+/g, " ").trim();
+}
+function inlineCode(value: string): string {
+  const clean = value.replace(/\s+/g, " ").trim();
+  const longest = Math.max(0, ...[...clean.matchAll(/`+/g)].map((match) => match[0].length));
+  const fence = "`".repeat(longest + 1);
+  return `${fence}${longest ? " " : ""}${clean}${longest ? " " : ""}${fence}`;
+}
 function escapeHtml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 }
@@ -138,19 +204,19 @@ export function renderCommandReference(commands: readonly CommandManifestEntry[]
     for (const section of sections) {
       lines.push(`### ${section}`, "");
       for (const entry of visible.filter((candidate) => candidate.surface === surface && candidate.section === section)) {
-        lines.push(`#### \`${escapeMarkdown(entry.docs.usage)}\``, "", escapeMarkdown(entry.summary), "");
+        lines.push(`#### ${inlineCode(entry.docs.usage)}`, "", escapeMarkdown(entry.summary), "");
         const metadata = [
-          `Permission: \`${entry.permissionClass}\``,
-          `Availability: \`${entry.availability.state}\``,
-          `Telemetry: \`${entry.telemetryName}\``,
+          `Permission: ${inlineCode(entry.permissionClass)}`,
+          `Availability: ${inlineCode(entry.availability.state)}`,
+          `Telemetry: ${inlineCode(entry.telemetryName)}`,
         ];
-        if (entry.aliases.length) metadata.push(`Aliases: ${entry.aliases.map((alias) => `\`${surface === "slash" ? "/" : "aether "}${alias}\``).join(", ")}`);
-        if (entry.availability.capabilityRequirements.length) metadata.push(`Requires: ${entry.availability.capabilityRequirements.map((item) => `\`${item}\``).join(", ")}`);
+        if (entry.aliases.length) metadata.push(`Aliases: ${entry.aliases.map((alias) => inlineCode(`${surface === "slash" ? "/" : "aether "}${alias}`)).join(", ")}`);
+        if (entry.availability.capabilityRequirements.length) metadata.push(`Requires: ${entry.availability.capabilityRequirements.map(inlineCode).join(", ")}`);
         lines.push(metadata.join(" · "), "");
         const owned = Object.entries(entry.ownedFlags);
         if (owned.length) {
           lines.push("Command flags:", "");
-          for (const [name, spec] of owned) lines.push(`- \`${flagUsage(name, spec)}\``);
+          for (const [name, spec] of owned) lines.push(`- ${inlineCode(flagUsage(name, spec))}`);
           lines.push("");
         }
       }
@@ -166,7 +232,7 @@ function generatedCatalogue(source: PublicCatalogueSource): GeneratedCatalogue {
     schema: GENERATED_CATALOGUE_SCHEMA,
     generatedAt: new Date(source.asOf).toISOString(),
     digest,
-    source: { path: source.sourcePath, section: source.sourceSection },
+    source: { kind: source.source.kind, citation: source.source.section, digest: source.source.digest },
     scopeNote: source.scopeNote,
     models,
   };
@@ -181,12 +247,13 @@ export function renderCatalogueMarkdown(catalogue: GeneratedCatalogue): string {
     catalogue.scopeNote,
     "",
     `- Snapshot time: \`${catalogue.generatedAt}\``,
-    `- Source: [${escapeMarkdown(catalogue.source.section)}](../../${catalogue.source.path})`,
+    `- Provenance: ${escapeMarkdown(catalogue.source.citation)}`,
+    `- Provenance digest: ${inlineCode(catalogue.source.digest)}`,
     `- Digest: \`${catalogue.digest}\``,
     "",
-    "| Model | ID | Provider | Kind | Minimum documented tier |",
-    "|---|---|---|---|---|",
-    ...catalogue.models.map((model) => `| ${escapeMarkdown(model.label)} | \`${model.id}\` | ${escapeMarkdown(model.provider)} | ${model.kind} | ${model.tierMin} |`),
+    "| Model | ID | Provider | Modality | Tier | Hosting | Availability |",
+    "|---|---|---|---|---|---|---|",
+    ...catalogue.models.map((model) => `| ${escapeMarkdown(model.label)} | ${inlineCode(model.id)} | ${escapeMarkdown(model.provider)} | ${model.modality} | ${model.tierMin} | ${model.hosting} | ${model.availability} |`),
     "",
     "Runtime availability is account-scoped. Use `aether models` while signed in for the authoritative live result. This snapshot contains no prices, spend caps, internal routes, or credentials.",
   ];
@@ -195,42 +262,47 @@ export function renderCatalogueMarkdown(catalogue: GeneratedCatalogue): string {
 
 export function renderCatalogueHtml(catalogue: GeneratedCatalogue): string {
   const providers = [...new Set(catalogue.models.map((model) => model.provider))].sort();
+  const modalities = ["text", "image", "video", "audio", "multimodal", "unknown"] as const;
+  const tiers = ["free", "solo", "pro", "team"] as const;
+  const hostingStates = ["local", "hosted", "unknown"] as const;
+  const availabilityStates = ["available", "unavailable", "unknown"] as const;
   const cards = catalogue.models.map((model) => `
-      <article class="card" data-search="${escapeHtml(`${model.label} ${model.id} ${model.provider} ${model.kind} ${model.tierMin}`.toLowerCase())}" data-provider="${escapeHtml(model.provider)}" data-kind="${model.kind}">
+      <article class="card" data-search="${escapeHtml(`${model.label} ${model.id} ${model.provider} ${model.kind} ${model.modality} ${model.tierMin} ${model.hosting} ${model.availability}`.toLowerCase())}" data-provider="${escapeHtml(model.provider)}" data-modality="${model.modality}" data-tier="${model.tierMin}" data-hosting="${model.hosting}" data-availability="${model.availability}">
         <h2>${escapeHtml(model.label)}</h2><p><code>${escapeHtml(model.id)}</code></p>
-        <dl><div><dt>Provider</dt><dd>${escapeHtml(model.provider)}</dd></div><div><dt>Kind</dt><dd>${model.kind}</dd></div><div><dt>Minimum documented tier</dt><dd>${model.tierMin}</dd></div></dl>
+        <dl><div><dt>Provider</dt><dd>${escapeHtml(model.provider)}</dd></div><div><dt>Modality</dt><dd>${model.modality}</dd></div><div><dt>Minimum documented tier</dt><dd>${model.tierMin}</dd></div><div><dt>Hosting</dt><dd>${model.hosting}</dd></div><div><dt>Availability</dt><dd>${model.availability}</dd></div></dl>
       </article>`).join("");
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="generator" content="aether-agent docs generator"><title>Aether Agent public model catalogue</title>
-<style>:root{color-scheme:light dark;font-family:system-ui,sans-serif;line-height:1.5}body{max-width:72rem;margin:auto;padding:clamp(1rem,4vw,3rem);background:#0c1018;color:#eef2ff}a{color:#8bd5ff}.lede{max-width:70ch}.meta{color:#bac4d8}.controls{display:none;grid-template-columns:2fr 1fr 1fr;gap:.75rem;margin:2rem 0}.controls label{display:grid;gap:.3rem}input,select{font:inherit;padding:.65rem;border:1px solid #65708a;border-radius:.45rem;background:#151c2a;color:inherit}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:1rem}.card{border:1px solid #3c465b;border-radius:.8rem;padding:1rem;background:#141b29}.card h2{margin:.1rem 0}.card p{margin:.2rem 0 1rem}dl{margin:0}dl div{display:flex;justify-content:space-between;gap:1rem;border-top:1px solid #30394b;padding:.4rem 0}dt{color:#bac4d8}dd{margin:0;text-align:right}body[data-enhanced] .controls{display:grid}.hidden{display:none}@media(max-width:38rem){body[data-enhanced] .controls{grid-template-columns:1fr}dl div{display:block}dd{text-align:left}}@media(prefers-reduced-motion:no-preference){.card{transition:opacity .15s}}</style></head>
+<style>:root{color-scheme:light dark;font-family:system-ui,sans-serif;line-height:1.5}body{max-width:72rem;margin:auto;padding:clamp(1rem,4vw,3rem);background:#0c1018;color:#eef2ff}a{color:#8bd5ff}.lede{max-width:70ch}.meta{color:#bac4d8}.controls{display:none;grid-template-columns:repeat(auto-fit,minmax(10rem,1fr));gap:.75rem;margin:2rem 0}.controls label{display:grid;gap:.3rem}.controls label:first-child{grid-column:span 2}input,select{font:inherit;padding:.65rem;border:1px solid #65708a;border-radius:.45rem;background:#151c2a;color:inherit}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:1rem}.card{border:1px solid #3c465b;border-radius:.8rem;padding:1rem;background:#141b29}.card h2{margin:.1rem 0}.card p{margin:.2rem 0 1rem}dl{margin:0}dl div{display:flex;justify-content:space-between;gap:1rem;border-top:1px solid #30394b;padding:.4rem 0}dt{color:#bac4d8}dd{margin:0;text-align:right}body[data-enhanced] .controls{display:grid}.hidden{display:none}@media(max-width:38rem){body[data-enhanced] .controls{grid-template-columns:1fr}.controls label:first-child{grid-column:auto}dl div{display:block}dd{text-align:left}}@media(prefers-reduced-motion:no-preference){.card{transition:opacity .15s}}</style></head>
 <body><main><h1>Public model catalogue snapshot</h1><p class="lede">${escapeHtml(catalogue.scopeNote)}</p>
-<p class="meta">Snapshot: <time datetime="${catalogue.generatedAt}">${catalogue.generatedAt}</time> · Source: <a href="../../${escapeHtml(catalogue.source.path)}">${escapeHtml(catalogue.source.section)}</a> · Digest: <code>${catalogue.digest}</code></p>
+<p class="meta">Snapshot: <time datetime="${catalogue.generatedAt}">${catalogue.generatedAt}</time> · Provenance: ${escapeHtml(catalogue.source.citation)} · Source digest: <code>${catalogue.source.digest}</code> · Catalogue digest: <code>${catalogue.digest}</code></p>
 <p>This page is useful without JavaScript. Runtime availability is account-scoped; use <code>aether models</code> while signed in for the authoritative live result. No prices or spend caps are asserted here.</p>
-<form class="controls" role="search" onsubmit="return false"><label>Search<input id="q" type="search" autocomplete="off" placeholder="Model, ID, or provider"></label><label>Provider<select id="provider"><option value="">All providers</option>${providers.map((item) => `<option>${escapeHtml(item)}</option>`).join("")}</select></label><label>Kind<select id="kind"><option value="">All kinds</option><option value="model">Model</option><option value="orchestrator">Orchestrator</option></select></label></form>
+<form class="controls" role="search" onsubmit="return false"><label>Search<input id="q" type="search" autocomplete="off" placeholder="Model, ID, or provider"></label><label>Provider<select id="provider"><option value="">All providers</option>${providers.map((item) => `<option>${escapeHtml(item)}</option>`).join("")}</select></label><label>Modality<select id="modality"><option value="">All modalities</option>${modalities.map((item) => `<option>${item}</option>`).join("")}</select></label><label>Tier<select id="tier"><option value="">All tiers</option>${tiers.map((item) => `<option>${item}</option>`).join("")}</select></label><label>Local or hosted<select id="hosting"><option value="">All hosting states</option>${hostingStates.map((item) => `<option>${item}</option>`).join("")}</select></label><label>Availability<select id="availability"><option value="">All availability states</option>${availabilityStates.map((item) => `<option>${item}</option>`).join("")}</select></label></form>
 <p id="status" aria-live="polite"></p><section class="grid" aria-label="Documented catalogue models">${cards}
 </section><noscript><p>Search and filters require JavaScript; every catalogue entry remains visible above.</p></noscript></main>
-<script>document.body.dataset.enhanced="";const q=document.querySelector("#q"),p=document.querySelector("#provider"),k=document.querySelector("#kind"),s=document.querySelector("#status"),cards=[...document.querySelectorAll(".card")];function apply(){const needle=q.value.trim().toLowerCase();let shown=0;for(const card of cards){const visible=(!needle||card.dataset.search.includes(needle))&&(!p.value||card.dataset.provider===p.value)&&(!k.value||card.dataset.kind===k.value);card.classList.toggle("hidden",!visible);if(visible)shown++}s.textContent=shown+" of "+cards.length+" entries shown"}q.addEventListener("input",apply);p.addEventListener("change",apply);k.addEventListener("change",apply);apply();</script></body></html>\n`;
+<script>document.body.dataset.enhanced="";const q=document.querySelector("#q"),filters=["provider","modality","tier","hosting","availability"].map(id=>document.querySelector("#"+id)),s=document.querySelector("#status"),cards=[...document.querySelectorAll(".card")];function apply(){const needle=q.value.trim().toLowerCase();let shown=0;for(const card of cards){const visible=(!needle||card.dataset.search.includes(needle))&&filters.every(filter=>!filter.value||card.dataset[filter.id]===filter.value);card.classList.toggle("hidden",!visible);if(visible)shown++}s.textContent=shown+" of "+cards.length+" entries shown"}q.addEventListener("input",apply);for(const filter of filters)filter.addEventListener("change",apply);apply();</script></body></html>\n`;
 }
 
 function replaceBounded(text: string, markers: readonly [string, string], body: string, path: string): string {
-  const start = text.indexOf(markers[0]);
-  const end = text.indexOf(markers[1]);
-  if (start < 0 || end <= start || text.indexOf(markers[0], start + 1) >= 0 || text.indexOf(markers[1], end + 1) >= 0) throw new Error(`${path} must contain exactly one ordered ${markers[0]} marker pair`);
-  return `${text.slice(0, start + markers[0].length)}\n${body.trim()}\n${text.slice(end)}`;
+  const normalized = normalizeEol(text);
+  const start = normalized.indexOf(markers[0]);
+  const end = normalized.indexOf(markers[1]);
+  if (start < 0 || end <= start || normalized.indexOf(markers[0], start + 1) >= 0 || normalized.indexOf(markers[1], end + 1) >= 0) throw new Error(`${path} must contain exactly one ordered ${markers[0]} marker pair`);
+  return `${normalized.slice(0, start + markers[0].length)}\n${body.trim()}\n${normalized.slice(end)}`;
 }
 
 export function buildGeneratedOutputs(options: GenerateDocsOptions): GeneratedOutput[] {
   const root = resolve(options.root);
   const commands = options.commands ?? COMMAND_MANIFEST;
-  const sourceText = options.catalogueSourceText ?? readFileSync(join(root, "docs", "model-catalogue", "catalogue.source.json"), "utf8");
-  const source = parseCatalogue(sourceText);
+  const sourceText = normalizeEol(options.catalogueSourceText ?? readFileSync(join(root, "docs", "model-catalogue", "catalogue.source.json"), "utf8"));
+  const source = parseCatalogue(sourceText, root);
   const catalogue = generatedCatalogue(source);
   const commandReference = renderCommandReference(commands);
   const commandsDoc = readFileSync(join(root, "COMMANDS.md"), "utf8");
   const readme = readFileSync(join(root, "README.md"), "utf8");
   const commandBody = "The complete manifest-derived reference is [docs/generated/commands.md](docs/generated/commands.md). Regenerate it with `npm run docs:generate`; verify drift with `npm run docs:check`.";
-  const catalogueBody = `A dated, sanitized public snapshot is available as [HTML](docs/model-catalogue/index.html), [JSON](docs/model-catalogue/catalogue.json), and [Markdown](docs/generated/model-catalogue.md). It was generated at \`${catalogue.generatedAt}\` from the repository's public release notes. Runtime availability remains account-scoped; use \`aether models\` while signed in.`;
+  const catalogueBody = `A dated, sanitized public snapshot is available as [HTML](docs/model-catalogue/index.html), [JSON](docs/model-catalogue/catalogue.json), and [Markdown](docs/generated/model-catalogue.md). It was generated at \`${catalogue.generatedAt}\` from the hashed public release-note section named “${escapeMarkdown(catalogue.source.citation)}”. Runtime availability remains account-scoped; use \`aether models\` while signed in.`;
   const json = `${JSON.stringify(catalogue, null, 2)}\n`;
   return [
     { path: "docs/generated/commands.md", content: commandReference },
@@ -266,7 +338,7 @@ export function generateDocumentation(options: GenerateDocsOptions): GeneratedOu
   const root = resolve(options.root);
   const outputs = buildGeneratedOutputs({ ...options, root });
   if (options.check) {
-    const drift = outputs.filter((output) => !existsSync(join(root, output.path)) || readFileSync(join(root, output.path), "utf8") !== output.content).map((output) => output.path);
+    const drift = outputs.filter((output) => !existsSync(join(root, output.path)) || normalizeEol(readFileSync(join(root, output.path), "utf8")) !== normalizeEol(output.content)).map((output) => output.path);
     if (drift.length) throw new Error(`generated documentation drift: ${drift.join(", ")}; run npm run docs:generate`);
   } else writeAtomically(root, outputs);
   return outputs;

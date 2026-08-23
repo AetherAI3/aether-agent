@@ -1,15 +1,19 @@
 {
   "schema": "aether-agent/public-model-catalogue-source@1",
   "asOf": "2026-08-06T00:00:00.000Z",
-  "sourcePath": "RELEASE_NOTES.md",
-  "sourceSection": "Aether Agent — August 2026 fleet update",
+  "source": {
+    "kind": "repository-markdown-section",
+    "path": "RELEASE_NOTES.md",
+    "section": "Aether Agent — August 2026 fleet update",
+    "digest": "sha256:d5c88b3013ee5c9967eb3379bcddcdac8d5298b9d6a55b0ca17ead0581e75e09"
+  },
   "scopeNote": "This sanitized snapshot contains the six Pro/Team frontier-model additions explicitly announced in the public August 2026 release notes. It is a documented subset, not a live entitlement catalogue.",
   "models": [
-    { "id": "opus5", "label": "Claude Opus 5", "provider": "Anthropic", "kind": "model", "tierMin": "pro" },
-    { "id": "gpt56_sol", "label": "GPT-5.6 Sol", "provider": "OpenAI", "kind": "model", "tierMin": "pro" },
-    { "id": "gpt56_terra", "label": "GPT-5.6 Terra", "provider": "OpenAI", "kind": "model", "tierMin": "pro" },
-    { "id": "gpt56_luna", "label": "GPT-5.6 Luna", "provider": "OpenAI", "kind": "model", "tierMin": "pro" },
-    { "id": "kimi_k3", "label": "Kimi K3", "provider": "Moonshot AI", "kind": "model", "tierMin": "pro" },
-    { "id": "gemini36_flash", "label": "Gemini 3.6 Flash", "provider": "Google", "kind": "model", "tierMin": "pro" }
+    { "id": "opus5", "label": "Claude Opus 5", "provider": "unknown", "kind": "model", "tierMin": "pro", "modality": "unknown", "hosting": "hosted", "availability": "unknown", "evidence": "`opus5`" },
+    { "id": "gpt56_sol", "label": "GPT-5.6 Sol", "provider": "unknown", "kind": "model", "tierMin": "pro", "modality": "unknown", "hosting": "hosted", "availability": "unknown", "evidence": "`gpt56_sol`" },
+    { "id": "gpt56_terra", "label": "GPT-5.6 Terra", "provider": "unknown", "kind": "model", "tierMin": "pro", "modality": "unknown", "hosting": "hosted", "availability": "unknown", "evidence": "`gpt56_terra`" },
+    { "id": "gpt56_luna", "label": "GPT-5.6 Luna", "provider": "unknown", "kind": "model", "tierMin": "pro", "modality": "unknown", "hosting": "hosted", "availability": "unknown", "evidence": "`gpt56_luna`" },
+    { "id": "kimi_k3", "label": "Kimi K3", "provider": "unknown", "kind": "model", "tierMin": "pro", "modality": "unknown", "hosting": "hosted", "availability": "unknown", "evidence": "`kimi_k3`" },
+    { "id": "gemini36_flash", "label": "Gemini 3.6 Flash", "provider": "unknown", "kind": "model", "tierMin": "pro", "modality": "unknown", "hosting": "hosted", "availability": "unknown", "evidence": "`gemini36_flash`" }
   ]
 }

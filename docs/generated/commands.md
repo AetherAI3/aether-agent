@@ -30,13 +30,13 @@ start chat or send one prompt
 
 Permission: `network` · Availability: `runtime-dependent` · Telemetry: `shell.chat` · Requires: `aether.hosted`
 
-#### `aether resume [session-id\|export [id] --out <file>]`
+#### `aether resume [session-id|export [id] --out <file>]`
 
 replay a local session, or export it as a portable handoff
 
 Permission: `local-write` · Availability: `runtime-dependent` · Telemetry: `shell.resume`
 
-#### `aether run <neo\|kronus> <task>`
+#### `aether run <neo|kronus> <task>`
 
 stream an orchestrator run
 
@@ -54,7 +54,7 @@ list available orchestrators
 
 Permission: `read-only` · Availability: `runtime-dependent` · Telemetry: `shell.agents` · Requires: `aether.hosted`
 
-#### `aether sessions [inspect\|continue\|export\|archive\|clean] [id]`
+#### `aether sessions [inspect|continue|export|archive|clean] [id]`
 
 browse, inspect and continue past project sessions
 
@@ -65,7 +65,7 @@ Command flags:
 - `--undo`
 - `--no-select`
 
-#### `aether review [stage\|unstage\|revert\|commit\|diff\|verify]`
+#### `aether review [stage|unstage|revert|commit|diff|verify]`
 
 review changes, pick files or hunks, commit
 
@@ -99,13 +99,13 @@ Command flags:
 
 ### Account
 
-#### `aether auth <login\|status\|token\|refresh\|logout>`
+#### `aether auth <login|status|token|refresh|logout>`
 
 manage authentication
 
 Permission: `account` · Availability: `runtime-dependent` · Telemetry: `shell.auth`
 
-#### `aether github <connect\|status\|disconnect>`
+#### `aether github <connect|status|disconnect>`
 
 manage the GitHub connection
 
@@ -125,7 +125,7 @@ create and manage workflows
 
 Permission: `network` · Availability: `runtime-dependent` · Telemetry: `shell.workflow` · Requires: `aether.hosted`
 
-#### `aether memory [status\|inspect\|forget\|prune]`
+#### `aether memory [status|inspect|forget|prune]`
 
 inspect and manage scoped memory
 
@@ -167,7 +167,7 @@ Permission: `local-write` · Availability: `runtime-dependent` · Telemetry: `sh
 
 #### `aether audit [limit]`
 
-show chain-of-custody events
+show chain\-of\-custody events
 
 Permission: `read-only` · Availability: `runtime-dependent` · Telemetry: `shell.audit`
 
@@ -183,19 +183,19 @@ export a redacted diagnostic support bundle
 
 Permission: `local-write` · Availability: `runtime-dependent` · Telemetry: `shell.support-bundle`
 
-#### `aether mcp [list\|doctor\|repair]`
+#### `aether mcp [list|doctor|repair]`
 
 manage and diagnose MCP servers
 
 Permission: `network` · Availability: `runtime-dependent` · Telemetry: `shell.mcp`
 
-#### `aether config [show\|get\|set]`
+#### `aether config [show|get|set]`
 
 inspect or change configuration
 
 Permission: `local-write` · Availability: `runtime-dependent` · Telemetry: `shell.config`
 
-#### `aether doctor [--live\|--fix] [--deep] [--only <id>]`
+#### `aether doctor [--live|--fix] [--deep] [--only <id>]`
 
 run structured runtime diagnostics
 
@@ -226,33 +226,33 @@ interactive model picker
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.models` · Requires: `aether.catalogue`
 
-#### `/model <n\|id>`
+#### `/model <n|id>`
 
-switch model (no arg → picker)
+switch model \(no arg → picker\)
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.model` · Requires: `aether.catalogue`
 
-#### `/agent <n\|id>`
+#### `/agent <n|id>`
 
-switch orchestrator (or picker)
+switch orchestrator \(or picker\)
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.agent` · Requires: `aether.catalogue`
 
 #### `/agents`
 
-active agent sessions + UVT
+active agent sessions \+ UVT
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.agents` · Requires: `aether.catalogue`
 
 #### `/tier`
 
-plan tier + default model
+plan tier \+ default model
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.tier` · Requires: `aether.catalogue`
 
-#### `/effort [tier\|1-6]`
+#### `/effort [tier|1-6]`
 
-effort dial (LOW to CODEPRO), drives aether code
+effort dial \(LOW to CODEPRO\), drives aether code
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.effort`
 
@@ -280,7 +280,7 @@ leave the REPL
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.exit` · Aliases: `/quit`
 
-#### `/mcp [list\|doctor\|repair]`
+#### `/mcp [list|doctor|repair]`
 
 manage and diagnose MCP servers
 
@@ -296,7 +296,7 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 
 #### `/subagent-driven-execution <task>`
 
-decompose + delegate
+decompose \+ delegate
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.subagent-driven-execution`
 
@@ -320,19 +320,19 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 
 #### `/research <topic>`
 
-research-gather-summarize
+research\-gather\-summarize
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.research`
 
 #### `/project-review`
 
-ask the brain for a prose project review (was /review)
+ask the brain for a prose project review \(was /review\)
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.project-review`
 
 #### `/code-review`
 
-sweep: clean up + simplify
+sweep: clean up \+ simplify
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.code-review`
 
@@ -344,7 +344,7 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 
 #### `/writing-plans <topic>`
 
-write plan to .hermes/plans/
+write plan to \.hermes/plans/
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.writing-plans`
 
@@ -352,19 +352,19 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 
 #### `/queue <task>`
 
-queue a task (runs when current finishes)
+queue a task \(runs when current finishes\)
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.queue`
 
 #### `/steer <guidance>`
 
-mid-task steering for the next turn
+mid\-task steering for the next turn
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.steer`
 
 #### `/btw <note>`
 
-contextual side note (accumulates)
+contextual side note \(accumulates\)
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.btw`
 
@@ -372,7 +372,7 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 
 #### `/pin <path> [reason]`
 
-force file into persistent context (pin list)
+force file into persistent context \(pin list\)
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.pin`
 
@@ -396,7 +396,7 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 
 #### `/audit-receipt [n]`
 
-verified log of tool calls + UVT
+verified log of tool calls \+ UVT
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.audit-receipt`
 
@@ -414,9 +414,9 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 
 ### Goals & Workflows
 
-#### `/goal <desc\|view\|start\|pause\|resume\|cancel\|complete\|note>`
+#### `/goal <desc|view|start|pause|resume|cancel|complete|note>`
 
-create/manage a goal (agent plans phases)
+create/manage a goal \(agent plans phases\)
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.goal`
 
@@ -426,7 +426,7 @@ list saved goals / view one
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.goals`
 
-#### `/memory [status\|inspect\|forget\|prune]`
+#### `/memory [status|inspect|forget|prune]`
 
 inspect and manage scoped memory
 
@@ -498,7 +498,7 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 
 #### `/delegate <model> <task>`
 
-delegate a sub-task to a worker model
+delegate a sub\-task to a worker model
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.delegate`
 
@@ -510,11 +510,11 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 
 #### `/broadcast "<msg>"`
 
-inject a directive to all sub-agents
+inject a directive to all sub\-agents
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.broadcast`
 
-#### `/gather <id\|all>`
+#### `/gather <id|all>`
 
 merge completed work to staging
 
@@ -524,7 +524,7 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 
 #### `/scaffold <type> <name>`
 
-generate boilerplate (component\|route\|module)
+generate boilerplate \(component\|route\|module\)
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.scaffold`
 
@@ -536,7 +536,7 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 
 #### `/test-drive "<target>"`
 
-auto-test: generate, run, fix, repeat
+auto\-test: generate, run, fix, repeat
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.test-drive`
 
@@ -554,11 +554,11 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 
 #### `/stage-diff`
 
-unified diff + commit message
+unified diff \+ commit message
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.stage-diff`
 
-#### `/review [stage\|unstage\|revert\|commit\|diff\|verify]`
+#### `/review [stage|unstage|revert|commit|diff|verify]`
 
 review changes, pick files or hunks, commit
 
@@ -592,7 +592,7 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 
 #### `/re-frame <prompt>`
 
-re-run the last image with a new prompt
+re\-run the last image with a new prompt
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.re-frame`
 
@@ -604,7 +604,7 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 
 #### `/sequence <prompt>`
 
-cinematic multi-shot video
+cinematic multi\-shot video
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.sequence`
 
@@ -616,11 +616,11 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 
 #### `/re-cut <prompt>`
 
-re-edit the last video
+re\-edit the last video
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.re-cut`
 
-#### `/output [open\|clean\|list]`
+#### `/output [open|clean|list]`
 
 manage generated media files
 
@@ -628,7 +628,7 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 
 #### `/storyboard <title>`
 
-multi-scene storyboard pipeline
+multi\-scene storyboard pipeline
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.storyboard`
 
@@ -636,11 +636,11 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 
 #### `/add <element>`
 
-add a HUD overlay (context-bar, timer, tools, help, health, status)
+add a HUD overlay \(context\-bar, timer, tools, help, health, status\)
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.add`
 
-#### `/hud remove\|list\|clear`
+#### `/hud remove|list|clear`
 
 manage HUD overlay elements
 

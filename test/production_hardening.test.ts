@@ -18,7 +18,11 @@ const manifest = {
   main: "dist/src/index.js",
   types: "dist/src/index.d.ts",
   bin: { aether: "dist/src/main.js" },
-  files: ["dist/src", "README.md", "COMMANDS.md", "LICENSE", "NOTICE.md"],
+  files: [
+    "dist/src", "README.md", "COMMANDS.md", "LICENSE", "NOTICE.md",
+    "docs/generated/commands.md", "docs/generated/model-catalogue.md",
+    "docs/model-catalogue/catalogue.json", "docs/model-catalogue/index.html",
+  ],
   engines: { node: ">=24" },
   scripts: { prepack: "npm run build" },
 };
@@ -36,6 +40,10 @@ const pack: PackReport = {
     "NOTICE.md",
     "README.md",
     "package.json",
+    "docs/generated/commands.md",
+    "docs/generated/model-catalogue.md",
+    "docs/model-catalogue/catalogue.json",
+    "docs/model-catalogue/index.html",
     "dist/src/index.js",
     "dist/src/index.d.ts",
     "dist/src/main.js",
@@ -57,6 +65,13 @@ test("package allowlist rejects compiled tests and environment files", () => {
   const errors = validatePack(poisoned, manifest).join("\n");
   assert.match(errors, /dist\/test/);
   assert.match(errors, /\.env/);
+});
+
+test("all generated public documents are required by both manifest and pack", () => {
+  const files = manifest.files.filter((path) => path !== "docs/model-catalogue/index.html");
+  assert.match(validateManifest({ ...manifest, files }).join("\n"), /must include generated public document docs\/model-catalogue\/index\.html/);
+  const missing = { ...pack, files: pack.files.filter((file) => file.path !== "docs/generated/commands.md") };
+  assert.match(validatePack(missing, manifest).join("\n"), /missing generated public document docs\/generated\/commands\.md/);
 });
 
 test("workflow policy rejects floating actions and unbounded jobs", () => {

@@ -40,12 +40,13 @@ const REQUIRED_ROOT_FILES = new Set([
   "package.json",
 ]);
 
-const ALLOWED_GENERATED_DOCS = new Set([
+export const REQUIRED_GENERATED_DOCS = [
   "docs/generated/commands.md",
   "docs/generated/model-catalogue.md",
   "docs/model-catalogue/catalogue.json",
   "docs/model-catalogue/index.html",
-]);
+] as const;
+const ALLOWED_GENERATED_DOCS = new Set<string>(REQUIRED_GENERATED_DOCS);
 
 const MAX_UNPACKED_BYTES = 5_000_000;
 
@@ -75,6 +76,7 @@ export function validateManifest(manifest: PackageManifest, expectedTag?: string
 
   const files = Array.isArray(manifest.files) ? manifest.files : [];
   if (!files.includes("dist/src")) errors.push("package files must include dist/src");
+  for (const path of REQUIRED_GENERATED_DOCS) if (!files.includes(path)) errors.push(`package files must include generated public document ${path}`);
   if (files.includes("dist") || files.some((value) => typeof value === "string" && value.includes("test"))) {
     errors.push("package files must not include compiled tests");
   }
@@ -91,6 +93,9 @@ export function validatePack(report: PackReport, manifest: PackageManifest): str
   const paths = new Set(report.files.map((file) => file.path.replaceAll("\\", "/")));
   for (const required of REQUIRED_ROOT_FILES) {
     if (!paths.has(required)) errors.push(`package is missing required file ${required}`);
+  }
+  for (const required of REQUIRED_GENERATED_DOCS) {
+    if (!paths.has(required)) errors.push(`package is missing generated public document ${required}`);
   }
   for (const required of [manifest.main, manifest.types]) {
     if (typeof required === "string" && !paths.has(required.replace(/^\.\//, ""))) {

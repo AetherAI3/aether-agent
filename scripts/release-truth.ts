@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { COMMAND_MANIFEST } from "../src/commands/command_manifest.js";
-import { buildGeneratedOutputs, sha256 } from "./generate-docs.js";
+import { buildGeneratedOutputs, normalizeEol, sha256 } from "./generate-docs.js";
 
 export const RELEASE_TRUTH_SCHEMA = "aether-agent/release-truth@1" as const;
 export const NOT_APPLICABLE_CONTRACTS = {
@@ -198,13 +198,26 @@ export function packageClaimsFromFiles(files: Readonly<Record<string, string>>):
     packageTargetClaims(manifest["types"], "package.json#types", claims);
     packageTargetClaims(manifest["bin"], "package.json#bin", claims);
     packageTargetClaims(manifest["exports"], "package.json#exports", claims);
+    if (Array.isArray(manifest["files"])) {
+      for (const item of manifest["files"]) {
+        if (typeof item === "string" && item !== "dist/src" && !item.endsWith("/")) {
+          claims.push({ id: `package.json#files:${item}`, source: "package.json#files", requiredPaths: [item.replace(/^\.\//, "")] });
+        }
+      }
+    }
   }
   for (const path of ["README.md", "COMMANDS.md"]) {
-    if (files[path] !== undefined) claims.push({ id: `public-doc:${path}`, source: path, requiredPaths: [path] });
+    const text = files[path];
+    if (text !== undefined) {
+      claims.push({ id: `public-doc:${path}`, source: path, requiredPaths: [path] });
+      for (const match of text.matchAll(/\[[^\]]+\]\((docs\/(?:generated|model-catalogue)\/[A-Za-z0-9._/-]+)\)/g)) {
+        claims.push({ id: `public-link:${path}:${match[1]!}`, source: path, requiredPaths: [match[1]!] });
+      }
+    }
   }
   const seen = new Set<string>();
   return claims.filter((claim) => {
-    const key = claim.requiredPaths.join("\u0000");
+    const key = `${claim.source}\u0000${claim.requiredPaths.join("\u0000")}`;
     if (seen.has(key)) return false;
     seen.add(key); return true;
   });
@@ -272,7 +285,7 @@ export function evaluateReleaseTruth(input: ReleaseTruthInput): ReleaseTruthResu
       return failures;
     }, "capabilities have documentation and release dispositions", "Document every command requirement and classify it in the release notes."),
     evidenceCheck("generated-docs.digest", input.generatedDocs, (items) => items.filter((item) => !item.manifestDigest || item.manifestDigest !== item.documentDigest).map((item) => `${item.id} generated digest differs from its manifest`), "generated command/model docs match manifests", "Regenerate documents from canonical manifests."),
-    evidenceCheck("catalogue.digest-freshness", input.catalogue, (item) => { const failures: string[] = []; if (!item.catalogueDigest || item.catalogueDigest !== item.renderedDigest) failures.push("catalogue rendered digest differs from canonical digest"); const generated = Date.parse(item.generatedAt); const observed = Date.parse(item.observedAt); if (!Number.isFinite(generated) || !Number.isFinite(observed)) failures.push("catalogue timestamps are invalid"); else if (observed - generated > item.maxAgeMs) failures.push("catalogue snapshot is stale"); return failures; }, "catalogue digest and freshness are valid", "Refresh authoritative catalogue data and regenerate outputs."),
+    evidenceCheck("catalogue.digest-freshness", input.catalogue, (item) => { const failures: string[] = []; if (!item.catalogueDigest || item.catalogueDigest !== item.renderedDigest) failures.push("catalogue rendered digest differs from canonical digest"); const generated = Date.parse(item.generatedAt); const observed = Date.parse(item.observedAt); if (!Number.isFinite(generated) || !Number.isFinite(observed)) failures.push("catalogue timestamps are invalid"); else if (generated - observed > 5 * 60_000) failures.push("catalogue generatedAt is materially in the future"); else if (observed - generated > item.maxAgeMs) failures.push("catalogue snapshot is stale"); return failures; }, "catalogue digest and freshness are valid", "Refresh authoritative catalogue data and regenerate outputs."),
     check("package.claim-inventory", packageClaimsFromFiles(input.files).flatMap((claim) => claim.requiredPaths.filter((path) => !packed.has(path)).map((path) => `${claim.id} claims ${path} from ${claim.source}, but it is absent from the package`)), "packed contents satisfy independently derived package and public claims", "Package every manifest target and required public document, or correct its authoritative source."),
     evidenceCheck("registry.source-truth", input.registry, (item) => { const failures: string[] = []; const published = item.publishedVersions.includes(item.sourceVersion); if (item.sourceVersion !== version) failures.push("registry evidence source version differs from package"); if ((item.publicClaim.sourceAvailability === "published") !== published) failures.push("public source availability differs from registry evidence"); if (item.publicClaim.latest !== item.latest) failures.push("public latest claim differs from registry dist-tag"); return failures; }, "source and registry claims match observed dist-tags", "Run the npm host probe; network failure must remain unavailable."),
   ];
@@ -370,8 +383,8 @@ export function deterministicRepositoryEvidence(root: string = process.cwd()): R
       state: "available",
       value: outputs.map((output) => ({
         id: output.path,
-        manifestDigest: sha256(output.content),
-        documentDigest: existsSync(join(root, output.path)) ? sha256(readFileSync(join(root, output.path), "utf8")) : "",
+        manifestDigest: sha256(normalizeEol(output.content)),
+        documentDigest: existsSync(join(root, output.path)) ? sha256(normalizeEol(readFileSync(join(root, output.path), "utf8"))) : "",
       })),
     };
     const catalogue = parseJson(readFileSync(join(root, "docs", "model-catalogue", "catalogue.json"), "utf8"));

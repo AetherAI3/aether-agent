@@ -241,6 +241,39 @@ test("missing package manifest targets fail the independently derived claim inve
   assert.match(finding?.evidence.join("\n") ?? "", /package\.json#types claims dist\/src\/main\.d\.ts/);
 });
 
+test("catalogue evidence rejects a materially future generatedAt", () => {
+  const input = validInput();
+  input.catalogue = { state: "available", value: { catalogueDigest: "a", renderedDigest: "a", generatedAt: "2026-08-24T00:00:00Z", observedAt: "2026-08-23T00:00:00Z", maxAgeMs: 172_800_000 } };
+  const finding = evaluateReleaseTruth(input).checks.find((item) => item.id === "catalogue.digest-freshness");
+  assert.equal(finding?.status, "fail");
+  assert.match(finding?.evidence.join("\n") ?? "", /materially in the future/);
+});
+
+test("generated public documents are required independently by package files and public links", () => {
+  const input = validInput();
+  const generated = [
+    "docs/generated/commands.md",
+    "docs/generated/model-catalogue.md",
+    "docs/model-catalogue/catalogue.json",
+    "docs/model-catalogue/index.html",
+  ];
+  input.files = {
+    ...input.files,
+    "package.json": JSON.stringify({
+      name: "aether-agents", version: "0.3.0", main: "dist/src/main.js", types: "dist/src/main.d.ts",
+      bin: { aether: "dist/src/main.js" }, files: ["dist/src", ...generated],
+    }),
+    "README.md": "[HTML](docs/model-catalogue/index.html) [JSON](docs/model-catalogue/catalogue.json) [Markdown](docs/generated/model-catalogue.md)",
+    "COMMANDS.md": `${input.files["COMMANDS.md"]}\n[Generated commands](docs/generated/commands.md)`,
+  };
+  input.packedFiles = [...input.packedFiles, ...generated.filter((path) => path !== "docs/model-catalogue/index.html")];
+  const finding = evaluateReleaseTruth(input).checks.find((item) => item.id === "package.claim-inventory");
+  assert.equal(finding?.status, "fail");
+  const evidence = finding?.evidence.join("\n") ?? "";
+  assert.match(evidence, /package\.json#files.*docs\/model-catalogue\/index\.html/);
+  assert.match(evidence, /public-link:README\.md.*docs\/model-catalogue\/index\.html/);
+});
+
 test("not_applicable cannot hide a required evidence lane without its explicit contract", () => {
   const input = validInput();
   input.generatedDocs = { state: "not_applicable", reason: "nothing to see", contract: "self-attested" };

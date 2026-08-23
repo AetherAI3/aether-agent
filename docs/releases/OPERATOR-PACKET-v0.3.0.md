@@ -14,7 +14,7 @@ to npm are founder-owned and are listed at the end, unrun.
 | Historical candidate | `fb96ee44b03f37a386954a32412728fa7e98a046` (PR-local evidence commit; historical only, not reachable from current `main`) |
 | Historical archive | `aether-agents-0.3.0.tgz` — 739,977 bytes packed / 3,022,168 unpacked / 575 entries |
 | Historical archive sha256 | `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` |
-| Current exact-head dry run | 582 entries / 3,082,858 unpacked bytes / 4 workflows |
+| Current exact-head dry run | 582 entries / 3,089,330 unpacked bytes / 4 workflows |
 | Current archive | **PENDING — no exact-head archive has been produced** |
 | Current archive sha256 | **PENDING — record only after producing that archive** |
 
@@ -128,7 +128,7 @@ at `fb96ee44b03f37a386954a32412728fa7e98a046`; they do not describe the current
 ### Current integration dry-run
 
 On the integration tree, `verify:production` exited 0 and reported 582 entries,
-3,082,858 unpacked bytes, and 4 workflows. This was an
+3,089,330 unpacked bytes, and 4 workflows. This was an
 `npm pack --dry-run` inventory. It did not produce `aether-agents-0.3.0.tgz`, so
 the current archive size and sha256 are pending rather than borrowed from an
 older candidate.
@@ -189,10 +189,14 @@ none is the digest a founder should tag against: §6.2 re-runs the candidate on
 the merge commit, because any lane landing before the tag moves this number
 again.
 
-Independently, `npm run typecheck` exits 0 and the release-owned test files —
-`version`, `release_coherence`, `release_canaries`, `production_hardening` —
-report 26 pass / 0 fail. The full suite is 1464 tests: 1460 pass, 0 fail, 4
-skipped.
+On the current documentation-hardening head, `npm run typecheck` and
+`npm run docs:check` exit 0; the focused command-manifest, generated-docs,
+public-docs, release-truth, release-coherence, and production-hardening set
+reports 65 pass / 0 fail; and `release:truth` reports
+12/12 pass with no unavailable or not-applicable lane. The older 1464-test
+result belonged to the historical candidate context and is not presented as
+current exact-head evidence. The full suite remains a required release workflow
+gate.
 
 ### Historical mutation check on the load-bearing gate
 
@@ -213,7 +217,7 @@ catch a dropped feature, because it does not know what the notes promised.
 
 ### Current dry-run packaged file manifest
 
-The exact-head dry run reported 582 entries and 3,082,858 bytes unpacked. Five
+The exact-head dry run reported 582 entries and 3,089,330 bytes unpacked. Five
 files are at the package root, four generated public documents are under `docs/`,
 and everything else is under `dist/src/`. This is an inventory prediction, not
 a statement that a current archive exists.
