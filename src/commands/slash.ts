@@ -223,6 +223,12 @@ export async function handleSlash(
       await cmdPreview(ctx, args, { out, err: out });
       break;
     }
+    case "rc": {
+      const { cmdRc } = await import("./rc.js");
+      // Fail-soft by contract: whatever RC does, the REPL keeps its turn.
+      await cmdRc(ctx, arg.trim() ? arg.trim().split(/\s+/) : [], { out, err: out });
+      break;
+    }
     case "mcp": {
       const args = arg.trim() ? arg.trim().split(/\s+/) : [];
       if (args.length > 0) {

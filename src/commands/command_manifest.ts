@@ -94,6 +94,14 @@ const COMMAND_RELEASE_ENTRIES: ReadonlyArray<readonly [CommandManifestKey, Comma
   ["shell:local", { disposition: "new", note: "v0.3.0 adds explicit Ollama diagnosis and management." }],
   ["shell:preview", { disposition: "new", note: "v0.3.0 adds a consent-gated, managed loopback preview lifecycle." }],
   ["slash:preview", { disposition: "new", note: "v0.3.0 adds the same managed preview lifecycle inside the REPL." }],
+  ["shell:rc", {
+    disposition: "new",
+    note: "Remote Control host: observe the local session from Aether Code (ADR-0007, viewer-only Wave 1).",
+  }],
+  ["slash:rc", {
+    disposition: "new",
+    note: "The same Remote Control host started from inside the REPL session.",
+  }],
 ];
 export const COMMAND_RELEASE_CONTRACT: ReadonlyMap<CommandManifestKey, CommandReleaseBinding> =
   new Map(COMMAND_RELEASE_ENTRIES);
