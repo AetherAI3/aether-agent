@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { redactForBundle } from "./redaction.js";
 
 export const PREVIEW_SCHEMA = "aether.preview/1" as const;
 
@@ -15,7 +16,6 @@ export interface PreviewCommand {
 export interface PreviewLaunch {
   schema: typeof PREVIEW_SCHEMA;
   instanceId: string;
-  token: string;
   projectRoot: string;
   commandDigest: string;
   command: PreviewCommand;
@@ -32,7 +32,6 @@ export interface PreviewState {
   supervisorPid: number;
   childPid: number;
   controlPort: number;
-  token: string;
   startedAt: string;
   url?: string;
   error?: string;
@@ -42,7 +41,7 @@ const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
 const ANSI = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001b\\))/g;
 
 export function sanitizePreviewText(value: string): string {
-  return value.replace(ANSI, "").replace(CONTROL, "").replace(/\r(?!\n)/g, "\n");
+  return redactForBundle(value).replace(ANSI, "").replace(CONTROL, "").replace(/\r(?!\n)/g, "\n");
 }
 
 export function isLoopbackUrl(raw: string): boolean {
@@ -130,12 +129,17 @@ export function validatePreviewCommand(command: PreviewCommand, projectRoot: str
 export function parsePreviewState(value: unknown): PreviewState | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
+  const allowed = new Set([
+    "schema", "instanceId", "projectRoot", "commandDigest", "phase", "supervisorPid", "childPid",
+    "controlPort", "startedAt", "url", "error",
+  ]);
+  if (Object.keys(v).some((key) => !allowed.has(key))) return null;
   if (v["schema"] !== PREVIEW_SCHEMA || typeof v["instanceId"] !== "string" ||
       typeof v["projectRoot"] !== "string" || typeof v["commandDigest"] !== "string" ||
       !["starting", "ready", "failed", "stopping"].includes(String(v["phase"])) ||
       !Number.isInteger(v["supervisorPid"]) || !Number.isInteger(v["childPid"]) ||
-      !Number.isInteger(v["controlPort"]) || typeof v["token"] !== "string" ||
-      typeof v["startedAt"] !== "string") return null;
+      !Number.isInteger(v["controlPort"]) || typeof v["startedAt"] !== "string" ||
+      (v["error"] !== undefined && typeof v["error"] !== "string")) return null;
   if (v["url"] !== undefined && (typeof v["url"] !== "string" || !isLoopbackUrl(v["url"]))) return null;
   return value as PreviewState;
 }

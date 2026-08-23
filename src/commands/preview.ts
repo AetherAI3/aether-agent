@@ -1,7 +1,7 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Writable } from "node:stream";
 import type { AppContext } from "../core/context.js";
@@ -87,12 +87,15 @@ function readState(path: string): PreviewState | null {
   return state;
 }
 
-async function control(state: PreviewState, method: "GET" | "POST", path: "/status" | "/stop"): Promise<PreviewState | null> {
+async function control(state: PreviewState, statePath: string, method: "GET" | "POST", path: "/status" | "/stop"): Promise<PreviewState | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 1_000);
+  const requestId = randomUUID();
+  const requestPath = join(dirname(statePath), `control-${requestId}.json`);
   try {
+    writePrivate(requestPath, JSON.stringify({ schema: PREVIEW_SCHEMA, requestId, instanceId: state.instanceId, method, path }));
     const response = await fetch(`http://127.0.0.1:${state.controlPort}${path}`, {
-      method, headers: { authorization: `Bearer ${state.token}` }, signal: controller.signal,
+      method, headers: { "x-aether-preview-control": requestId }, signal: controller.signal,
     });
     if (!response.ok) return null;
     const body: unknown = await response.json();
@@ -101,14 +104,17 @@ async function control(state: PreviewState, method: "GET" | "POST", path: "/stat
     return checked?.instanceId === state.instanceId && checked.projectRoot === state.projectRoot &&
       checked.commandDigest === state.commandDigest ? checked : null;
   } catch { return null; }
-  finally { clearTimeout(timer); }
+  finally {
+    clearTimeout(timer);
+    try { if (existsSync(requestPath)) unlinkSync(requestPath); } catch { /* bounded orphan; next command does not trust it */ }
+  }
 }
 
 async function currentState(projectRoot: string, statePath: string): Promise<{ state: PreviewState | null; stale: boolean }> {
   const state = readState(statePath);
   if (!state) return { state: null, stale: false };
   if (realpathSync(resolve(state.projectRoot)) !== projectRoot) throw new Error("preview state belongs to a different project");
-  const live = await control(state, "GET", "/status");
+  const live = await control(state, statePath, "GET", "/status");
   return live ? { state: live, stale: false } : { state, stale: true };
 }
 
@@ -161,11 +167,11 @@ export async function cmdPreview(ctx: AppContext, argv: string[], options: Previ
       return existing.state.phase === "ready" ? showOpen(existing.state, options.noOpen ?? false, out, err, options.open) : PREVIEW_EXIT.ok;
     }
     if (existing.stale) {
-      err.write("Removed stale preview state after its token-bound supervisor challenge failed; no PID was signalled.\n");
+      err.write("Removed stale preview state after its instance-bound supervisor challenge failed; no PID was signalled.\n");
       unlinkSync(paths.statePath);
     }
     err.write(
-      `Preview plan\n  argv: ${JSON.stringify([command.executable, ...command.args])}\n  cwd: ${command.cwd}\n` +
+      `Preview plan\n  argv: ${JSON.stringify(redactPreviewArgv([command.executable, ...command.args]))}\n  cwd: ${sanitizePreviewText(command.cwd)}\n` +
       "  filesystem: child runs as your user inside the declared cwd\n" +
       "  process: argv-only launch; Aether owns and stops the full process tree\n" +
       "  network: HOST=127.0.0.1; readiness accepts loopback http(s) URLs only; child may make outbound connections\n" +
@@ -176,20 +182,18 @@ export async function cmdPreview(ctx: AppContext, argv: string[], options: Previ
       return PREVIEW_EXIT.declined;
     }
     const instanceId = randomUUID();
-    const token = randomBytes(32).toString("hex");
-    const launchPath = join(paths.dir, `launch-${instanceId}.json`);
     const launch: PreviewLaunch = {
-      schema: PREVIEW_SCHEMA, instanceId, token, projectRoot, commandDigest: digest, command,
+      schema: PREVIEW_SCHEMA, instanceId, projectRoot, commandDigest: digest, command,
       statePath: paths.statePath, logPath: paths.logPath,
     };
     try {
       if (existsSync(paths.logPath)) unlinkSync(paths.logPath);
       writePrivate(paths.logPath, "");
-      writePrivate(launchPath, JSON.stringify(launch));
       const supervisorPath = fileURLToPath(new URL("../core/preview_supervisor.js", import.meta.url));
-      const supervisor = spawn(process.execPath, [supervisorPath, launchPath], {
-        cwd: projectRoot, detached: true, windowsHide: true, shell: false, stdio: "ignore",
+      const supervisor = spawn(process.execPath, [supervisorPath], {
+        cwd: projectRoot, detached: true, windowsHide: true, shell: false, stdio: ["pipe", "ignore", "ignore"],
       });
+      supervisor.stdin?.end(JSON.stringify(launch));
       supervisor.unref();
       let cancelled = false;
       const cancel = (): void => { cancelled = true; terminateProcessTree(supervisor); };
@@ -201,7 +205,7 @@ export async function cmdPreview(ctx: AppContext, argv: string[], options: Previ
           await sleep(100);
           const state = readState(paths.statePath);
           if (!state || state.instanceId !== instanceId) continue;
-          const live = await control(state, "GET", "/status");
+          const live = await control(state, paths.statePath, "GET", "/status");
           if (live?.phase === "ready") return showOpen(live, options.noOpen ?? false, out, err, options.open);
           if (state.phase === "failed") { err.write(`${state.error ?? "preview launch failed"}\n`); return PREVIEW_EXIT.launchFailed; }
         }
@@ -214,7 +218,6 @@ export async function cmdPreview(ctx: AppContext, argv: string[], options: Previ
       err.write("Timed out waiting for the preview supervisor; its process tree was stopped.\n");
       return PREVIEW_EXIT.timeout;
     } catch (error) {
-      try { if (existsSync(launchPath)) unlinkSync(launchPath); } catch { /* preserve launch error */ }
       err.write(`Preview launch failed: ${sanitizePreviewText(error instanceof Error ? error.message : String(error))}\n`);
       return PREVIEW_EXIT.launchFailed;
     }
@@ -246,11 +249,26 @@ export async function cmdPreview(ctx: AppContext, argv: string[], options: Previ
     return PREVIEW_EXIT.ok;
   }
   err.write(`Stopping declared preview ${live.instanceId} (pid ${live.childPid}) and its process tree.\n`);
-  if (!await control(live, "POST", "/stop")) { err.write("Supervisor ownership challenge failed; no PID was signalled.\n"); return PREVIEW_EXIT.controlFailed; }
+  if (!await control(live, paths.statePath, "POST", "/stop")) { err.write("Supervisor instance challenge failed; no PID was signalled.\n"); return PREVIEW_EXIT.controlFailed; }
   for (let i = 0; i < 50 && existsSync(paths.statePath); i += 1) await sleep(100);
   if (existsSync(paths.statePath)) { err.write("Preview stop was requested, but cleanup was not confirmed.\n"); return PREVIEW_EXIT.controlFailed; }
   out.write("Preview stopped.\n");
   return PREVIEW_EXIT.ok;
+}
+
+function redactPreviewArgv(argv: readonly string[]): string[] {
+  let redactNext = false;
+  return argv.map((arg) => {
+    if (redactNext) {
+      redactNext = false;
+      return "[REDACTED]";
+    }
+    const match = /^(--?(?:token|secret|password|passwd|authorization|api[-_]?key|private[-_]?key|credential|pat))(?:=(.*))?$/i.exec(arg);
+    if (!match) return sanitizePreviewText(arg);
+    if (match[2] !== undefined) return `${match[1]}=[REDACTED]`;
+    redactNext = true;
+    return match[1]!;
+  });
 }
 
 export function previewOptionsFromFlags(flags: CommandFlags): PreviewOptions {

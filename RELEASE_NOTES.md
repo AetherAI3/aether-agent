@@ -133,16 +133,17 @@ either.
 ## Fixed
 
 - **A coding run no longer turns into a chat about your code without saying so.**
-  When the server answers 403/404 to a dev-session request — which is what
-  `api.aethersystems.net` does today, with agent dev sessions disabled — CloudBrain
-  treated it as "legacy server" and rerouted the run onto the one-way chat
+  When a server answers 403/404 to a dev-session request, CloudBrain treated it
+  as "legacy server" and rerouted the run onto the one-way chat
   stream. That path runs its tools **server-side against the cloud vault**, so a
   session asked to work in your checkout quietly became a conversation about it:
   normal header, plausible reply, **exit 0**, and nothing anywhere saying the
   transport had changed. A `ROUTING_DRIFT` banner now prints before any model
   output, carrying the status, the server's own sanitized detail, the
   consequence in plain words, and what to do about it; `--json` carries it
-  structurally as `kind:"routing_drift"` (#105).
+  structurally as `kind:"routing_drift"` (#105). The current production doctor
+  probe is still unproven: its required non-billable `max_uvt: 0` session is
+  rejected with HTTP 422, so this release does not claim hosted coding works.
 - **`aether auth login` opens the approval page on Windows.** The win32 launcher
   used `explorer.exe` for URLs as well as file paths, which opens a File Explorer
   window rather than the default browser — so the device-approval page never

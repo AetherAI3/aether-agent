@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, lstatSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { isAbsolute } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   commandDigest, isLoopbackUrl, parsePreviewState, PREVIEW_SCHEMA, previewPaths, sanitizePreviewText,
@@ -19,9 +19,11 @@ function writeState(path: string, state: PreviewState): void {
 function validLaunch(value: unknown): value is PreviewLaunch {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const v = value as Record<string, unknown>;
+  const allowed = new Set(["schema", "instanceId", "projectRoot", "commandDigest", "command", "statePath", "logPath"]);
+  if (Object.keys(v).some((key) => !allowed.has(key))) return false;
   return v["schema"] === PREVIEW_SCHEMA && typeof v["instanceId"] === "string" &&
-    typeof v["token"] === "string" && v["token"].length >= 32 && typeof v["projectRoot"] === "string" &&
-    typeof v["commandDigest"] === "string" && typeof v["statePath"] === "string" && typeof v["logPath"] === "string" &&
+    typeof v["projectRoot"] === "string" && typeof v["commandDigest"] === "string" &&
+    typeof v["statePath"] === "string" && typeof v["logPath"] === "string" &&
     isAbsolute(v["statePath"] as string) && isAbsolute(v["logPath"] as string) &&
     typeof v["command"] === "object" && v["command"] !== null;
 }
@@ -30,6 +32,24 @@ function reply(res: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body);
   res.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(text) });
   res.end(text);
+}
+
+function consumeControlRequest(launch: PreviewLaunch, req: IncomingMessage): boolean {
+  const requestId = req.headers["x-aether-preview-control"];
+  if (typeof requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) return false;
+  const requestPath = join(dirname(launch.statePath), `control-${requestId}.json`);
+  try {
+    const stat = lstatSync(requestPath);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 1_024) return false;
+    const value: unknown = JSON.parse(readFileSync(requestPath, "utf8"));
+    unlinkSync(requestPath);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const v = value as Record<string, unknown>;
+    return Object.keys(v).length === 5 && v["schema"] === PREVIEW_SCHEMA && v["requestId"] === requestId &&
+      v["instanceId"] === launch.instanceId && v["method"] === req.method && v["path"] === req.url;
+  } catch {
+    return false;
+  }
 }
 
 async function probe(url: string): Promise<boolean> {
@@ -42,10 +62,10 @@ async function probe(url: string): Promise<boolean> {
   finally { clearTimeout(timer); }
 }
 
-export async function runPreviewSupervisor(launchPath: string): Promise<number> {
+export async function runPreviewSupervisor(launchJson: string): Promise<number> {
   let launch: PreviewLaunch;
   try {
-    const parsed: unknown = JSON.parse(readFileSync(launchPath, "utf8"));
+    const parsed: unknown = JSON.parse(launchJson);
     if (!validLaunch(parsed)) throw new Error("invalid launch contract");
     const projectRoot = realpathSync(parsed.projectRoot);
     const paths = previewPaths(projectRoot);
@@ -54,7 +74,6 @@ export async function runPreviewSupervisor(launchPath: string): Promise<number> 
         parsed.commandDigest !== commandDigest(command)) throw new Error("launch contract confinement or digest mismatch");
     launch = { ...parsed, projectRoot, command };
   } catch { return 2; }
-  finally { try { unlinkSync(launchPath); } catch { /* consumed or already gone */ } }
 
   let child: ChildProcess | null = null;
   let stopping = false;
@@ -63,7 +82,10 @@ export async function runPreviewSupervisor(launchPath: string): Promise<number> 
   if (launch.command.readyUrl) candidates.push(launch.command.readyUrl);
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    if (req.headers["authorization"] !== `Bearer ${launch.token}`) return reply(res, 403, { ok: false });
+    // The request is authorized by a one-use file created inside the private
+    // project state directory. A browser cannot create it, another OS user
+    // cannot access that directory, and no reusable bearer credential exists.
+    if (!consumeControlRequest(launch, req)) return reply(res, 403, { ok: false });
     if (req.url === "/status" && req.method === "GET") return reply(res, 200, state);
     if (req.url === "/stop" && req.method === "POST") {
       if (!stopping) {
@@ -96,7 +118,7 @@ export async function runPreviewSupervisor(launchPath: string): Promise<number> 
     state = {
       schema: PREVIEW_SCHEMA, instanceId: launch.instanceId, projectRoot: launch.projectRoot,
       commandDigest: launch.commandDigest, phase: "failed", supervisorPid: process.pid, childPid: 0,
-      controlPort: address.port, token: launch.token, startedAt: new Date().toISOString(),
+      controlPort: address.port, startedAt: new Date().toISOString(),
       error: sanitizePreviewText(error instanceof Error ? error.message : String(error)).slice(0, 500),
     };
     writeState(launch.statePath, state);
@@ -107,7 +129,7 @@ export async function runPreviewSupervisor(launchPath: string): Promise<number> 
   state = {
     schema: PREVIEW_SCHEMA, instanceId: launch.instanceId, projectRoot: launch.projectRoot,
     commandDigest: launch.commandDigest, phase: "starting", supervisorPid: process.pid, childPid: child.pid ?? 0,
-    controlPort: address.port, token: launch.token, startedAt: new Date().toISOString(),
+    controlPort: address.port, startedAt: new Date().toISOString(),
   };
   writeState(launch.statePath, state);
 
@@ -184,4 +206,8 @@ export async function runPreviewSupervisor(launchPath: string): Promise<number> 
 }
 
 const invoked = process.argv[1] ? fileURLToPath(import.meta.url) === process.argv[1] || fileURLToPath(import.meta.url).toLowerCase() === process.argv[1].toLowerCase() : false;
-if (invoked) runPreviewSupervisor(process.argv[2] ?? "").then((code) => { process.exitCode = code; });
+if (invoked) {
+  let launchJson = "";
+  try { launchJson = readFileSync(0, "utf8"); } catch { /* invalid input fails closed below */ }
+  runPreviewSupervisor(launchJson).then((code) => { process.exitCode = code; });
+}

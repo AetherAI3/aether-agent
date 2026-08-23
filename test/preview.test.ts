@@ -1,13 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtempSync, mkdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import type { AppContext } from "../src/core/context.js";
 import {
-  commandDigest, isLoopbackUrl, previewPaths, resolvePreviewCwd, sanitizePreviewText,
+  commandDigest, isLoopbackUrl, parsePreviewState, previewPaths, resolvePreviewCwd, sanitizePreviewText,
   validatePreviewCommand, PREVIEW_SCHEMA, type PreviewState,
 } from "../src/core/preview_contract.js";
 import { cmdPreview, PREVIEW_EXIT, resolvePreviewCommand } from "../src/commands/preview.js";
@@ -29,6 +29,7 @@ test("preview contract accepts loopback only and strips hostile terminal control
   for (const url of ["http://127.0.0.1:3000", "https://localhost:5173/x", "http://[::1]:8080"]) assert.equal(isLoopbackUrl(url), true);
   for (const url of ["http://0.0.0.0:3000", "http://192.168.1.2:3000", "file:///tmp/x", "http://user:pw@localhost:1", "http://localhost:1\nX"]) assert.equal(isLoopbackUrl(url), false);
   assert.equal(sanitizePreviewText("ok\u001b]0;owned\u0007\u001b[31m red\u001b[0m\u0000\n"), "ok red\n");
+  assert.equal(sanitizePreviewText("token=preview-secret-value\n"), "token=[REDACTED]\n");
 });
 
 test("preview command validation confines cwd and rejects hostile argv", () => {
@@ -59,6 +60,7 @@ test("preview state directory rejects a planted junction/symlink", () => {
 test("managed preview detects its URL, reports headless honestly, sanitizes logs, and stops descendants", { timeout: 30_000 }, async () => {
   const root = tempProject();
   const heartbeat = join(root, "heartbeat.txt");
+  const secret = "preview-secret-value-12345";
   const script = join(root, "server.mjs");
   writeFileSync(script, `
     import { createServer } from "node:http";
@@ -69,17 +71,32 @@ test("managed preview detects its URL, reports headless honestly, sanitizes logs
     } else {
       const beat = spawn(process.execPath,[process.argv[1],"beat",process.argv[3]],{stdio:"ignore"});
       const s=createServer((_q,r)=>r.end("ok"));
-      s.listen(0,"127.0.0.1",()=>{const a=s.address();console.log("\\u001b]0;hostile\\u0007ready http://127.0.0.1:"+a.port);console.log("grand "+beat.pid)});
+      s.listen(0,"127.0.0.1",()=>{const a=s.address();console.log("\\u001b]0;hostile\\u0007ready http://127.0.0.1:"+a.port);console.log("grand "+beat.pid);console.log("token="+process.argv[5])});
       setInterval(()=>{},1000);
     }
   `);
-  const previewArgs = [script, "serve", heartbeat];
+  const previewArgs = [script, "serve", heartbeat, "--api-key", secret];
   const out = sink(); const err = sink();
   const start = await cmdPreview(context(root), ["start"], { command: process.execPath, args: previewArgs, timeoutMs: "8000", noOpen: true, out: out.stream, err: err.stream });
   assert.equal(start, PREVIEW_EXIT.ok, err.text());
   assert.match(out.text(), /^http:\/\/127\.0\.0\.1:\d+/m);
   assert.match(out.text(), /Browser not opened/);
   assert.doesNotMatch(out.text(), /Opened in/);
+  assert.doesNotMatch(err.text(), new RegExp(secret));
+
+  const paths = previewPaths(root);
+  const stateText = readFileSync(paths.statePath, "utf8");
+  assert.doesNotMatch(stateText, /"token"/);
+  assert.doesNotMatch(stateText, new RegExp(secret));
+  assert.deepEqual(readdirSync(paths.dir).filter((name) => name.startsWith("launch-") || name.startsWith("control-")), []);
+  const state = JSON.parse(stateText) as PreviewState;
+  assert.equal(parsePreviewState({ ...state, token: secret }), null, "legacy or injected bearer state was accepted");
+  const csrf = await fetch(`http://127.0.0.1:${state.controlPort}/stop`, { method: "POST" });
+  assert.equal(csrf.status, 403, "a browser-simple request reached preview control without the custom header");
+  const forged = await fetch(`http://127.0.0.1:${state.controlPort}/stop`, {
+    method: "POST", headers: { "x-aether-preview-control": "00000000-0000-4000-8000-000000000000" },
+  });
+  assert.equal(forged.status, 403, "a control id without an owner-private request file was accepted");
 
   const statusOut = sink();
   assert.equal(await cmdPreview(context(root), ["status"], { out: statusOut.stream, err: err.stream }), 0);
@@ -107,6 +124,8 @@ test("managed preview detects its URL, reports headless honestly, sanitizes logs
   assert.equal(await cmdPreview(context(root), ["logs"], { out: logs.stream, err: err.stream }), 0);
   assert.match(logs.text(), /ready http:\/\//);
   assert.doesNotMatch(logs.text(), /\u001b|hostile/);
+  assert.doesNotMatch(logs.text(), new RegExp(secret));
+  assert.match(logs.text(), /token=\[REDACTED\]/);
 
   assert.equal(await cmdPreview(context(root), ["stop"], { out: out.stream, err: err.stream }), 0, err.text());
   await new Promise((resolvePromise) => setTimeout(resolvePromise, 300));
@@ -140,7 +159,7 @@ test("launch failure is explicit and stale state never causes a PID signal", { t
   const stale: PreviewState = {
     schema: PREVIEW_SCHEMA, instanceId: "stale", projectRoot: root, commandDigest: "a".repeat(64),
     phase: "ready", supervisorPid: process.pid, childPid: process.pid, controlPort: 9,
-    token: "b".repeat(64), startedAt: new Date().toISOString(), url: "http://127.0.0.1:9",
+    startedAt: new Date().toISOString(), url: "http://127.0.0.1:9",
   };
   writeFileSync(paths.statePath, JSON.stringify(stale));
   const stop = await cmdPreview(context(root), ["stop"], { out: out.stream, err: err.stream });
