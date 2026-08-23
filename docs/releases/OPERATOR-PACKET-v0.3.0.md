@@ -9,13 +9,13 @@ to npm are founder-owned and are listed at the end, unrun.
 |---|---|
 | Package | `aether-agents` |
 | Proposed tag | `v0.3.0` |
-| Branch base | `426b12464c2a19549f421adb43348f83d028628e` (`origin/main`, after #98) |
+| Branch base | `a845479082e5e1b07337aae95833767d9f8ab4e5` (`origin/main`, after #105) |
 | Release commit | the merge commit of this PR into `main` — **re-run the candidate on it before tagging** (§6.2) |
-| Evidence commit | `22aa02141fba158927cb1f01e4344cfa3e8f1a01` |
+| Evidence commit | `fb96ee44b03f37a386954a32412728fa7e98a046` |
 | Tarball | `aether-agents-0.3.0.tgz` |
-| Tarball sha256 | `8c5c119d93cabf49af0c49c97addb055308d508af93f8675a26b6f5c8ecba307` |
-| Tarball size | 597,400 bytes packed / 2,459,474 unpacked |
-| Packed entries | 527 |
+| Tarball sha256 | `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` |
+| Tarball size | 740,014 bytes packed / 3,022,168 unpacked |
+| Packed entries | 575 |
 
 ## 1. Semantic version decision
 
@@ -38,27 +38,38 @@ artifacts answer to one name — the identity defect this release exists to clos
 
 ## 2. What the release covers
 
-Commit range `477f0fc..426b124` — 17 commits, 2026-08-19 08:39 EDT through
-2026-08-22 11:12 EDT — plus everything the unpublished v0.2.0 notes described.
+Commit range `477f0fc..a845479` — 28 commits, 2026-08-19 08:39 EDT through
+2026-08-22 21:48 EDT — plus everything the unpublished v0.2.0 notes described.
 
-- 2 feature commits: #72 (skills runtime and its three commands) and #98
-  (command-registration seam), the second of which also carries three
-  user-visible fixes.
-- 10 user-visible fix commits: #73, #74, #75, #77, #78, #83, #84, #88, #89, #91.
+- 4 feature waves: #72 (skills runtime and its three commands), #98
+  (command-registration seam), #93/#94/#95/#97/#101/#102 (the review → commit →
+  pull request rail, and the two commands that expose it), and #99
+  (`aether sessions`) — plus #100, which is what finally puts skills and
+  `AGENTS.md` inside a real run and enforces their tool policy.
+- 13 user-visible fix commits: #73, #74, #75, #77, #78, #83, #84, #88, #89,
+  #91, #103, #104, #105.
 - 3 test-only commits: #82, #85, #87.
-- 1 unwired module: #86 (ship rail; no command invokes it, so it changes no
-  behaviour in this release).
 - 1 documentation/hygiene commit: #90.
+
+Two of these carry **behaviour changes** — three changes in total, all named in
+the "Behaviour changes" section of the release notes. #105 adds exit code 3 for
+a run that refuses to degrade into a chat. #104 refuses a symlinked config
+directory when writing the token, and reports a planted token link as "no
+token" rather than throwing. An operator upgrading a scripted install should
+read that section before this one.
 
 Per-PR detail: [`2026-08-22.md`](2026-08-22.md).
 
-**This range moved after the candidate was first cut.** #98 was squash-merged to
-`main` while PR #96 was open, and the notes were updated to cover it. Any lane
-that lands before the tag is created moves it again — which is why step 2 of §6
-re-runs the candidate on the merge commit rather than trusting this packet's
-digest. `test/release_coherence.test.ts` fails the build if a user-visible
-command reaches the registry without either a release note or a named exemption
-(§4), so the next lane to land cannot repeat this silently.
+**This range moved twice after the candidate was first cut, and that is the
+normal case.** #98 was squash-merged to `main` while PR #96 was open; then the
+review/ship rail, `aether sessions`, the skills wiring, the opener and token-store
+fixes and finally #105 landed the same way. The notes and this packet were
+regenerated against each new base rather than tagged against the old one. Any
+lane that lands before the tag is created moves it again — which is why step 2
+of §6 re-runs the candidate on the merge commit rather than trusting this
+packet's digest. `test/release_coherence.test.ts` fails the build if a
+user-visible command reaches the registry without either a release note or a
+named exemption (§4), so the next lane to land cannot repeat this silently.
 
 ## 3. State of the world when this packet was written
 
@@ -100,11 +111,11 @@ That runs `.github/workflows/release.yml`'s sequence against a detached
 --tag v0.3.0` → `npm pack` → global install of **that tarball** into a clean
 prefix → CLI proofs run from the installed package.
 
-Recorded run — commit `22aa02141fba158927cb1f01e4344cfa3e8f1a01`, `commitBound:
-true`, `ok: true`, process exit 0:
+Recorded run — commit `fb96ee44b03f37a386954a32412728fa7e98a046`, `commitBound: true`,
+`ok: true`, process exit 0:
 
 ```
-PASS     commit-identity — 22aa02141fba158927cb1f01e4344cfa3e8f1a01
+PASS     commit-identity — fb96ee44b03f37a386954a32412728fa7e98a046
 PASS     stage-commit — detached worktree of that commit
 PASS     npm-ci-ignore-scripts — found 0 vulnerabilities
 PASS     npm-audit-high — found 0 vulnerabilities
@@ -114,14 +125,14 @@ PASS     release-tests — 4 release test files, exit 0
 NOT-RUN  npm-test — NOT RUN here — the full suite is release.yml's gate.
                     This report says nothing about it.
 PASS     verify-production — {"ok":true,"package":"aether-agents","version":"0.3.0",
-                             "packedFiles":527,"packedBytes":2459474,"workflows":3}
+                             "packedFiles":575,"packedBytes":3022168,"workflows":3}
 PASS     pack — aether-agents-0.3.0.tgz
-                sha256:8c5c119d93cabf49af0c49c97addb055308d508af93f8675a26b6f5c8ecba307
+                sha256:70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d
 PASS     install-tarball — <prefix>/node_modules/aether-agents
 PASS     installed --version — 0.3.0
-PASS     installed --help — 46 lines, lists skills, capabilities, resume, agent, doctor
+PASS     installed --help — 49 lines, lists skills, capabilities, resume, agent, doctor
 PASS     installed skills list — aether/frontend-from-screenshot@1.0.0 builtin enabled …
-PASS     installed capabilities — instructions        supported
+PASS     installed capabilities — instructions        unavailable (agent_skills_disabled)
 PASS     installed demo:handoff — independent test run in machine-b/slugify: green
 
 RELEASE CANDIDATE OK
@@ -130,11 +141,20 @@ RELEASE CANDIDATE OK
 The last five lines all ran the CLI that `npm install --global` placed on disk
 from that exact tarball, in a clean prefix — not `dist/` in a source checkout.
 
-**The digest changed when the base moved, and that is the point.** An earlier
-candidate at `a63e1c6e` — before #98 was on `main` — produced
-`25f33524bd866275674eccbf8cfe5706f14e925cb0ba35861dc6bc21a9245a2d` over 524
-entries. #98 added `dist/src/core/command_dispatch.*` and rewrote `main.js`, so
-the packed content is genuinely different and the digest is too. A digest that
+**The digest changed when the base moved, and that is the point.** This packet
+has now recorded three different digests for the same version number, one per
+base: `25f33524…` at `a63e1c6e` over 524 entries, `8c5c119d…` at `426b124` over
+527, and `70a48aca…` at the head that merges `a845479` over 575. Each lane that
+landed genuinely changed the packed content — #98 added the dispatch table,
+#93–#102 added the review/ship rail, #99 the session library, #105 the routing
+guard — so the digest moved with it. A digest that had survived those changes
+would have meant the pack was not reading the tree.
+
+One thing the digest is deliberately insensitive to: **this packet is not in the
+tarball.** The `files` allowlist is `dist/src` plus README, COMMANDS, LICENSE and
+NOTICE, so `docs/` ships to nobody and writing this number down here cannot
+change it. That is why the digest above, measured at the evidence commit, still
+describes the commit that records it.
 had survived that change would have meant the pack was not reading the tree.
 
 Neither figure is a cross-machine reproducibility claim (see §5), and neither is
@@ -143,7 +163,8 @@ commit, because any lane landing before the tag moves this number again.
 
 Independently, `npm run typecheck` exits 0 and the release-owned test files —
 `version`, `release_coherence`, `release_canaries`, `production_hardening` —
-report 24 pass / 0 fail.
+report 25 pass / 0 fail. The full suite is 1464 tests: 1460 pass, 0 fail, 4
+skipped.
 
 ### Mutation check on the load-bearing gate
 
@@ -261,10 +282,28 @@ Named as unproven rather than omitted:
 
 - **npm availability of 0.3.0.** Nothing here contacted the registry to publish.
   Until step 6 completes, `npm i -g aether-agents` installs `0.1.0`.
-- **The full `npm test` suite on this machine.** The release-candidate run
-  executes the release-owned test files only and reports `npm-test` as
-  `not-run`. The whole suite is `release.yml`'s gate and CI's reading is the
-  authority. Run `npm run release:candidate -- --full-tests` to include it.
+- **The full `npm test` suite inside the candidate run.** The release-candidate
+  run executes the release-owned test files only and reports `npm-test` as
+  `not-run`; `--full-tests` includes it. The suite *was* run separately on this
+  machine at the evidence commit — 1464 tests, 1460 pass, 0 fail, 4 skipped —
+  and that reading is recorded in §4 and in the PR body. It is a local reading:
+  `release.yml` and the PR's required checks are the authority.
+- **Anything about the deployed API.** Two claims in the release notes'
+  Authentication section describe a *server*, not this package: that the API
+  accepts long-lived `aek_` tokens, and that `/auth/logout` actually ends the
+  session. This repository has no live credential in CI and no test asserts
+  either. They are marked in the notes as operator-verified, and they should be
+  re-checked against production before the release is announced. What this lane
+  can say is narrower: `npm run smoke` on this machine reached
+  `https://api.aethersystems.net/cloud` and got an authenticated cloud turn
+  back, which is consistent with the first claim and proves nothing about the
+  second.
+- **That `aether agent` works against production today.** #105 exists because
+  it does not: `AETHER_AGENT_DEV_ENABLED` is unset on `api.aethersystems.net`,
+  so a dev session is refused and — as of this release — the run now **exits 3**
+  instead of silently becoming a chat. That is the correct behaviour and it is
+  still a broken end-to-end path. It is a server configuration gap, not
+  something this tag fixes.
 - **Reproducibility of the tarball digest across machines.** The digest below is
   what this machine produced. It is recorded so the CI-built tarball can be
   compared against it, not asserted to be byte-identical on other hosts.
