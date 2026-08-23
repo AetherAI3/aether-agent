@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, lstatSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,21 +37,29 @@ function reply(res: ServerResponse, status: number, body: unknown): void {
 function consumeControlRequest(launch: PreviewLaunch, req: IncomingMessage): boolean {
   const requestId = req.headers["x-aether-preview-control"];
   if (typeof requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) return false;
-  const requestPath = join(dirname(launch.statePath), "control.json");
+  let names: string[];
   try {
-    const stat = lstatSync(requestPath);
-    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 1_024) return false;
-    const value: unknown = JSON.parse(readFileSync(requestPath, "utf8"));
-    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-    const v = value as Record<string, unknown>;
-    const valid = Object.keys(v).length === 5 && v["schema"] === PREVIEW_SCHEMA && v["requestId"] === requestId &&
-      v["instanceId"] === launch.instanceId && v["method"] === req.method && v["path"] === req.url;
-    if (!valid) return false;
-    unlinkSync(requestPath);
-    return true;
-  } catch {
-    return false;
+    const dir = dirname(launch.statePath);
+    names = readdirSync(dir).filter((name) => /^control-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/i.test(name));
+    if (names.length > 256) return false;
+  } catch { return false; }
+  const dir = dirname(launch.statePath);
+  for (const name of names) {
+    try {
+      const requestPath = join(dir, name);
+      const stat = lstatSync(requestPath);
+      if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 1_024) continue;
+      const value: unknown = JSON.parse(readFileSync(requestPath, "utf8"));
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const v = value as Record<string, unknown>;
+      const valid = Object.keys(v).length === 5 && v["schema"] === PREVIEW_SCHEMA && v["requestId"] === requestId &&
+        v["instanceId"] === launch.instanceId && v["method"] === req.method && v["path"] === req.url;
+      if (!valid) continue;
+      unlinkSync(requestPath);
+      return true;
+    } catch { /* a malformed or concurrently removed request cannot block another */ }
   }
+  return false;
 }
 
 async function probe(url: string): Promise<boolean> {

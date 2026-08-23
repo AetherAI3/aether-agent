@@ -88,7 +88,7 @@ test("managed preview detects its URL, reports headless honestly, sanitizes logs
   const stateText = readFileSync(paths.statePath, "utf8");
   assert.doesNotMatch(stateText, /"token"/);
   assert.doesNotMatch(stateText, new RegExp(secret));
-  assert.deepEqual(readdirSync(paths.dir).filter((name) => name.startsWith("launch-") || name === "control.json"), []);
+  assert.deepEqual(readdirSync(paths.dir).filter((name) => name.startsWith("launch-") || name.startsWith("control-")), []);
   const state = JSON.parse(stateText) as PreviewState;
   assert.equal(parsePreviewState({ ...state, token: secret }), null, "legacy or injected bearer state was accepted");
   const csrf = await fetch(`http://127.0.0.1:${state.controlPort}/stop`, { method: "POST" });
@@ -99,7 +99,7 @@ test("managed preview detects its URL, reports headless honestly, sanitizes logs
   assert.equal(forged.status, 403, "a control id without an owner-private request file was accepted");
 
   const blockedId = "11111111-1111-4111-8111-111111111111";
-  const controlPath = join(paths.dir, "control.json");
+  const controlPath = join(paths.dir, `control-${blockedId}.json`);
   writeFileSync(controlPath, JSON.stringify({
     schema: PREVIEW_SCHEMA, requestId: blockedId, instanceId: "wrong-instance", method: "POST", path: "/stop",
   }), { mode: 0o600 });
@@ -108,12 +108,12 @@ test("managed preview detects its URL, reports headless honestly, sanitizes logs
   });
   assert.equal(invalid.status, 403);
   assert.equal(existsSync(controlPath), true, "supervisor consumed a request before validating ownership");
-  const busyOut = sink(); const busyErr = sink();
-  assert.equal(await cmdPreview(context(root), ["status"], { out: busyOut.stream, err: busyErr.stream }), PREVIEW_EXIT.controlFailed);
-  assert.match(busyErr.text(), /control is busy/);
-  assert.equal(existsSync(paths.statePath), true, "busy control was misclassified as stale and deleted");
-  assert.equal(existsSync(controlPath), true, "a losing caller deleted a request it did not own");
-  assert.doesNotThrow(() => process.kill(state.childPid, 0), "busy control orphaned or stopped the managed preview");
+  const concurrentOut = sink(); const concurrentErr = sink();
+  assert.equal(await cmdPreview(context(root), ["status"], { out: concurrentOut.stream, err: concurrentErr.stream }), PREVIEW_EXIT.ok);
+  assert.match(concurrentOut.text(), /^ready  pid=\d+  http:\/\//);
+  assert.equal(existsSync(paths.statePath), true, "an abandoned request made live state look stale");
+  assert.equal(existsSync(controlPath), true, "another caller deleted a request it did not own");
+  assert.doesNotThrow(() => process.kill(state.childPid, 0), "an abandoned request orphaned or stopped the managed preview");
   unlinkSync(controlPath);
 
   const statusOut = sink();

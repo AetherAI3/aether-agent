@@ -89,8 +89,7 @@ function readState(path: string): PreviewState | null {
 
 type ControlResult =
   | { kind: "ok"; state: PreviewState }
-  | { kind: "unreachable" }
-  | { kind: "busy" };
+  | { kind: "unreachable" };
 
 function removeOwnedControlRequest(path: string, requestId: string): void {
   try {
@@ -103,22 +102,13 @@ function removeOwnedControlRequest(path: string, requestId: string): void {
 
 async function control(state: PreviewState, statePath: string, method: "GET" | "POST", path: "/status" | "/stop"): Promise<ControlResult> {
   const requestId = randomUUID();
-  const requestPath = join(dirname(statePath), "control.json");
+  const requestPath = join(dirname(statePath), `control-${requestId}.json`);
   let ownsRequest = false;
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    try {
-      writePrivate(requestPath, JSON.stringify({ schema: PREVIEW_SCHEMA, requestId, instanceId: state.instanceId, method, path }));
-      ownsRequest = true;
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") return { kind: "unreachable" };
-      if (attempt < 9) await sleep(50);
-    }
-  }
-  if (!ownsRequest) return { kind: "busy" };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 1_000);
   try {
+    writePrivate(requestPath, JSON.stringify({ schema: PREVIEW_SCHEMA, requestId, instanceId: state.instanceId, method, path }));
+    ownsRequest = true;
     const response = await fetch(`http://127.0.0.1:${state.controlPort}${path}`, {
       method, headers: { "x-aether-preview-control": requestId }, signal: controller.signal,
     });
@@ -131,17 +121,16 @@ async function control(state: PreviewState, statePath: string, method: "GET" | "
   } catch { return { kind: "unreachable" }; }
   finally {
     clearTimeout(timer);
-    removeOwnedControlRequest(requestPath, requestId);
+    if (ownsRequest) removeOwnedControlRequest(requestPath, requestId);
   }
 }
 
-async function currentState(projectRoot: string, statePath: string): Promise<{ state: PreviewState | null; stale: boolean; busy: boolean }> {
+async function currentState(projectRoot: string, statePath: string): Promise<{ state: PreviewState | null; stale: boolean }> {
   const state = readState(statePath);
-  if (!state) return { state: null, stale: false, busy: false };
+  if (!state) return { state: null, stale: false };
   if (realpathSync(resolve(state.projectRoot)) !== projectRoot) throw new Error("preview state belongs to a different project");
   const live = await control(state, statePath, "GET", "/status");
-  if (live.kind === "busy") return { state, stale: false, busy: true };
-  return live.kind === "ok" ? { state: live.state, stale: false, busy: false } : { state, stale: true, busy: false };
+  return live.kind === "ok" ? { state: live.state, stale: false } : { state, stale: true };
 }
 
 function showOpen(state: PreviewState, noOpen: boolean, out: Writable, err: Writable, opener = openBrowserChecked): number {
@@ -184,10 +173,6 @@ export async function cmdPreview(ctx: AppContext, argv: string[], options: Previ
     catch (error) { err.write(`${sanitizePreviewText(error instanceof Error ? error.message : String(error))}\n`); return PREVIEW_EXIT.unsafe; }
     const digest = commandDigest(command);
     const existing = await currentState(projectRoot, paths.statePath);
-    if (existing.busy) {
-      err.write("Preview control is busy with another owner-private request; no state or process was changed.\n");
-      return PREVIEW_EXIT.controlFailed;
-    }
     if (existing.state && !existing.stale) {
       if (existing.state.commandDigest !== digest) {
         err.write("A different declared preview is already running; stop it before changing commands.\n");
@@ -255,15 +240,13 @@ export async function cmdPreview(ctx: AppContext, argv: string[], options: Previ
 
   let live: PreviewState | null;
   let stale: boolean;
-  let busy: boolean;
   try {
-    ({ state: live, stale, busy } = await currentState(projectRoot, paths.statePath));
+    ({ state: live, stale } = await currentState(projectRoot, paths.statePath));
   } catch (error) {
     err.write(`${sanitizePreviewText(error instanceof Error ? error.message : String(error))}\n`);
     return PREVIEW_EXIT.unsafe;
   }
   if (!live) { err.write("No managed preview is recorded for this project.\n"); return PREVIEW_EXIT.notRunning; }
-  if (busy) { err.write("Preview control is busy with another owner-private request; no state or process was changed.\n"); return PREVIEW_EXIT.controlFailed; }
   if (stale) {
     err.write(`Preview state is stale (${live.instanceId}); no process was signalled because ownership could not be proved.\n`);
     return PREVIEW_EXIT.notRunning;
