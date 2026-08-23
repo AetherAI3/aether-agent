@@ -11,6 +11,11 @@
 // exist and be a regular file or a directory. Paths are resolved to absolute
 // first, which also removes the leading-dash case (`-rf.png` would otherwise
 // reach `xdg-open` as a flag).
+//
+// On win32, URLs and file paths take different launchers: explorer.exe opens
+// a File Explorer window (not the default browser) when handed a URL, so
+// URLs go through rundll32.exe url.dll,FileProtocolHandler instead — still an
+// argv array, still no shell. See resolveOpenCommand.
 
 import { spawn } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
@@ -40,8 +45,17 @@ export interface OpenOptions {
 
 const ALLOWED_URL_PROTOCOLS = new Set(["http:", "https:"]);
 
+// C0 controls, space, and DEL. The WHATWG URL parser silently drops tab/CR/LF
+// from anywhere in the input and trims other C0/space from the ends, so a
+// raw string with these could parse into a "clean" URL whose href no longer
+// matches what we're about to hand an OS launcher as one argv element. We
+// launch the raw string, not parsed.href (see planOpen), so we reject instead
+// of silently normalizing.
+const CONTROL_OR_WHITESPACE = /[\x00-\x20\x7f]/;
+
 /** True when `raw` is a URL this CLI is willing to hand to a browser. */
 export function isAllowedUrl(raw: string): boolean {
+  if (CONTROL_OR_WHITESPACE.test(raw)) return false;
   let parsed: URL;
   try {
     parsed = new URL(raw);
@@ -65,11 +79,29 @@ export function looksLikeUrl(raw: string): boolean {
 /**
  * The executable and argument array for `target` on `platform`. Split out from
  * openTarget so every platform's choice is unit-testable without spawning.
+ *
+ * `isUrl` must reflect a target that already passed `isAllowedUrl` — this
+ * function does no validation of its own, it only picks the launcher.
  */
-export function resolveOpenCommand(target: string, platform: NodeJS.Platform): OpenCommand {
+export function resolveOpenCommand(
+  target: string,
+  platform: NodeJS.Platform,
+  isUrl = false,
+): OpenCommand {
   if (platform === "win32") {
-    // explorer.exe routes both URLs and file paths to their default handler.
-    // It exits non-zero on success, which is why openTarget never waits on it.
+    if (isUrl) {
+      // explorer.exe used to be used for URLs too, but on this OS it opens a
+      // File Explorer window instead of routing to the default browser — the
+      // device-approval page in `auth login` never opens. rundll32's
+      // url.dll,FileProtocolHandler entry point is the no-shell equivalent of
+      // ShellExecute on a URL: the URL is one argv element, never
+      // re-interpreted by cmd.exe (no `cmd /c start`, no PowerShell
+      // Start-Process string). Only http/https URLs reach here — see
+      // isAllowedUrl / planOpen.
+      return { executable: "rundll32.exe", args: ["url.dll,FileProtocolHandler", target] };
+    }
+    // explorer.exe routes file paths to their default handler. It exits
+    // non-zero on success, which is why openTarget never waits on it.
     return { executable: "explorer.exe", args: [target] };
   }
   if (platform === "darwin") return { executable: "open", args: [target] };
@@ -96,6 +128,7 @@ export function planOpen(target: string, options: OpenOptions = {}): OpenOutcome
   }
 
   let launchTarget = target;
+  let isUrl = false;
   if (looksLikeUrl(target)) {
     if (!isAllowedUrl(target)) {
       return {
@@ -103,6 +136,7 @@ export function planOpen(target: string, options: OpenOptions = {}): OpenOutcome
         detail: "only http and https URLs without embedded credentials can be opened",
       };
     }
+    isUrl = true;
   } else {
     const absolute = isAbsolute(target) ? target : resolve(target);
     if (!existsSync(absolute)) {
@@ -123,7 +157,7 @@ export function planOpen(target: string, options: OpenOptions = {}): OpenOutcome
   const headless = headlessReason(platform, env);
   if (headless) return { status: "unavailable", detail: headless };
 
-  const command = resolveOpenCommand(launchTarget, platform);
+  const command = resolveOpenCommand(launchTarget, platform, isUrl);
   return {
     status: "spawned",
     executable: command.executable,
