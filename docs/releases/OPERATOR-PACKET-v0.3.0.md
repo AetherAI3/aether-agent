@@ -194,13 +194,27 @@ directions: every visible command in the CLI registry must be announced by some
 release note, or named here with a reason.
 
 These 15 commands ship in 0.3.0 without a release note. All predate the release
-log or were announced by capability rather than by command token in the June 2026
-entry. None of them is new in this release:
+log or were announced by capability rather than by command token in an earlier
+entry. **None of them is new in this release:**
 
-`aether help`, `aether chat`, `aether run`, `aether agents`, `aether auth`,
-`aether github`, `aether vault`, `aether workflow`, `aether memory`,
-`aether image`, `aether video`, `aether audit`, `aether receipt`, `aether mcp`,
+`aether help`, `aether chat`, `aether run`, `aether agents`, `aether github`,
+`aether vault`, `aether workflow`, `aether memory`, `aether image`,
+`aether video`, `aether output`, `aether audit`, `aether receipt`, `aether mcp`,
 `aether config`.
+
+Two changes since the candidate was first cut, both made by the gate rather
+than by hand:
+
+- **`aether auth` left the list.** The v0.3.0 notes now carry an Authentication
+  section naming `aether auth login` and `aether auth logout`, so it is
+  announced, and the list refuses to keep an exemption for a command that is.
+- **`aether output` joined it.** It was never announced by command token; it was
+  covered by the 2026-08-14 entry as "durable media output history". It only
+  became visible here because the announcement matcher was tightened (below).
+
+The four commands this release DOES add — `aether review`, `aether ship`,
+`aether sessions`, and the already-announced `aether doctor` — are all announced
+in the v0.3.0 entry, so none of them appears above.
 
 `login` and `logout` are exempt by rule: the registry marks them `hidden`, so
 they are not surfaced in `aether --help` and there is no surface to announce.
@@ -209,6 +223,21 @@ The list is enforced in both directions — a stale entry fails, and an entry th
 *is* announced fails — so it cannot rot into a permanent bypass that quietly
 absorbs the next unannounced command. **If a lane lands a new command before the
 tag is cut, the build fails until it is either announced or added here.**
+
+#### The announcement matcher was vacuous, and is not any more
+
+Worth reading before trusting the list above. The matcher counted a command as
+announced if the notes contained its name in bare backticks *anywhere*. When
+#102 landed `aether review` and `aether ship`, the gate passed both of them
+immediately — not because they were announced, but because the notes mention the
+built-in **skills** named `review-pr` and `ship`. The gate built to catch an
+unannounced command would have let the two headline commands of this release
+through in silence.
+
+It now requires the form a user actually types, `aether <name>`. A test asserts
+the matcher rejects `review-pr` as an announcement of `review` and `` `ship` ``
+as an announcement of `ship`, so this cannot regress into coverage that is not
+there. Tightening it is what surfaced `aether output`.
 
 #### Mutation check on the inverse gate
 

@@ -115,6 +115,47 @@ test("an operator packet exists for this version and binds a commit", () => {
  */
 const FEATURE_MANIFEST: Array<{ claim: string; command?: string; packaged: string[] }> = [
   {
+    claim: "the review → commit → pull request rail — `aether review`",
+    command: "review",
+    packaged: [
+      "dist/src/commands/review.js",
+      "dist/src/core/review_state.js",
+      "dist/src/core/review_actions.js",
+      "dist/src/core/verification_record.js",
+      "dist/src/core/diff_counts.js",
+    ],
+  },
+  {
+    claim: "publishing the head branch and opening the pull request — `aether ship`",
+    command: "ship",
+    packaged: [
+      "dist/src/commands/ship.js",
+      "dist/src/core/publish.js",
+      "dist/src/core/ship_record.js",
+    ],
+  },
+  {
+    claim: "the project session library — `aether sessions`",
+    command: "sessions",
+    packaged: [
+      "dist/src/commands/sessions.js",
+      "dist/src/core/session_index.js",
+      "dist/src/ui/continuity.js",
+    ],
+  },
+  {
+    claim: "skills and AGENTS.md are composed into real runs, and their policy is enforced",
+    packaged: ["dist/src/core/skills/run_session.js"],
+  },
+  {
+    claim: "win32 URLs open through rundll32, so the device-approval page appears",
+    packaged: ["dist/src/core/opener.js"],
+  },
+  {
+    claim: "the token store refuses planted links and writes atomically",
+    packaged: ["dist/src/core/auth.js"],
+  },
+  {
     claim: "portable handoffs — `aether resume export` / `aether agent --resume`",
     command: "resume",
     packaged: ["dist/src/core/handoff.js", "dist/src/commands/resume.js"],
@@ -235,23 +276,34 @@ const SHIPPED_WITHOUT_A_NOTE: Record<string, string> = {
   chat: "predates the release log",
   run: "predates the release log",
   agents: "predates the release log",
-  auth: "predates the release log",
   github: "predates the release log",
   vault: "the June 2026 entry announces the vault surface, not the command token",
   workflow: "the June 2026 entry announces workflows, not the command token",
   memory: "the June 2026 entry announces the memory bridge, not the command token",
   image: "the June 2026 entry announces media generation, not the command token",
   video: "the June 2026 entry announces media generation, not the command token",
+  output: "the 2026-08-14 entry announces the durable media output history, not the command token",
   audit: "the June 2026 entry announces the audit trail, not the command token",
   receipt: "the June 2026 entry announces audit receipts, not the command token",
   mcp: "the June 2026 entry announces the MCP manager, not the command token",
   config: "predates the release log",
 };
 
-/** A command is announced if any release note names it as `aether <name>` or `<name>`. */
+/**
+ * A command is announced only where the notes name the form a user actually
+ * types: `aether <name>`.
+ *
+ * This used to also accept the name inside bare backticks, and that made the
+ * gate vacuous in exactly the case it was built for. When #102 landed
+ * `aether review` and `aether ship`, both were already "announced" — because
+ * the notes mention the built-in SKILLS named `review-pr` and `ship`. A gate
+ * that reports coverage it does not have is worse than no gate, so the bare
+ * backtick form is gone: a skill, a flag, or a hyphenated neighbour that merely
+ * contains the command's letters no longer speaks for the command.
+ */
 function announcedInNotes(notes: string, name: string): boolean {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp("aether " + escaped + "\\b|`" + escaped + "\\b").test(notes);
+  return new RegExp("aether " + escaped + "\\b").test(notes);
 }
 
 test("no user-visible command ships without either a release note or a named exemption", () => {
@@ -276,6 +328,17 @@ test("no user-visible command ships without either a release note or a named exe
       `${unannounced.join("\n  ")}\n` +
       "Announce them in the current release entry, or add them to SHIPPED_WITHOUT_A_NOTE with a reason.",
   );
+});
+
+test("the announcement matcher does not accept a lookalike as an announcement", () => {
+  // Guard the guard. Every assertion in this section is only as good as this
+  // function, and its previous form said yes to all three of these.
+  assert.equal(announcedInNotes("the built-in `review-pr` skill", "review"), false);
+  assert.equal(announcedInNotes("six ship built in: `ship`, `fix-ci`", "ship"), false);
+  assert.equal(announcedInNotes("pass `--skills` to narrow the run", "skills"), false);
+  // ...and still says yes to a real announcement.
+  assert.equal(announcedInNotes("run `aether review --files x` to pick", "review"), true);
+  assert.equal(announcedInNotes("aether ship publishes HEAD", "ship"), true);
 });
 
 test("the unannounced-command list cannot rot into a permanent bypass", () => {

@@ -1,20 +1,64 @@
-# Aether Agent v0.3.0 — skills, and a release that matches the repository
+# Aether Agent v0.3.0 — the work reaches a pull request
 
 **August 22, 2026**
 
 0.2.0 was never published. It was written up on August 19, and then `main` kept
 moving: a skills runtime, a capability contract, a redacted support bundle, a
-command-registration seam, and ten user-visible fixes landed on top of the
-version that was already spoken for. Rather than quietly widen 0.2.0 to mean two
-different things, this release takes the next number and describes everything
-actually on `main`.
+command-registration seam, a review-to-pull-request rail, a project session
+library, and the wiring that finally puts skills inside a real run all landed on
+top of the version that was already spoken for. Rather than quietly widen 0.2.0
+to mean two different things, this release takes the next number and describes
+everything actually on `main`.
 
-Covers `477f0fc..426b124` — every commit merged after the v0.2.0 notes were
+Covers `477f0fc..2769778` — every commit merged after the v0.2.0 notes were
 written, and everything the v0.2.0 notes described, which was never shipped
 either.
 
 ## New
 
+- **A review → commit → pull request rail.** `aether review` reads the
+  repository's real state, lets you pick what goes in, commits exactly that, and
+  `aether ship` publishes the head branch and opens the pull request.
+  - `aether review [stage|unstage|revert|commit|diff|verify]`, with `--files`,
+    `--hunks`, `-m`, `--base` (#94, #102).
+  - `aether ship [--title t] [--body b] [--base b]` pushes HEAD — and only HEAD —
+    and opens the PR against the branch it actually resolved (#95, #102).
+  - **`--approve <action>` is the authority boundary.** `--yes` on its own never
+    approves a destructive or a publishing step; the action has to be named
+    (#102).
+  - The state is read in one pass: repository root, remote identity, head and
+    base revisions, commits ahead and behind, and every changed path. The push
+    URL is read separately with `git remote get-url --push`, so a configured
+    `pushurl` cannot publish somewhere you were never shown, and an unresolvable
+    base leaves ahead/behind **unknown rather than zero** (#93).
+  - A verification record stores the verify gate's result together with the head
+    commit and a digest of the working tree, and compares that identity *before*
+    it looks at the exit code — so neither a stale green nor a stale red can be
+    rendered as current, and nothing upgrades unknown or stale to verified
+    (#93, #97).
+  - Changed files carry their added/removed line counts beside the state rather
+    than inside it (#101).
+- **`aether sessions`** — the project session library. `list`, `inspect`,
+  `continue`, `export`, `archive` and `clean`, as a width-aware table on a
+  terminal and tab-separated columns with a fixed field order when piped. An
+  index beside the session directories makes "what was I doing here" cheap, but
+  the per-session manifest stays the authority, so a lost or corrupt index costs
+  time and never information. Where a session can be continued is answered as one
+  of six distinct states — ready, stale branch, moved checkout, another
+  workspace, missing checkout, archived — because the remedies differ, and the
+  same facts appear as a PROJECT CONTINUITY block on entry. A count nobody
+  recorded prints `unknown`, not `0`. Nothing here deletes: `archive` sets a flag
+  and `clean` drops index rows for sessions already gone (#99).
+- **Skills and `AGENTS.md` are inside real runs now, and their policy is
+  enforced.** The runtime shipped in #72 with no production call site — a run
+  never saw a skill, never saw `AGENTS.md`, and never enforced a tool policy.
+  One seam now composes the brief before a brain is chosen, so the hosted and
+  local paths carry the byte-identical string, and the refusal runs immediately
+  before this host executes a tool. A skill only ever **subtracts** from the tool
+  surface: the guard runs before the operator permission gate, never instead of
+  it, so nothing a manifest says can add a tool, add a permission, or skip a
+  confirmation. A skill matched automatically contributes context but not policy
+  — only an explicit `--skill <id>` narrows (#100).
 - **Agent skills** — `aether skills` inspects, trusts and manages skills, and six
   are built into the package: `review-pr`, `fix-ci`, `ship`, `doctor-project`,
   `research-and-implement`, `frontend-from-screenshot`. Skills are discovered,
@@ -55,6 +99,25 @@ either.
 
 ## Fixed
 
+- **`aether auth login` opens the approval page on Windows.** The win32 launcher
+  used `explorer.exe` for URLs as well as file paths, which opens a File Explorer
+  window rather than the default browser — so the device-approval page never
+  appeared and the login poll sat on *"Waiting for approval in your browser…"*
+  forever. URLs now go through `rundll32.exe url.dll,FileProtocolHandler`, the
+  no-shell equivalent of a shell-execute on a URL, with the URL kept as a single
+  argv element. A URL containing control characters or whitespace is refused
+  outright (#103).
+- **The stored credential cannot be redirected through a planted link, or torn
+  in half by a crash.** The token store guarded its reads and writes with
+  `O_NOFOLLOW ?? 0`, and `O_NOFOLLOW` is not defined on Windows — so the guard
+  collapsed to `0` there and a symlink or directory junction planted at the token
+  path was followed on both read and write, handing over the session token or
+  capturing the next one. A junction needs no privilege to create. Reads and
+  writes now `lstat` the path first and refuse a link on every platform, and the
+  write is a `0600` exclusive temp file, fsynced and renamed over the target
+  instead of truncate-then-write, so a crash mid-write can no longer leave an
+  empty token file or let a concurrent reader see half a credential. Clearing the
+  token removes a planted link rather than whatever it pointed at (#104).
 - **Ctrl+C stops a local turn.** The abort signal now reaches local runs instead
   of being dropped at the chat boundary.
 - **`/limit` is a real stop boundary**, and unknown spend is reported as unknown
@@ -91,6 +154,44 @@ either.
   lowercased the token while dispatch was case-sensitive, so `aether Vault` fell
   past the typo guard into a chat turn and billed it. Wrong case now reaches the
   "did you mean" guard, as it always should have.
+
+## Behaviour changes
+
+- **A symlinked config directory is now refused when writing the token.** Saving
+  a credential validates the config directory first: it must be a real
+  directory, not a link, owned by you, and not group- or world-writable. If you
+  deliberately symlink or junction `~/.config/aether` — onto another drive, into
+  a dotfiles checkout, across a container mount — `aether auth login` now **fails
+  loudly** instead of writing your token through the link. Replace the link with
+  a real directory, or point `AETHER_CONFIG_DIR` at one. This is deliberate: on
+  Windows a directory junction needs no privilege to create, which makes
+  redirecting the config directory the most reachable form of the attack #104
+  closes. The ownership and permission half of the check is POSIX-only — Node
+  does not expose Windows ACLs — but the link refusal itself applies everywhere
+  (#104).
+- **Reading the token no longer throws on a planted link; it reports no token.**
+  A read that encounters a link is treated as "not signed in" rather than
+  surfacing a credential, so the recovery path is `aether auth login`, not an
+  error nobody can act on (#104).
+
+## Authentication
+
+Stated with its provenance, because half of this lives in a server this
+repository cannot test:
+
+- **Device-grant login works end to end again.** The repository-side half of that
+  is #103 above: before it, the approval page never opened on Windows, so the
+  flow could not complete there at all. The other half — the API accepting
+  long-lived `aek_` tokens — is a **server-side** change. It is verified by
+  operators against the deployed API and is **not** proven by any test in this
+  repository, which has no live credential.
+- **`aether auth logout` ends the session on the server, not just on disk.** The
+  client posts to `/auth/logout` with the stored token before clearing the local
+  credential. That call is **best-effort**: if the server is unreachable the
+  local credential is still cleared, so a successful `Logged out.` is proof the
+  credential is gone from this machine, and not by itself proof the server
+  honoured it. The client call is not new in this range — what changed is on the
+  server side.
 
 ## Availability — read this before upgrading
 

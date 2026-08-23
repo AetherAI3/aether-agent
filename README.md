@@ -38,8 +38,9 @@ Two things make it different from the rest of the terminal-agent shelf:
 > `0.1.0`, and 0.1.0 is the only version ever published. **`main` is 0.3.0 and is
 > not on the registry** — neither was 0.2.0, which was written up but never
 > released and is now superseded. So the features described under
-> [v0.3.0 in the release notes](RELEASE_NOTES.md) — `aether skills`,
-> `aether capabilities`, `aether support-bundle`, portable handoffs, `--resume`
+> [v0.3.0 in the release notes](RELEASE_NOTES.md) — the `aether review` →
+> `aether ship` rail, `aether sessions`, skills enforced inside real runs,
+> `aether skills`, `aether capabilities`, `aether support-bundle`, portable handoffs, `--resume`
 > reaching the brain, `aether agent --local "<task>"` working straight after an
 > install — are **not** in the package the command above installs. Until a
 > `v0.3.0` release is published, build from source to get them:
@@ -168,6 +169,9 @@ aether models                     # list models + orchestrators
 aether resume                     # replay the last session in this workspace
 aether resume export              # write a portable handoff for another machine
 aether agent --resume <id|file>   # continue it — on any model, with the context
+aether sessions                   # every session in this project, and where it can resume
+aether review                     # see what changed, pick it, commit exactly that
+aether ship                       # push the head branch and open the pull request
 ```
 
 Flags you can set when launching the REPL (or pass with an inline task `aether agent "<task>"` for one-shot autonomous mode):
