@@ -1,295 +1,210 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ALL_CLI_COMMANDS } from "../src/commands/cli_registry.js";
+import { SLASH_COMMANDS } from "../src/commands/slash_registry.js";
 
 export const RELEASE_TRUTH_SCHEMA = "aether-agent/release-truth@1" as const;
-
-export interface ReleaseTruthCommand {
-  name: string;
-  aliases?: readonly string[];
-  hidden?: boolean;
+export type Evidence<T> = { state: "available"; value: T } | { state: "unavailable" | "not_applicable"; reason: string };
+export interface ReleaseTruthCommand { name: string; aliases?: readonly string[]; hidden?: boolean }
+export interface ScanSkip { path: string; reason: "binary" | "undecodable" | "oversized" | "budget" | "non_regular" | "excluded_directory"; detail: string }
+export interface CapabilityDisposition { id: string; shipped: boolean; documented: boolean; releaseDisposition: "announced" | "exempt" | "removed" | null }
+export interface GeneratedDocDigest { id: string; manifestDigest: string; documentDigest: string }
+export interface CatalogueTruth { catalogueDigest: string; renderedDigest: string; generatedAt: string; observedAt: string; maxAgeMs: number }
+export interface PackedClaim { id: string; advertised: boolean; registryInstalled: boolean; sourceOnly: boolean; requiredPaths: readonly string[] }
+export interface RegistryTruth { sourceVersion: string; publishedVersions: readonly string[]; latest: string | null; publicClaim: { sourceAvailability: "published" | "unpublished"; latest: string | null } }
+export interface ReleaseTruthEvidence {
+  capabilities?: Evidence<readonly CapabilityDisposition[]>;
+  generatedDocs?: Evidence<readonly GeneratedDocDigest[]>;
+  catalogue?: Evidence<CatalogueTruth>;
+  packedClaims?: Evidence<readonly PackedClaim[]>;
+  registry?: Evidence<RegistryTruth>;
 }
-
-export interface ReleaseTruthInput {
+export interface ReleaseTruthInput extends ReleaseTruthEvidence {
   files: Readonly<Record<string, string>>;
   scannedTexts: Readonly<Record<string, string>>;
+  scanSkips?: readonly ScanSkip[];
   packedFiles: readonly string[];
   commands: readonly ReleaseTruthCommand[];
+  slashCommands?: readonly ReleaseTruthCommand[];
 }
-
-export interface ReleaseTruthCheck {
-  id: string;
-  status: "pass" | "fail";
-  summary: string;
-  remediation: string;
-  evidence: string[];
-}
-
+export type CheckStatus = "pass" | "fail" | "unavailable" | "not_applicable";
+export interface ReleaseTruthCheck { id: string; status: CheckStatus; summary: string; remediation: string; evidence: string[] }
 export interface ReleaseTruthResult {
   schema: typeof RELEASE_TRUTH_SCHEMA;
-  status: "pass" | "fail";
+  status: "pass" | "fail" | "unavailable";
   ok: boolean;
   version: string | null;
-  summary: { total: number; passed: number; failed: number };
+  summary: { total: number; passed: number; failed: number; unavailable: number; notApplicable: number };
   checks: ReleaseTruthCheck[];
   humanSummary: string[];
 }
 
-const TEXT_EXTENSIONS = new Set([
-  "", ".css", ".example", ".html", ".js", ".json", ".lock", ".md", ".mjs", ".ps1", ".sh", ".svg", ".toml",
-  ".ts", ".txt", ".yaml", ".yml",
-]);
-const SKIP_DIRECTORIES = new Set([".git", "dist", "node_modules"]);
-const COMMAND_INDEX_START = "<!-- CLI-COMMANDS:START -->";
-const COMMAND_INDEX_END = "<!-- CLI-COMMANDS:END -->";
-const FORBIDDEN_TERMINAL_URL = ["aethersystems", "net/terminal"].join(".");
-const FORBIDDEN_TERMINAL_PATTERN = new RegExp(FORBIDDEN_TERMINAL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "i");
+const EXCLUDED_DIRECTORIES = new Set([".git", ".aether-output", "coverage", "dist", "node_modules"]);
+const CLI_MARKERS = ["<!-- CLI-COMMANDS:START -->", "<!-- CLI-COMMANDS:END -->"] as const;
+const SLASH_MARKERS = ["<!-- SLASH-COMMANDS:START -->", "<!-- SLASH-COMMANDS:END -->"] as const;
+const FORBIDDEN_URL = ["aethersystems", "net/terminal"].join(".");
+const FORBIDDEN_PATTERN = new RegExp(FORBIDDEN_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "i");
+const VALUE_FLAGS = new Set(["--model", "--agent", "--cwd", "--token", "--username", "--password", "--license-key", "--pool", "--effort", "--test-cmd", "--repo", "--swarm", "--resume", "--out", "--skill", "--junit", "--scope"]);
 
 function parseJson(text: string | undefined): Record<string, unknown> | null {
   if (text === undefined) return null;
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : null;
-  } catch {
-    return null;
-  }
+  try { const value = JSON.parse(text) as unknown; return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null; }
+  catch { return null; }
 }
-
-function sourceVersion(text: string | undefined): string | null {
-  return text?.match(/export\s+const\s+VERSION\s*=\s*["']([^"']+)["']/)?.[1] ?? null;
+const headingVersion = (text: string | undefined): string | null => text?.split(/\r?\n/).find((line) => /^#\s+\S/.test(line))?.match(/\bv(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\b/)?.[1] ?? null;
+const sourceVersion = (text: string | undefined): string | null => text?.match(/export\s+const\s+VERSION\s*=\s*["']([^"']+)["']/)?.[1] ?? null;
+function check(id: string, failures: readonly string[], success: string, remediation: string): ReleaseTruthCheck {
+  return failures.length ? { id, status: "fail", summary: failures[0]!, remediation, evidence: [...failures] } : { id, status: "pass", summary: success, remediation, evidence: [] };
 }
-
-function releaseHeadingVersion(text: string | undefined): string | null {
-  const heading = text?.split(/\r?\n/).find((line) => /^#\s+\S/.test(line));
-  return heading?.match(/\bv(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\b/)?.[1] ?? null;
+function evidenceCheck<T>(id: string, source: Evidence<T> | undefined, inspect: (value: T) => string[], success: string, remediation: string, absent: "unavailable" | "not_applicable" = "not_applicable"): ReleaseTruthCheck {
+  const evidence = source ?? { state: absent, reason: "no evidence was supplied" };
+  if (evidence.state !== "available") return { id, status: evidence.state, summary: evidence.reason, remediation, evidence: [evidence.reason] };
+  return check(id, inspect(evidence.value), success, remediation);
 }
-
-function canonicalCommandIndex(text: string | undefined): string[] | null {
+function indexNames(text: string | undefined, markers: readonly [string, string]): string[] | null {
   if (text === undefined) return null;
-  const start = text.indexOf(COMMAND_INDEX_START);
-  const end = text.indexOf(COMMAND_INDEX_END);
+  const start = text.indexOf(markers[0]); const end = text.indexOf(markers[1]);
   if (start < 0 || end <= start) return null;
-  return [...text.slice(start + COMMAND_INDEX_START.length, end).matchAll(/`([a-z0-9-]+)`/g)]
-    .map((match) => match[1]!)
-    .sort();
+  return [...text.slice(start + markers[0].length, end).matchAll(/`([a-z0-9-]+)`/g)].map((match) => match[1]!);
+}
+function indexFailures(label: string, indexed: string[] | null, registry: readonly ReleaseTruthCommand[]): string[] {
+  if (indexed === null) return [`COMMANDS.md is missing the canonical ${label} index markers`];
+  const failures: string[] = [];
+  const duplicates = [...new Set(indexed.filter((name, at) => indexed.indexOf(name) !== at))].sort();
+  if (duplicates.length) failures.push(`${label} index contains duplicate entries: ${duplicates.join(", ")}`);
+  const visible = registry.filter((item) => !item.hidden).map((item) => item.name).sort(); const unique = [...new Set(indexed)].sort();
+  const missing = visible.filter((name) => !unique.includes(name)); const removed = unique.filter((name) => !visible.includes(name));
+  if (missing.length) failures.push(`${label} index omits shipped commands: ${missing.join(", ")}`);
+  if (removed.length) failures.push(`${label} index documents removed or nonexistent commands: ${removed.join(", ")}`);
+  return failures;
 }
 
-/**
- * Extract only command-shaped examples, not ordinary prose beginning with the
- * product name. Backticks and shell-style lines are deliberate user input and
- * therefore must resolve to a live command or compatibility alias.
- */
+function invocationCommand(value: string): string | null {
+  const words: string[] = [...(value.replace(/^\s*(?:\$|>)\s*/, "").match(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+/g) ?? [])];
+  const at = words.indexOf("aether");
+  if (at < 0 || words.slice(0, at).some((word) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word))) return null;
+  for (let index = at + 1; index < words.length; index += 1) {
+    const word = words[index]!;
+    if (VALUE_FLAGS.has(word)) { index += 1; continue; }
+    if (word.startsWith("-")) continue;
+    return /^[a-z][a-z0-9-]*$/.test(word) ? word : null;
+  }
+  return null;
+}
 export function documentedCommands(markdown: string): string[] {
-  const names = new Set<string>();
-  for (const match of markdown.matchAll(/`aether\s+([a-z][a-z0-9-]*)\b[^`]*`/gi)) {
-    names.add(match[1]!.toLowerCase());
-  }
+  const found = new Set<string>();
   for (const line of markdown.split(/\r?\n/)) {
-    const match = /^\s*(?:\$\s*)?aether\s+([a-z][a-z0-9-]*)\b/.exec(line);
-    if (match) names.add(match[1]!.toLowerCase());
+    if (/\b(?:typo|near-miss|nonexistent|removed|formerly)\b/i.test(line)) continue;
+    const fragments = [...line.matchAll(/`([^`\r\n]+)`/g)].map((match) => match[1]!);
+    if (/^\s*(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+)\s+)*(?:\$\s*)?aether\b/.test(line)) fragments.push(line);
+    for (const fragment of fragments) { const name = invocationCommand(fragment); if (name) found.add(name); }
   }
-  return [...names].sort();
+  return [...found].sort();
+}
+export function documentedSlashCommands(markdown: string): string[] {
+  const found = new Set<string>();
+  for (const line of markdown.split(/\r?\n/)) {
+    if (/\b(?:typos?|near-miss|nonexistent|removed|formerly|was)\b/i.test(line)) continue;
+    const fragments = [...line.matchAll(/`([^`\r\n]+)`/g)].map((match) => match[1]!);
+    if (/^\s*\/[a-z]/.test(line)) fragments.push(line.trim());
+    for (const fragment of fragments) {
+      const match = /^\/([a-z][a-z0-9-]*)(?:\s|$)/.exec(fragment.trim());
+      if (match) found.add(match[1]!);
+    }
+  }
+  return [...found].sort();
 }
 
-function check(
-  id: string,
-  failures: readonly string[],
-  success: string,
-  remediation: string,
-): ReleaseTruthCheck {
-  return failures.length === 0
-    ? { id, status: "pass", summary: success, remediation, evidence: [] }
-    : { id, status: "fail", summary: failures[0]!, remediation, evidence: [...failures] };
-}
-
-/** Pure deterministic core for aether-agent/release-truth@1. */
 export function evaluateReleaseTruth(input: ReleaseTruthInput): ReleaseTruthResult {
-  const manifest = parseJson(input.files["package.json"]);
-  const lock = parseJson(input.files["package-lock.json"]);
-  const version = typeof manifest?.["version"] === "string" ? manifest["version"] : null;
-  const packageName = typeof manifest?.["name"] === "string" ? manifest["name"] : null;
-  const lockPackages = lock?.["packages"] !== null && typeof lock?.["packages"] === "object"
-    ? lock["packages"] as Record<string, unknown>
-    : null;
-  const lockRoot = lockPackages?.[""] !== null && typeof lockPackages?.[""] === "object"
-    ? lockPackages[""] as Record<string, unknown>
-    : null;
-
-  const versionFailures: string[] = [];
-  if (!version) versionFailures.push("package.json has no string version");
-  if (lock?.["name"] !== packageName) versionFailures.push("package-lock.json root name differs from package.json");
-  if (lock?.["version"] !== version) versionFailures.push("package-lock.json root version differs from package.json");
-  if (lockRoot?.["version"] !== version) versionFailures.push('package-lock.json packages[""] version differs from package.json');
-  const source = sourceVersion(input.files["src/version.ts"]);
-  if (source !== version) versionFailures.push(`src/version.ts declares ${String(source)}, expected ${String(version)}`);
-  const notes = releaseHeadingVersion(input.files["RELEASE_NOTES.md"]);
-  if (notes !== version) versionFailures.push(`RELEASE_NOTES.md leads with ${String(notes)}, expected ${String(version)}`);
+  const manifest = parseJson(input.files["package.json"]); const lock = parseJson(input.files["package-lock.json"]);
+  const version = typeof manifest?.["version"] === "string" ? manifest["version"] : null; const name = manifest?.["name"];
+  const packages = lock?.["packages"] !== null && typeof lock?.["packages"] === "object" ? lock["packages"] as Record<string, unknown> : null;
+  const lockRoot = packages?.[""] !== null && typeof packages?.[""] === "object" ? packages[""] as Record<string, unknown> : null;
+  const versions: string[] = [];
+  if (!version) versions.push("package.json has no string version");
+  if (lock?.["name"] !== name) versions.push("package-lock.json root name differs from package.json");
+  if (lock?.["version"] !== version) versions.push("package-lock.json root version differs from package.json");
+  if (lockRoot?.["version"] !== version) versions.push('package-lock.json packages[""] version differs from package.json');
+  if (sourceVersion(input.files["src/version.ts"]) !== version) versions.push("src/version.ts differs from package.json");
+  if (headingVersion(input.files["RELEASE_NOTES.md"]) !== version) versions.push(`RELEASE_NOTES.md does not lead with v${String(version)}`);
   if (version) {
-    const packetPath = `docs/releases/OPERATOR-PACKET-v${version}.md`;
-    const packet = input.files[packetPath];
-    const packetVersion = releaseHeadingVersion(packet);
-    if (packetVersion !== version) versionFailures.push(`${packetPath} leads with ${String(packetVersion)}, expected ${version}`);
-    if (packet && !new RegExp("\\|\\s*Proposed tag\\s*\\|\\s*`v" + version.replaceAll(".", "\\.") + "`").test(packet)) {
-      versionFailures.push(`${packetPath} does not bind proposed tag v${version}`);
-    }
+    const packetPath = `docs/releases/OPERATOR-PACKET-v${version}.md`; const packet = input.files[packetPath];
+    if (headingVersion(packet) !== version) versions.push(`${packetPath} does not lead with v${version}`);
+    if (packet && !new RegExp("\\|\\s*Proposed tag\\s*\\|\\s*`v" + version.replaceAll(".", "\\.") + "`").test(packet)) versions.push(`${packetPath} does not bind proposed tag v${version}`);
   }
-
   const packed = new Set(input.packedFiles.map((path) => path.replaceAll("\\", "/").replace(/^\.\//, "")));
-  const publicPackageFailures = ["README.md", "COMMANDS.md"]
-    .filter((path) => input.files[path] === undefined || !packed.has(path))
-    .map((path) => `${path} must exist in the repository and packed package`);
-
-  const visibleNames = input.commands.filter((command) => !command.hidden).map((command) => command.name).sort();
-  const indexNames = canonicalCommandIndex(input.files["COMMANDS.md"]);
-  const commandIndexFailures: string[] = [];
-  if (indexNames === null) {
-    commandIndexFailures.push("COMMANDS.md is missing the canonical CLI command index markers");
-  } else {
-    const missing = visibleNames.filter((name) => !indexNames.includes(name));
-    const removed = indexNames.filter((name) => !visibleNames.includes(name));
-    if (missing.length) commandIndexFailures.push(`COMMANDS.md omits shipped commands: ${missing.join(", ")}`);
-    if (removed.length) commandIndexFailures.push(`COMMANDS.md documents removed or nonexistent commands: ${removed.join(", ")}`);
+  const publicDocs = ["README.md", "COMMANDS.md"].filter((path) => input.files[path] === undefined || !packed.has(path)).map((path) => `${path} must exist in the repository and packed package`);
+  const slash = input.slashCommands ?? [];
+  const indexes = [...indexFailures("CLI", indexNames(input.files["COMMANDS.md"], CLI_MARKERS), input.commands), ...(slash.length ? indexFailures("slash", indexNames(input.files["COMMANDS.md"], SLASH_MARKERS), slash) : [])];
+  const acceptedCli = new Set(input.commands.flatMap((item) => [item.name, ...(item.aliases ?? [])])); const acceptedSlash = new Set(slash.flatMap((item) => [item.name, ...(item.aliases ?? [])]));
+  const examples: string[] = [];
+  for (const path of ["README.md", "COMMANDS.md", "RELEASE_NOTES.md"] as const) {
+    const text = input.files[path]; if (text === undefined) { examples.push(`${path} is missing`); continue; }
+    const badCli = documentedCommands(text).filter((item) => !acceptedCli.has(item)); const badSlash = slash.length ? documentedSlashCommands(text).filter((item) => !acceptedSlash.has(item)) : [];
+    if (badCli.length) examples.push(`${path} contains removed or nonexistent command examples: ${badCli.join(", ")}`);
+    if (badSlash.length) examples.push(`${path} contains removed or nonexistent slash-command examples: ${badSlash.join(", ")}`);
   }
-
-  const acceptedNames = new Set<string>();
-  for (const command of input.commands) {
-    acceptedNames.add(command.name);
-    for (const alias of command.aliases ?? []) acceptedNames.add(alias);
-  }
-  const exampleFailures: string[] = [];
-  for (const path of ["README.md", "RELEASE_NOTES.md"] as const) {
-    const text = input.files[path];
-    if (text === undefined) {
-      exampleFailures.push(`${path} is missing`);
-      continue;
-    }
-    const removed = documentedCommands(text).filter((name) => !acceptedNames.has(name));
-    if (removed.length) exampleFailures.push(`${path} contains removed or nonexistent command examples: ${removed.join(", ")}`);
-  }
-
-  const forbiddenFailures = Object.entries(input.scannedTexts)
-    .filter(([, text]) => FORBIDDEN_TERMINAL_PATTERN.test(text))
-    .map(([path]) => `${path} contains the forbidden Aether Terminal URL`)
-    .sort();
-
-  const checks = [
-    check(
-      "version.agreement",
-      versionFailures,
-      "manifest, lockfile, source, release notes, and operator packet agree",
-      "Set one release version, update both lockfile version fields and src/version.ts, then make that version the leading release note and operator packet.",
-    ),
-    check(
-      "package.public-docs",
-      publicPackageFailures,
-      "required public documents exist in the packed package",
-      "Keep README.md and COMMANDS.md in package.json files and verify their presence with npm pack --dry-run --json.",
-    ),
-    check(
-      "commands.canonical-index",
-      commandIndexFailures,
-      "the canonical command index exactly matches the visible registry",
-      "Regenerate the COMMANDS.md canonical CLI index from the command registry; do not hand-add removed commands.",
-    ),
-    check(
-      "commands.public-examples",
-      exampleFailures,
-      "public command examples resolve to a live command or compatibility alias",
-      "Replace the stale example with a registered command, or add the intended command through the canonical registry and its tests.",
-    ),
-    check(
-      "links.no-aether-terminal",
-      forbiddenFailures,
-      "the forbidden Aether Terminal URL is absent from repository text",
-      `Remove every ${FORBIDDEN_TERMINAL_URL} reference; ATS/Aether Terminal is not part of Aether Agent.`,
-    ),
+  const forbidden = Object.entries(input.scannedTexts).filter(([, text]) => FORBIDDEN_PATTERN.test(text)).map(([path]) => `${path} contains the forbidden Aether Terminal URL`).sort();
+  const skips = input.scanSkips ?? []; const partial = skips.filter((item) => item.reason === "oversized" || item.reason === "budget");
+  const scanCheck: ReleaseTruthCheck = partial.length ? { id: "scan.coverage", status: "unavailable", summary: "repository scan reached a safety bound", remediation: "Reduce oversized text artifacts or raise the reviewed bound; never treat a partial scan as green.", evidence: skips.map((item) => `${item.path}: ${item.reason} (${item.detail})`) } : { id: "scan.coverage", status: "pass", summary: "all bounded repository text was inspected", remediation: "Inspect skipped-file evidence when adding binary formats.", evidence: skips.map((item) => `${item.path}: ${item.reason} (${item.detail})`) };
+  const checks: ReleaseTruthCheck[] = [
+    check("version.agreement", versions, "all release version sources agree", "Align the manifest, both lock fields, src/version.ts, leading release note, and operator packet."),
+    check("package.public-docs", publicDocs, "required public documents exist in the packed package", "Keep README.md and COMMANDS.md in package.json files and npm pack output."),
+    check("commands.canonical-index", indexes, "CLI and slash indexes exactly match visible registries", "Regenerate both canonical indexes and remove duplicate entries."),
+    check("commands.public-examples", examples, "public CLI and slash examples resolve", "Replace stale examples or register and release-disposition the intended command."),
+    check("links.no-aether-terminal", forbidden, "the forbidden terminal URL is absent", `Remove every ${FORBIDDEN_URL} reference; ATS is not part of Aether Agent.`),
+    scanCheck,
+    evidenceCheck("capabilities.release-disposition", input.capabilities, (items) => items.filter((item) => item.shipped && (!item.documented || !["announced", "exempt"].includes(item.releaseDisposition ?? ""))).map((item) => `${item.id} ships without documentation and release disposition`), "capabilities have documentation and release dispositions", "Generate evidence from the capability manifest and release notes."),
+    evidenceCheck("generated-docs.digest", input.generatedDocs, (items) => items.filter((item) => !item.manifestDigest || item.manifestDigest !== item.documentDigest).map((item) => `${item.id} generated digest differs from its manifest`), "generated command/model docs match manifests", "Regenerate documents from canonical manifests."),
+    evidenceCheck("catalogue.digest-freshness", input.catalogue, (item) => { const failures: string[] = []; if (!item.catalogueDigest || item.catalogueDigest !== item.renderedDigest) failures.push("catalogue rendered digest differs from canonical digest"); const generated = Date.parse(item.generatedAt); const observed = Date.parse(item.observedAt); if (!Number.isFinite(generated) || !Number.isFinite(observed)) failures.push("catalogue timestamps are invalid"); else if (observed - generated > item.maxAgeMs) failures.push("catalogue snapshot is stale"); return failures; }, "catalogue digest and freshness are valid", "Refresh authoritative catalogue data and regenerate outputs."),
+    evidenceCheck("package.claim-inventory", input.packedClaims, (claims) => claims.flatMap((claim) => { const failures = claim.advertised ? claim.requiredPaths.filter((path) => !packed.has(path)).map((path) => `${claim.id} is advertised but ${path} is absent`) : []; if (claim.sourceOnly && claim.registryInstalled) failures.push(`${claim.id} is source-only but advertised as registry-installed`); return failures; }), "packed contents satisfy advertised claims", "Package required implementation or correct the claim inventory."),
+    evidenceCheck("registry.source-truth", input.registry, (item) => { const failures: string[] = []; const published = item.publishedVersions.includes(item.sourceVersion); if (item.sourceVersion !== version) failures.push("registry evidence source version differs from package"); if ((item.publicClaim.sourceAvailability === "published") !== published) failures.push("public source availability differs from registry evidence"); if (item.publicClaim.latest !== item.latest) failures.push("public latest claim differs from registry dist-tag"); return failures; }, "source and registry claims match observed dist-tags", "Run the npm host probe; network failure must remain unavailable.", "unavailable"),
   ];
-  const failed = checks.filter((item) => item.status === "fail").length;
-  const result: ReleaseTruthResult = {
-    schema: RELEASE_TRUTH_SCHEMA,
-    status: failed === 0 ? "pass" : "fail",
-    ok: failed === 0,
-    version,
-    summary: { total: checks.length, passed: checks.length - failed, failed },
-    checks,
-    humanSummary: [],
-  };
-  result.humanSummary = renderReleaseTruthSummary(result);
-  return result;
+  return resultFromChecks(version, checks);
 }
 
+function resultFromChecks(version: string | null, checks: ReleaseTruthCheck[]): ReleaseTruthResult {
+  const failed = checks.filter((item) => item.status === "fail").length; const unavailable = checks.filter((item) => item.status === "unavailable").length; const notApplicable = checks.filter((item) => item.status === "not_applicable").length; const passed = checks.filter((item) => item.status === "pass").length;
+  const result: ReleaseTruthResult = { schema: RELEASE_TRUTH_SCHEMA, status: failed ? "fail" : unavailable ? "unavailable" : "pass", ok: failed === 0 && unavailable === 0, version, summary: { total: checks.length, passed, failed, unavailable, notApplicable }, checks, humanSummary: [] };
+  result.humanSummary = renderReleaseTruthSummary(result); return result;
+}
 export function renderReleaseTruthSummary(result: ReleaseTruthResult): string[] {
-  const lines = [
-    `${result.ok ? "PASS" : "FAIL"} ${result.schema}: ${result.summary.passed}/${result.summary.total} checks passed`,
-  ];
-  for (const item of result.checks.filter((candidate) => candidate.status === "fail")) {
-    lines.push(`[${item.id}] ${item.summary}`);
-    for (const evidence of item.evidence) lines.push(`  - ${evidence}`);
-    lines.push(`  remediation: ${item.remediation}`);
-  }
+  const lines = [`${result.status.toUpperCase()} ${result.schema}: ${result.summary.passed}/${result.summary.total} passed, ${result.summary.failed} failed, ${result.summary.unavailable} unavailable`];
+  for (const item of result.checks.filter((candidate) => candidate.status === "fail" || candidate.status === "unavailable")) { lines.push(`[${item.id}] ${item.status}: ${item.summary}`); for (const evidence of item.evidence) lines.push(`  - ${evidence}`); lines.push(`  remediation: ${item.remediation}`); }
   return lines;
 }
 
-function extension(path: string): string {
-  const dot = path.lastIndexOf(".");
-  return dot >= 0 ? path.slice(dot).toLowerCase() : "";
-}
-
-function collectRepositoryTexts(root: string, directory = root, output: Record<string, string> = {}): Record<string, string> {
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    if (entry.isDirectory()) {
-      if (!SKIP_DIRECTORIES.has(entry.name)) collectRepositoryTexts(root, join(directory, entry.name), output);
-      continue;
+export interface ScanOptions { maxFileBytes?: number; maxTotalBytes?: number }
+export function scanRepositoryTexts(root: string, options: ScanOptions = {}): { texts: Record<string, string>; skips: ScanSkip[] } {
+  const texts: Record<string, string> = {}; const skips: ScanSkip[] = []; const maxFile = options.maxFileBytes ?? 1_048_576; const maxTotal = options.maxTotalBytes ?? 33_554_432; let total = 0;
+  const visit = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const path = join(directory, entry.name); const repoPath = relative(root, path).replaceAll("\\", "/");
+      if (entry.isDirectory()) { if (EXCLUDED_DIRECTORIES.has(entry.name)) skips.push({ path: repoPath + "/", reason: "excluded_directory", detail: "explicit generated/dependency directory" }); else visit(path); continue; }
+      if (!entry.isFile()) { skips.push({ path: repoPath, reason: "non_regular", detail: "symlink or special file" }); continue; }
+      const size = statSync(path).size; if (size > maxFile) { skips.push({ path: repoPath, reason: "oversized", detail: `${size} bytes exceeds ${maxFile}` }); continue; } if (total + size > maxTotal) { skips.push({ path: repoPath, reason: "budget", detail: `${total + size} bytes exceeds ${maxTotal}` }); continue; }
+      const bytes = readFileSync(path); if (bytes.includes(0)) { skips.push({ path: repoPath, reason: "binary", detail: "contains NUL byte" }); continue; }
+      try { texts[repoPath] = new TextDecoder("utf-8", { fatal: true }).decode(bytes); total += size; } catch { skips.push({ path: repoPath, reason: "undecodable", detail: "not valid UTF-8 text" }); }
     }
-    if (!entry.isFile()) continue;
-    const path = join(directory, entry.name);
-    const repoPath = relative(root, path).replaceAll("\\", "/");
-    if (TEXT_EXTENSIONS.has(extension(repoPath))) output[repoPath] = readFileSync(path, "utf8");
-  }
-  return output;
+  };
+  visit(root); return { texts, skips };
 }
-
-export function collectReleaseTruthInput(
-  root: string,
-  packedFiles: readonly string[],
-  commands: readonly ReleaseTruthCommand[] = ALL_CLI_COMMANDS,
-): ReleaseTruthInput {
-  const scannedTexts = collectRepositoryTexts(root);
-  const files: Record<string, string> = {};
-  for (const path of ["package.json", "package-lock.json", "src/version.ts", "README.md", "COMMANDS.md", "RELEASE_NOTES.md"]) {
-    const value = scannedTexts[path];
-    if (value !== undefined) files[path] = value;
-  }
-  const manifest = parseJson(files["package.json"]);
-  const version = typeof manifest?.["version"] === "string" ? manifest["version"] : null;
-  if (version) {
-    const packet = `docs/releases/OPERATOR-PACKET-v${version}.md`;
-    const value = scannedTexts[packet];
-    if (value !== undefined) files[packet] = value;
-  }
-  return { files, scannedTexts, packedFiles, commands };
+export function collectReleaseTruthInput(root: string, packedFiles: readonly string[], commands: readonly ReleaseTruthCommand[] = ALL_CLI_COMMANDS, slashCommands: readonly ReleaseTruthCommand[] = SLASH_COMMANDS, evidence: ReleaseTruthEvidence = {}): ReleaseTruthInput {
+  const scan = scanRepositoryTexts(root); const files: Record<string, string> = {};
+  for (const path of ["package.json", "package-lock.json", "src/version.ts", "README.md", "COMMANDS.md", "RELEASE_NOTES.md"]) if (scan.texts[path] !== undefined) files[path] = scan.texts[path]!;
+  const manifest = parseJson(files["package.json"]); const version = typeof manifest?.["version"] === "string" ? manifest["version"] : null;
+  if (version) { const packet = `docs/releases/OPERATOR-PACKET-v${version}.md`; if (scan.texts[packet] !== undefined) files[packet] = scan.texts[packet]!; }
+  return { files, scannedTexts: scan.texts, scanSkips: scan.skips, packedFiles, commands, slashCommands, ...evidence };
 }
-
-export function releaseTruthFromRepository(
-  root: string,
-  packedFiles: readonly string[],
-  commands: readonly ReleaseTruthCommand[] = ALL_CLI_COMMANDS,
-): ReleaseTruthResult {
-  return evaluateReleaseTruth(collectReleaseTruthInput(root, packedFiles, commands));
+export function releaseTruthFromRepository(root: string, packedFiles: readonly string[], evidence: ReleaseTruthEvidence = {}): ReleaseTruthResult { return evaluateReleaseTruth(collectReleaseTruthInput(root, packedFiles, ALL_CLI_COMMANDS, SLASH_COMMANDS, evidence)); }
+export function releaseTruthFailure(stage: "collection" | "pack", error: unknown): ReleaseTruthResult {
+  const detail = error instanceof Error ? error.message : String(error); return resultFromChecks(null, [{ id: `${stage}.unavailable`, status: "unavailable", summary: `${stage} evidence could not be collected`, remediation: stage === "pack" ? "Run npm pack --dry-run --json after a successful build and inspect its error." : "Restore readable repository files and rerun collection.", evidence: [detail] }]);
 }
-
-async function main(): Promise<void> {
-  const { createPackReport } = await import("./verify-production.js");
-  const root = process.cwd();
-  const packedFiles = createPackReport(root).files.map((file) => file.path);
-  const result = releaseTruthFromRepository(root, packedFiles);
-  process.stdout.write(`${JSON.stringify(result)}\n`);
-  process.stderr.write(`${result.humanSummary.join("\n")}\n`);
-  if (!result.ok) process.exitCode = 1;
+export async function runReleaseTruth(root: string, evidence: ReleaseTruthEvidence = {}, packedFiles?: readonly string[]): Promise<ReleaseTruthResult> {
+  let paths = packedFiles; if (!paths) { try { const { createPackReport } = await import("./verify-production.js"); paths = createPackReport(root).files.map((file) => file.path); } catch (error) { return releaseTruthFailure("pack", error); } }
+  try { return releaseTruthFromRepository(root, paths, evidence); } catch (error) { return releaseTruthFailure("collection", error); }
 }
-
+async function main(): Promise<void> { const result = await runReleaseTruth(process.cwd(), { registry: { state: "unavailable", reason: "live npm registry observation was not supplied" } }); process.stdout.write(`${JSON.stringify(result)}\n`); process.stderr.write(`${result.humanSummary.join("\n")}\n`); if (!result.ok) process.exitCode = 1; }
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : "";
 if (invokedPath === resolve(fileURLToPath(import.meta.url))) void main();
