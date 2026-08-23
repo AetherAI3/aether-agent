@@ -67,7 +67,21 @@ export interface RcRegisterResponse {
   grant_token?: string;
   expires_at?: string;
 }
-interface RcAppendResponse { acked_seq?: number }
+/** R1 (#1328) /host/events replies with a per-item receipt for each event in
+ *  the batch. An accepted item carries its allocated `seq`; a `rejected` item
+ *  (G4: the broker independently dropped that one payload as secret-shaped) is
+ *  non-fatal — that single item is dropped and the batch continues. Only a
+ *  top-level 409 EventConflictError (G2) aborts the whole request. */
+interface RcAppendReceipt {
+  host_event_id: string;
+  seq?: number;
+  rejected?: boolean;
+  reason?: string;
+}
+interface RcAppendResponse {
+  receipts?: RcAppendReceipt[];
+  acked_seq?: number;
+}
 
 export type RcPhase = "off" | "active" | "reconnecting" | "failed";
 
@@ -94,6 +108,9 @@ interface StoredRcEvent {
 interface RcHostState {
   version: 1;
   sessionId: string;
+  /** The enrolled host device id, presented at register/attach/heartbeat.
+   *  Persisted so a resumed session presents the SAME id the broker recorded. */
+  deviceId: string;
   sessionName?: string;
   viewerUrl?: string;
   redemptionUrl?: string;
@@ -121,6 +138,9 @@ export interface RemoteHostOptions {
   heartbeatMs?: number;
   random?: () => number;
   maxOutbox?: number;
+  /** The enrolled host device id. Generated + persisted when omitted; a resumed
+   *  session always reuses the id stored with its cursor. */
+  deviceId?: string;
 }
 
 export interface RcStartInput {
@@ -131,6 +151,9 @@ export interface RcStartInput {
 export class RemoteHostClient {
   private phase: RcPhase = "off";
   private state: RcHostState | null = null;
+  /** The enrolled device id used for register/attach/heartbeat. Stable for the
+   *  client's lifetime; a resumed session adopts the id from its stored state. */
+  private deviceId: string;
   private detail: string | undefined;
   private attempt = 0;
   private dropped = 0;
@@ -140,7 +163,9 @@ export class RemoteHostClient {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(private readonly options: RemoteHostOptions) {}
+  constructor(private readonly options: RemoteHostOptions) {
+    this.deviceId = options.deviceId ?? `dev_${randomUUID()}`;
+  }
 
   /** Register (or re-attach to) a remote session. Never throws — a failure is
    *  reported through status(); the local session is unaffected either way. */
@@ -156,6 +181,7 @@ export class RemoteHostClient {
     try {
       const response = await this.options.transport.postJson<RcRegisterResponse>(RC_SESSIONS_PATH, {
         protocol_version: RC_PROTOCOL_VERSION,
+        device_id: this.deviceId,
         ...(input.sessionName ? { session_name: input.sessionName } : {}),
         ...(input.repo ? { repo: input.repo } : {}),
         execution: "local",
@@ -167,6 +193,7 @@ export class RemoteHostClient {
       this.state = {
         version: 1,
         sessionId: response.session_id,
+        deviceId: this.deviceId,
         ...(input.sessionName ? { sessionName: input.sessionName } : {}),
         ...(response.viewer_url ? { viewerUrl: response.viewer_url } : {}),
         ...(response.redemption_url ? { redemptionUrl: response.redemption_url } : {}),
@@ -189,9 +216,12 @@ export class RemoteHostClient {
   }
 
   private async attach(state: RcHostState): Promise<RcPhase | "gone"> {
+    // A resumed session presents the device id the broker recorded at register.
+    this.deviceId = state.deviceId ?? this.deviceId;
     try {
       const response = await this.options.transport.postJson<RcRegisterResponse>(rcAttachPath(state.sessionId), {
         protocol_version: RC_PROTOCOL_VERSION,
+        device_id: this.deviceId,
         ...(state.hostSecret ? { host_secret: state.hostSecret } : {}),
         last_acked_seq: state.lastAckedSeq,
       });
@@ -290,11 +320,26 @@ export class RemoteHostClient {
         this.degrade(error);
         return;
       }
+      // The whole request was accepted (2xx). Per-item receipts may still mark
+      // individual events `rejected` — G4: the broker independently dropped that
+      // one payload as secret-shaped. That is NOT a batch failure: drop those
+      // items (they are already out of the outbox with the rest of the batch),
+      // count them, and keep going. Everything else advanced.
+      const receipts = Array.isArray(response?.receipts) ? response.receipts : [];
+      const brokerRejected = receipts.filter((receipt) => receipt.rejected).length;
+      const seqs = receipts.map((receipt) => receipt.seq).filter((seq): seq is number => typeof seq === "number");
       this.state.outbox.splice(0, batch.length);
-      this.state.lastAckedSeq =
-        typeof response?.acked_seq === "number" ? response.acked_seq : this.state.lastAckedSeq + batch.length;
+      this.state.lastAckedSeq = seqs.length
+        ? Math.max(this.state.lastAckedSeq, ...seqs)
+        : typeof response?.acked_seq === "number"
+          ? response.acked_seq
+          : this.state.lastAckedSeq + (batch.length - brokerRejected);
+      if (brokerRejected) this.dropped += brokerRejected;
       this.persist();
       this.becomeActive();
+      if (brokerRejected) {
+        this.detail = `${brokerRejected} event(s) dropped broker-side as secret-shaped (G4 redaction); the session continues`;
+      }
     }
   }
 
@@ -402,7 +447,9 @@ export class RemoteHostClient {
   private async heartbeatOnce(): Promise<void> {
     if (!this.state || this.stopped || this.phase === "failed") return;
     try {
-      await this.options.transport.postJson(rcHeartbeatPath(this.state.sessionId), {});
+      // R1's /host/heartbeat reuses the RemoteHostAttach model (extra="forbid"),
+      // so it requires the device_id — an empty body would 422.
+      await this.options.transport.postJson(rcHeartbeatPath(this.state.sessionId), { device_id: this.deviceId });
       if (this.phase === "reconnecting" && this.state.outbox.length === 0) this.becomeActive();
     } catch (error) {
       this.degrade(error);
@@ -426,6 +473,9 @@ export class RemoteHostClient {
     const value = read.value;
     if (!value || value.version !== 1 || typeof value.sessionId !== "string" || !value.sessionId) return null;
     if (!Array.isArray(value.outbox) || typeof value.lastAckedSeq !== "number") return null;
+    // A cursor written before device ids were persisted has none; adopt this
+    // client's id so attach/heartbeat still present one.
+    if (typeof value.deviceId !== "string" || !value.deviceId) value.deviceId = this.deviceId;
     return value;
   }
 

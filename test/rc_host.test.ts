@@ -26,13 +26,20 @@ class MockBroker implements RcTransport {
   networkDown = false;
   refuseSecondHost = false;
   conflictNextAppend = false;
+  /** When set, the next append accepts every item EXCEPT the first, which comes
+   *  back as a per-item G4 redaction rejection (2xx request, item dropped). */
+  rejectFirstItemReason: string | null = null;
   lastEventsBody: { host_secret?: string; events: BrokerEvent[] } | null = null;
+  lastRegisterBody: Record<string, unknown> | null = null;
+  lastAttachBody: Record<string, unknown> | null = null;
+  lastHeartbeatBody: Record<string, unknown> | null = null;
   private counter = 0;
 
   async postJson<T>(path: string, body: unknown): Promise<T> {
     if (this.networkDown) throw new Error("ECONNREFUSED (mock)");
     // R1 (#1328) routes: register posts to /remote/sessions.
     if (path === "/remote/sessions") {
+      this.lastRegisterBody = body as Record<string, unknown>;
       if (this.refuseSecondHost) throw new HttpError(409, "host already attached");
       this.counter += 1;
       return {
@@ -40,14 +47,17 @@ class MockBroker implements RcTransport {
         host_secret: "mock-host-secret",
         viewer_url: "https://viewer.invalid/code/rc/session",
         redemption_url: "https://viewer.invalid/code/rc/redeem/red_1",
+        grant_token: "grant-single-use",
         expires_at: "2026-08-24T00:00:00.000Z",
       } as T;
     }
     if (path.endsWith("/host/attach")) {
+      this.lastAttachBody = body as Record<string, unknown>;
       if (this.refuseSecondHost) throw new HttpError(409, "host already attached");
       return { viewer_url: "https://viewer.invalid/code/rc/session" } as T;
     }
     if (path.endsWith("/host/heartbeat")) {
+      this.lastHeartbeatBody = body as Record<string, unknown>;
       this.heartbeats += 1;
       return {} as T;
     }
@@ -59,12 +69,19 @@ class MockBroker implements RcTransport {
         throw new HttpError(409, "EventConflictError"); // G2 payload-bound idempotency
       }
       const batch = this.lastEventsBody.events;
-      for (const event of batch) {
-        if (this.seenEventIds.has(event.host_event_id)) continue; // dedupe
+      const reason = this.rejectFirstItemReason;
+      this.rejectFirstItemReason = null;
+      const receipts = batch.map((event, index) => {
+        if (reason && index === 0) return { host_event_id: event.host_event_id, rejected: true, reason };
+        if (this.seenEventIds.has(event.host_event_id)) {
+          // Dedupe: return the original seq, do not re-store.
+          return { host_event_id: event.host_event_id, seq: this.events.findIndex((e) => e.host_event_id === event.host_event_id) + 1 };
+        }
         this.seenEventIds.add(event.host_event_id);
         this.events.push(event);
-      }
-      return { acked_seq: this.events.length } as T;
+        return { host_event_id: event.host_event_id, seq: this.events.length };
+      });
+      return { receipts, acked_seq: this.events.length } as T;
     }
     if (path.endsWith("/revoke")) {
       this.revoked.push(path);
@@ -107,6 +124,42 @@ test("register, publish, flush: events land once and the cursor advances", async
   assert.equal(host.status().lastAckedSeq, 2);
   // R1 (#1328) /host/events authenticates the append with the host_secret.
   assert.equal(broker.lastEventsBody?.host_secret, "mock-host-secret");
+  host.stopLocal();
+});
+
+test("register, attach, and heartbeat all carry the device_id (R1 RemoteHostAttach, extra=forbid)", async () => {
+  const broker = new MockBroker();
+  const statePath = tempStatePath();
+  const first = client(broker, statePath, { deviceId: "dev_fixed", heartbeatMs: 20 });
+  assert.equal((await first.start()).phase, "active");
+  assert.equal(broker.lastRegisterBody?.["device_id"], "dev_fixed");
+  // Let one heartbeat fire; its body must carry device_id or R1 would 422.
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  first.stopLocal();
+  assert.equal(broker.lastHeartbeatBody?.["device_id"], "dev_fixed");
+  assert.ok(broker.heartbeats >= 1, "a heartbeat actually fired");
+
+  // A resumed session re-attaches presenting the SAME persisted device id.
+  const second = client(broker, statePath, { deviceId: "dev_ignored_on_resume", heartbeatMs: 60_000 });
+  assert.equal((await second.start()).phase, "active");
+  assert.equal(broker.lastAttachBody?.["device_id"], "dev_fixed");
+  second.stopLocal();
+});
+
+test("a per-item G4 redaction rejection drops just that item and the batch continues (not a batch failure)", async () => {
+  const broker = new MockBroker();
+  const host = client(broker, tempStatePath());
+  await host.start();
+  broker.rejectFirstItemReason = "redaction";
+  host.publish("transcript", { role: "agent", summary: "first" });
+  host.publish("transcript", { role: "agent", summary: "second" });
+  await host.flush();
+  // One item dropped broker-side; the other landed; session stays active.
+  assert.equal(host.status().phase, "active");
+  assert.equal(host.status().pendingEvents, 0);
+  assert.equal(host.status().droppedEvents, 1);
+  assert.equal(broker.events.length, 1);
+  assert.equal(broker.events[0]!.payload["summary"], "second");
   host.stopLocal();
 });
 
