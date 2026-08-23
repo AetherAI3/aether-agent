@@ -37,7 +37,7 @@ function reply(res: ServerResponse, status: number, body: unknown): void {
 function consumeControlRequest(launch: PreviewLaunch, req: IncomingMessage): boolean {
   const requestId = req.headers["x-aether-preview-control"];
   if (typeof requestId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) return false;
-  const requestPath = join(dirname(launch.statePath), `control-${requestId}.json`);
+  const requestPath = join(dirname(launch.statePath), "control.json");
   try {
     const stat = lstatSync(requestPath);
     if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 1_024) return false;

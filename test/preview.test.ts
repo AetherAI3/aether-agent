@@ -88,7 +88,7 @@ test("managed preview detects its URL, reports headless honestly, sanitizes logs
   const stateText = readFileSync(paths.statePath, "utf8");
   assert.doesNotMatch(stateText, /"token"/);
   assert.doesNotMatch(stateText, new RegExp(secret));
-  assert.deepEqual(readdirSync(paths.dir).filter((name) => name.startsWith("launch-") || name.startsWith("control-")), []);
+  assert.deepEqual(readdirSync(paths.dir).filter((name) => name.startsWith("launch-") || name === "control.json"), []);
   const state = JSON.parse(stateText) as PreviewState;
   assert.equal(parsePreviewState({ ...state, token: secret }), null, "legacy or injected bearer state was accepted");
   const csrf = await fetch(`http://127.0.0.1:${state.controlPort}/stop`, { method: "POST" });

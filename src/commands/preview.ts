@@ -91,7 +91,7 @@ async function control(state: PreviewState, statePath: string, method: "GET" | "
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 1_000);
   const requestId = randomUUID();
-  const requestPath = join(dirname(statePath), `control-${requestId}.json`);
+  const requestPath = join(dirname(statePath), "control.json");
   try {
     writePrivate(requestPath, JSON.stringify({ schema: PREVIEW_SCHEMA, requestId, instanceId: state.instanceId, method, path }));
     const response = await fetch(`http://127.0.0.1:${state.controlPort}${path}`, {

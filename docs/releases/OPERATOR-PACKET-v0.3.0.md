@@ -14,8 +14,8 @@ to npm are founder-owned and are listed at the end, unrun.
 | Historical candidate | `fb96ee44b03f37a386954a32412728fa7e98a046` (PR-local evidence commit; historical only, not reachable from current `main`) |
 | Historical archive | `aether-agents-0.3.0.tgz` — 739,977 bytes packed / 3,022,168 unpacked / 575 entries |
 | Historical archive sha256 | `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` |
-| Current exact-head dry run | 612 entries / 3,290,082 unpacked bytes / 4 workflows |
-| Current dry-run predicted packed size | 797,201 bytes (inventory estimate; no archive was created) |
+| Current exact-head dry run | 612 entries / 3,290,036 unpacked bytes / 4 workflows |
+| Current dry-run predicted packed size | 797,184 bytes (inventory estimate; no archive was created) |
 | Current archive | **PENDING — no exact-head archive has been produced** |
 | Current archive sha256 | **PENDING — record only after producing that archive** |
 
@@ -136,8 +136,8 @@ at `fb96ee44b03f37a386954a32412728fa7e98a046`; they do not describe the current
 ### Current integration dry-run
 
 On the integration tree, `verify:production` exited 0 and reported 612 entries,
-3,290,082 unpacked bytes, and 4 workflows; the matching dry-run JSON predicted
-797,201 packed bytes. This was an
+3,290,036 unpacked bytes, and 4 workflows; the matching dry-run JSON predicted
+797,184 packed bytes. This was an
 `npm pack --dry-run` inventory. It did not produce `aether-agents-0.3.0.tgz`, so
 the current archive size and sha256 are pending rather than borrowed from an
 older candidate.
@@ -238,7 +238,7 @@ catch a dropped feature, because it does not know what the notes promised.
 
 ### Current dry-run packaged file manifest
 
-The exact-head dry run reported 612 entries and 3,290,082 bytes unpacked. Five
+The exact-head dry run reported 612 entries and 3,290,036 bytes unpacked. Five
 files are at the package root, four generated public documents are under `docs/`,
 and everything else is under `dist/src/`. This is an inventory prediction, not
 a statement that a current archive exists.
