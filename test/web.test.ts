@@ -100,6 +100,14 @@ test("htmlToText fails closed for unterminated raw-text elements", () => {
   assert.equal(htmlToText("<p>safe</p><style>.secret-style {} </style"), "safe");
 });
 
+test("htmlToText preserves tag offsets after Unicode lowercase expansion", () => {
+  const prefix = "İ".repeat(20);
+  const scriptText = htmlToText(`${prefix}<ScRiPt>SECRET_PAYLOAD_12345()</sCrIpT>after`);
+  const styleText = htmlToText(`${prefix}<StYlE>SECRET_STYLE_12345</sTyLe>after`);
+  assert.equal(scriptText, `${prefix} after`);
+  assert.equal(styleText, `${prefix} after`);
+});
+
 test("htmlToText caps to maxChars", () => {
   const html = "<p>" + "a".repeat(20000) + "</p>";
   const text = htmlToText(html, 8000);

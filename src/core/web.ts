@@ -213,6 +213,25 @@ function isTagNameBoundary(ch: string | undefined): boolean {
   return ch === undefined || ch === ">" || ch === "/" || /\s/.test(ch);
 }
 
+function asciiLowerCode(code: number): number {
+  return code >= 65 && code <= 90 ? code + 32 : code;
+}
+
+function findAsciiCaseInsensitive(html: string, needle: string, start: number): number {
+  const lastStart = html.length - needle.length;
+  for (let i = start; i <= lastStart; i += 1) {
+    let matched = true;
+    for (let j = 0; j < needle.length; j += 1) {
+      if (asciiLowerCode(html.charCodeAt(i + j)) !== needle.charCodeAt(j)) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) return i;
+  }
+  return -1;
+}
+
 function findTagEnd(html: string, start: number): number {
   let quote: '"' | "'" | null = null;
   for (let i = start; i < html.length; i += 1) {
@@ -234,7 +253,6 @@ function findTagEnd(html: string, start: number): number {
  * cause script or style source to be returned as readable model context.
  */
 function stripRawTextElements(html: string, tagName: "script" | "style"): string {
-  const lower = html.toLowerCase();
   const openPrefix = `<${tagName}`;
   const closePrefix = `</${tagName}`;
   let cursor = 0;
@@ -242,11 +260,11 @@ function stripRawTextElements(html: string, tagName: "script" | "style"): string
   let out = "";
 
   while (searchFrom < html.length) {
-    const openStart = lower.indexOf(openPrefix, searchFrom);
+    const openStart = findAsciiCaseInsensitive(html, openPrefix, searchFrom);
     if (openStart < 0) break;
 
     const openNameEnd = openStart + openPrefix.length;
-    if (!isTagNameBoundary(lower[openNameEnd])) {
+    if (!isTagNameBoundary(html[openNameEnd])) {
       searchFrom = openNameEnd;
       continue;
     }
@@ -258,11 +276,11 @@ function stripRawTextElements(html: string, tagName: "script" | "style"): string
     let closeSearch = openEnd + 1;
     let closeEnd = -1;
     while (closeSearch < html.length) {
-      const closeStart = lower.indexOf(closePrefix, closeSearch);
+      const closeStart = findAsciiCaseInsensitive(html, closePrefix, closeSearch);
       if (closeStart < 0) return `${out} `;
 
       const closeNameEnd = closeStart + closePrefix.length;
-      if (!isTagNameBoundary(lower[closeNameEnd])) {
+      if (!isTagNameBoundary(html[closeNameEnd])) {
         closeSearch = closeNameEnd;
         continue;
       }
