@@ -158,6 +158,13 @@ test("htmlToText preserves the actual close after a nested escape start", () => 
   assert.equal(htmlToText(html), "VISIBLE_AFTER_ACTUAL_CLOSE safe");
 });
 
+test("htmlToText exits double-escaped dash-dash on a greater-than sign", () => {
+  const html =
+    "<script><!--<script>--></script>VISIBLE_AFTER_ACTUAL_CLOSE</script>" +
+    "<p>safe</p>";
+  assert.equal(htmlToText(html), "VISIBLE_AFTER_ACTUAL_CLOSE safe");
+});
+
 test("htmlToText scans a 2 MiB adversarial double-escaped script fail-closed", () => {
   const nearMatches = "<scriptx".repeat((2 * 1024 * 1024) / 8);
   const html = `<script><!--<script>${nearMatches}</script>SECRET_B</script><p>safe</p>`;
