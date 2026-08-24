@@ -82,6 +82,103 @@ test("htmlToText strips script/style and collapses to readable text", () => {
   assert.doesNotMatch(text, /<[a-z]/i, "no raw tags remain");
 });
 
+test("htmlToText strips raw-text bodies with whitespace in closing tags", () => {
+  const html =
+    "<p>before</p><script data-purpose='test'>secretScript()</script   >" +
+    "<style media=screen>.secret-style { display: block }</style\n>" +
+    "<p>after</p>";
+  const text = htmlToText(html);
+  assert.match(text, /before/);
+  assert.match(text, /after/);
+  assert.doesNotMatch(text, /secretScript/);
+  assert.doesNotMatch(text, /secret-style/);
+});
+
+test("htmlToText fails closed for unterminated raw-text elements", () => {
+  assert.equal(htmlToText("<p>safe</p><script>"), "safe");
+  assert.equal(htmlToText("<p>safe</p><script>secretScript()"), "safe");
+  assert.equal(htmlToText("<p>safe</p><style>.secret-style {} </style"), "safe");
+});
+
+test("htmlToText respects script-data double-escaped closing semantics", () => {
+  const html =
+    "<script><!--<script>SECRET_A</script>SECRET_B</script>" +
+    "<p>safe</p>";
+  assert.equal(htmlToText(html), "safe");
+});
+
+test("htmlToText handles mixed-case double-escaped script states", () => {
+  const html =
+    "<ScRiPt><!--<sCrIpT>SECRET_A</ScRiPt>SECRET_B</sCrIpT>" +
+    "<p>after</p>";
+  assert.equal(htmlToText(html), "after");
+});
+
+test("htmlToText treats whitespace and slash double-escape boundaries as non-closing", () => {
+  for (const whitespace of [" ", "\t", "\n", "\f", "\r"]) {
+    const html =
+      `<script><!--<script>SECRET_A</script${whitespace}>SECRET_B</script>` +
+      "<p>after whitespace</p>";
+    assert.equal(htmlToText(html), "after whitespace");
+  }
+  const slash =
+    "<script><!--<script>SECRET_A</script/>SECRET_B</script><p>after slash</p>";
+  assert.equal(htmlToText(slash), "after slash");
+});
+
+test("htmlToText does not treat Unicode whitespace as a raw-text close boundary", () => {
+  assert.equal(htmlToText("<p>before</p><script>SECRET_A</script\u00a0>SECRET_B"), "before");
+  assert.equal(htmlToText("<p>before</p><style>SECRET_A</style\u00a0>SECRET_B"), "before");
+});
+
+test("htmlToText fails closed at EOF while script data is double-escaped", () => {
+  assert.equal(htmlToText("<p>before</p><script><!--<script>SECRET_A"), "before");
+  assert.equal(
+    htmlToText("<p>before</p><script><!--<script>SECRET_A</script>SECRET_B"),
+    "before",
+  );
+});
+
+test("htmlToText preserves text only after the actual double-escaped script close", () => {
+  const html =
+    "<p>before</p><script><!--<script>SECRET_A</script>SECRET_B</script>" +
+    "<p>visible after actual close</p>";
+  assert.equal(htmlToText(html), "before\nvisible after actual close");
+});
+
+test("htmlToText exits escaped dash-dash on a standalone greater-than sign", () => {
+  const html = "<script><!--><script>SECRET</script><p>visible</p>";
+  assert.equal(htmlToText(html), "visible");
+});
+
+test("htmlToText preserves the actual close after a nested escape start", () => {
+  const html =
+    "<script><!--<!--><script>INNER</script>VISIBLE_AFTER_ACTUAL_CLOSE</script>" +
+    "<p>safe</p>";
+  assert.equal(htmlToText(html), "VISIBLE_AFTER_ACTUAL_CLOSE safe");
+});
+
+test("htmlToText exits double-escaped dash-dash on a greater-than sign", () => {
+  const html =
+    "<script><!--<script>--></script>VISIBLE_AFTER_ACTUAL_CLOSE</script>" +
+    "<p>safe</p>";
+  assert.equal(htmlToText(html), "VISIBLE_AFTER_ACTUAL_CLOSE safe");
+});
+
+test("htmlToText scans a 2 MiB adversarial double-escaped script fail-closed", () => {
+  const nearMatches = "<scriptx".repeat((2 * 1024 * 1024) / 8);
+  const html = `<script><!--<script>${nearMatches}</script>SECRET_B</script><p>safe</p>`;
+  assert.equal(htmlToText(html), "safe");
+});
+
+test("htmlToText preserves tag offsets after Unicode lowercase expansion", () => {
+  const prefix = "İ".repeat(20);
+  const scriptText = htmlToText(`${prefix}<ScRiPt>SECRET_PAYLOAD_12345()</sCrIpT>after`);
+  const styleText = htmlToText(`${prefix}<StYlE>SECRET_STYLE_12345</sTyLe>after`);
+  assert.equal(scriptText, `${prefix} after`);
+  assert.equal(styleText, `${prefix} after`);
+});
+
 test("htmlToText caps to maxChars", () => {
   const html = "<p>" + "a".repeat(20000) + "</p>";
   const text = htmlToText(html, 8000);
