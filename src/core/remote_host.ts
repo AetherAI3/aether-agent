@@ -67,11 +67,9 @@ export interface RcRegisterResponse {
   grant_token?: string;
   expires_at?: string;
 }
-/** R1 (#1328) /host/events replies with a per-item receipt for each event in
- *  the batch. An accepted item carries its allocated `seq`; a `rejected` item
- *  (G4: the broker independently dropped that one payload as secret-shaped) is
- *  non-fatal — that single item is dropped and the batch continues. Only a
- *  top-level 409 EventConflictError (G2) aborts the whole request. */
+/** A successful append must receipt every event in the submitted batch. Until
+ *  the shared Cloud fixture freezes typed per-item errors, anything else is
+ *  treated as ambiguous and the durable outbox is preserved for safe replay. */
 interface RcAppendReceipt {
   host_event_id: string;
   seq?: number;
@@ -80,7 +78,6 @@ interface RcAppendReceipt {
 }
 interface RcAppendResponse {
   receipts?: RcAppendReceipt[];
-  acked_seq?: number;
 }
 
 export type RcPhase = "off" | "active" | "reconnecting" | "failed";
@@ -211,7 +208,10 @@ export class RemoteHostClient {
         lastAckedSeq: 0,
         outbox: [],
       };
-      this.persist();
+      if (!this.persist()) {
+        this.fail("could not securely persist the Remote Control session and one-time host credential");
+        return this.status();
+      }
       this.becomeActive();
       this.startHeartbeat();
     } catch (error) {
@@ -266,18 +266,31 @@ export class RemoteHostClient {
       ...(this.options.env ? { env: this.options.env } : {}),
     });
     if (!safe) return false;
-    const limit = this.options.maxOutbox ?? RC_MAX_OUTBOX;
-    if (this.state.outbox.length >= limit) {
-      this.state.outbox.shift();
-      this.dropped += 1;
+    const limit = Math.max(1, this.options.maxOutbox ?? RC_MAX_OUTBOX);
+    const previousOutbox = this.state.outbox;
+    const nextOutbox = [...previousOutbox];
+    let evicted = 0;
+    if (nextOutbox.length >= limit) {
+      nextOutbox.shift();
+      evicted = 1;
     }
-    this.state.outbox.push({
+    nextOutbox.push({
       host_event_id: `he_${randomUUID()}`,
       event_type: eventType,
       payload: safe,
       created_at: new Date().toISOString(),
     });
-    this.persist();
+    this.state.outbox = nextOutbox;
+    // Persist-before-send is a hard handoff invariant: if the local atomic
+    // write fails, restore the in-memory queue and never put an event on the
+    // wire that a crash could erase before acknowledgement.
+    if (!this.persist()) {
+      this.state.outbox = previousOutbox;
+      this.dropped += 1;
+      this.detail = "event was not queued because the durable Remote Control outbox could not be written";
+      return false;
+    }
+    this.dropped += evicted;
     void this.flush();
     return true;
   }
@@ -313,42 +326,34 @@ export class RemoteHostClient {
           },
         );
       } catch (error) {
-        // A 409 on the append is R1's EventConflictError (a host_event_id
-        // re-used with a DIFFERENT payload) — NOT a host takeover, which only
-        // 409s on register/attach. By construction we never re-send changed
-        // content under an old id, so this means a single event in this batch
-        // is poisoned. Drop it (rather than requeue it forever and wedge the
-        // outbox) and keep the session; record it honestly.
+        // HTTP status alone is not enough to decide that an event is poisoned:
+        // auth, lease, terminal-session, and typed event-id conflicts may all
+        // share a status. Only the frozen typed Cloud fixture may authorize
+        // quarantining one identified event. Preserve the entire batch now.
         if (error instanceof HttpError && error.status === 409) {
-          this.state.outbox.splice(0, batch.length);
-          this.dropped += batch.length;
-          this.persist();
-          this.detail = "an event was rejected as a payload conflict (409) and dropped; the session continues";
-          continue;
+          this.fail("broker rejected the event append (409); the durable outbox was preserved pending a typed error response");
+          return;
         }
         this.degrade(error);
         return;
       }
-      // The whole request was accepted (2xx). Per-item receipts may still mark
-      // individual events `rejected` — G4: the broker independently dropped that
-      // one payload as secret-shaped. That is NOT a batch failure: drop those
-      // items (they are already out of the outbox with the rest of the batch),
-      // count them, and keep going. Everything else advanced.
-      const receipts = Array.isArray(response?.receipts) ? response.receipts : [];
-      const brokerRejected = receipts.filter((receipt) => receipt.rejected).length;
-      const seqs = receipts.map((receipt) => receipt.seq).filter((seq): seq is number => typeof seq === "number");
-      this.state.outbox.splice(0, batch.length);
-      this.state.lastAckedSeq = seqs.length
-        ? Math.max(this.state.lastAckedSeq, ...seqs)
-        : typeof response?.acked_seq === "number"
-          ? response.acked_seq
-          : this.state.lastAckedSeq + (batch.length - brokerRejected);
-      if (brokerRejected) this.dropped += brokerRejected;
-      this.persist();
-      this.becomeActive();
-      if (brokerRejected) {
-        this.detail = `${brokerRejected} event(s) dropped broker-side as secret-shaped (G4 redaction); the session continues`;
+      const seqs = validatedReceiptSeqs(response, batch);
+      if (!seqs) {
+        this.fail("broker returned incomplete, duplicate, or rejected event receipts; the durable outbox was preserved");
+        return;
       }
+      const previousAckedSeq = this.state.lastAckedSeq;
+      this.state.outbox.splice(0, batch.length);
+      this.state.lastAckedSeq = Math.max(previousAckedSeq, ...seqs);
+      if (!this.persist()) {
+        // The pre-send durable file still contains this batch. Mirror that
+        // state in memory so status is honest and a later restart can replay it.
+        this.state.outbox.unshift(...batch);
+        this.state.lastAckedSeq = previousAckedSeq;
+        this.fail("broker acknowledged events, but the durable cursor could not be written; the batch remains available for idempotent replay");
+        return;
+      }
+      this.becomeActive();
     }
   }
 
@@ -495,13 +500,13 @@ export class RemoteHostClient {
     return value;
   }
 
-  private persist(): void {
-    if (!this.state) return;
+  private persist(): boolean {
+    if (!this.state) return false;
     try {
       atomicWriteFile(this.options.statePath, JSON.stringify(this.state, null, 2) + "\n", { mode: 0o600 });
+      return true;
     } catch {
-      // Durability is best-effort; losing the cursor only costs replay, and
-      // replay is safe (broker dedupe). The live session must not care.
+      return false;
     }
   }
 
@@ -515,6 +520,21 @@ export class RemoteHostClient {
       // revocation is enforced server-side.
     }
   }
+}
+
+function validatedReceiptSeqs(response: RcAppendResponse, batch: readonly StoredRcEvent[]): number[] | null {
+  if (!Array.isArray(response?.receipts) || response.receipts.length !== batch.length) return null;
+  const expected = new Set(batch.map((event) => event.host_event_id));
+  const seen = new Set<string>();
+  const seqs: number[] = [];
+  for (const receipt of response.receipts) {
+    if (!receipt || typeof receipt.host_event_id !== "string") return null;
+    if (!expected.has(receipt.host_event_id) || seen.has(receipt.host_event_id) || receipt.rejected === true) return null;
+    if (!Number.isSafeInteger(receipt.seq) || (receipt.seq ?? 0) <= 0) return null;
+    seen.add(receipt.host_event_id);
+    seqs.push(receipt.seq!);
+  }
+  return seen.size === expected.size ? seqs : null;
 }
 
 // ── session-wide singleton ───────────────────────────────────────────────────

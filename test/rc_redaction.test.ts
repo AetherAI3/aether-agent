@@ -92,12 +92,11 @@ test("allowed scalars and lists survive intact", () => {
   });
 });
 
-test("an oversized payload is withheld with an honest notice, never sent partially", () => {
+test("an oversized payload is withheld entirely, never replaced by an undeclared fallback shape", () => {
   const files = Array.from({ length: 64 }, (_, i) => `${"x".repeat(600)}-${i}.ts`);
   const out = sanitizeRemotePayload("diff_summary", { files_changed: 64, files }, OPTS);
-  assert.deepEqual(Object.keys(out!).sort(), ["note", "truncated"]);
-  assert.equal(out!["truncated"], true);
-  assert.ok(Buffer.byteLength(JSON.stringify(out), "utf8") < RC_MAX_PAYLOAD_BYTES);
+  assert.equal(out, null);
+  assert.equal(Buffer.byteLength(JSON.stringify(out), "utf8") < RC_MAX_PAYLOAD_BYTES, true);
 });
 
 test("payloads with nothing allowlisted are dropped, not sent empty", () => {

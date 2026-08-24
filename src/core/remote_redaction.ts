@@ -132,9 +132,9 @@ export function sanitizeRemotePayload(
   }
   if (Object.keys(out).length === 0) return null;
   if (Buffer.byteLength(JSON.stringify(out), "utf8") > RC_MAX_PAYLOAD_BYTES) {
-    // Fail closed: an oversized frame is replaced by an honest notice, never
-    // trimmed field-by-field into something that silently lies by omission.
-    return { truncated: true, note: "payload exceeded the 32 KiB frame bound and was withheld" };
+    // Fail closed. Do not invent a fallback payload shape outside the shared
+    // Cloud fixture (`note` was never part of the authoritative allowlist).
+    return null;
   }
   return out;
 }

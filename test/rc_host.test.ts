@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { copyFileSync, existsSync, mkdtempSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HttpError } from "../src/core/errors.js";
@@ -146,7 +146,7 @@ test("register, attach, and heartbeat all carry the device_id (R1 RemoteHostAtta
   second.stopLocal();
 });
 
-test("a per-item G4 redaction rejection drops just that item and the batch continues (not a batch failure)", async () => {
+test("an untyped per-item rejection preserves the complete durable batch", async () => {
   const broker = new MockBroker();
   const host = client(broker, tempStatePath());
   await host.start();
@@ -154,31 +154,58 @@ test("a per-item G4 redaction rejection drops just that item and the batch conti
   host.publish("transcript", { role: "agent", summary: "first" });
   host.publish("transcript", { role: "agent", summary: "second" });
   await host.flush();
-  // One item dropped broker-side; the other landed; session stays active.
-  assert.equal(host.status().phase, "active");
-  assert.equal(host.status().pendingEvents, 0);
-  assert.equal(host.status().droppedEvents, 1);
+  // Until the shared Cloud fixture identifies a typed, event-scoped terminal
+  // error, the host cannot safely decide which local event to quarantine.
+  assert.equal(host.status().phase, "failed");
+  assert.equal(host.status().pendingEvents, 2);
+  assert.equal(host.status().droppedEvents, 0);
   assert.equal(broker.events.length, 1);
   assert.equal(broker.events[0]!.payload["summary"], "second");
   host.stopLocal();
 });
 
-test("an events 409 is an EventConflictError (payload-bound idempotency), NOT a takeover: the batch is dropped and the session survives", async () => {
+test("a generic events 409 preserves the batch until its typed error is known", async () => {
   const broker = new MockBroker();
   const host = client(broker, tempStatePath());
   await host.start();
   broker.conflictNextAppend = true;
   host.publish("transcript", { role: "agent", summary: "conflicting content" });
   await host.flush();
-  // The poisoned batch is dropped, not requeued forever; RC stays usable.
-  assert.notEqual(host.status().phase, "failed");
+  assert.equal(host.status().phase, "failed");
+  assert.equal(host.status().pendingEvents, 1);
+  assert.equal(host.status().droppedEvents, 0);
+  assert.match(host.status().detail ?? "", /outbox was preserved/);
+  assert.equal(broker.events.length, 0);
+  host.stopLocal();
+});
+
+test("an event is never sent when its durable outbox write fails", async () => {
+  const broker = new MockBroker();
+  const statePath = tempStatePath();
+  const host = client(broker, statePath);
+  assert.equal((await host.start()).phase, "active");
+  // Replace the state file with a directory after registration so the next
+  // atomic rename cannot commit the queued event.
+  unlinkSync(statePath);
+  mkdirSync(statePath);
+  assert.equal(host.publish("done", { status: "passed" }), false);
+  await host.flush();
   assert.equal(host.status().pendingEvents, 0);
   assert.equal(host.status().droppedEvents, 1);
-  // A subsequent well-formed event still delivers.
-  host.publish("done", { status: "passed" });
-  await host.flush();
-  assert.equal(broker.events.length, 1);
+  assert.match(host.status().detail ?? "", /durable Remote Control outbox/);
+  assert.equal(broker.events.length, 0);
   host.stopLocal();
+});
+
+test("registration does not activate when the one-time host credential cannot be persisted", async () => {
+  const broker = new MockBroker();
+  const statePath = mkdtempSync(join(tmpdir(), "aether-rc-unwritable-state-"));
+  const host = client(broker, statePath);
+  const status = await host.start();
+  assert.equal(status.phase, "failed");
+  assert.match(status.detail ?? "", /securely persist/);
+  assert.equal(host.publish("done", { status: "passed" }), false);
+  assert.equal(broker.events.length, 0);
 });
 
 test("outbox survives an outage and replays WITHOUT duplicates (host_event_id dedupe)", async () => {
