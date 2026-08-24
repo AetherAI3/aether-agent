@@ -15,10 +15,10 @@ to npm are founder-owned and are listed at the end, unrun.
 | Historical archive | `aether-agents-0.3.0.tgz` — 739,977 bytes packed / 3,022,168 unpacked / 575 entries |
 | Historical archive sha256 | `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` |
 | Current exact-head dry run | 618 entries / 4 workflows |
-| Current GitHub-hosted Ubuntu measurement | 3,678,516 unpacked bytes |
-| Current GitHub-hosted Windows measurement | 3,680,509 unpacked bytes |
-| Current local Windows default-checkout measurement | 3,680,509 unpacked bytes / 834,648 predicted packed bytes |
-| Current local Windows LF-checkout measurement | 3,678,516 unpacked bytes / 834,338 predicted packed bytes |
+| Current GitHub-hosted Ubuntu measurement | 3,678,782 unpacked bytes |
+| Current GitHub-hosted Windows measurement | 3,680,775 unpacked bytes |
+| Current local Windows default-checkout measurement | 3,680,775 unpacked bytes / 834,682 predicted packed bytes |
+| Current local Windows LF-checkout measurement | 3,678,782 unpacked bytes / 834,369 predicted packed bytes |
 | Current archive | **PENDING — no exact-head archive has been produced** |
 | Current archive sha256 | **PENDING — record only after producing that archive** |
 | Cloud catalogue compatibility | PR #1327 exact head `ca90e65255e01567712ec6c6e3ac35b253b306de`; exact tree `8bbe0751099a62d83bfd3a1e4eaa9dd85eef3901`; safe-field projection digest `sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712` |
@@ -140,15 +140,31 @@ at `fb96ee44b03f37a386954a32412728fa7e98a046`; they do not describe the current
 ### Current integration dry-run
 
 On the integration tree, `verify:production` exited 0 and reported 618 entries
-and 4 workflows. GitHub-hosted Ubuntu and Windows runners measured 3,678,516
-and 3,680,509 unpacked bytes respectively. The local Windows default checkout
-measured 3,680,509 unpacked / 834,648 predicted packed bytes; an LF checkout on
-that same toolchain measured 3,678,516 unpacked / 834,338 predicted packed
+and 4 workflows. GitHub-hosted Ubuntu and Windows runners measured 3,678,782
+and 3,680,775 unpacked bytes respectively. The local Windows default checkout
+measured 3,680,775 unpacked / 834,682 predicted packed bytes; an LF checkout on
+that same Node 24.19.0/npm 11.17.0 toolchain measured 3,678,782 unpacked /
+834,369 predicted packed
 bytes. The membership is identical; byte totals are checkout/toolchain
 observations and are not claimed to be cross-machine reproducible. These were
 `npm pack --dry-run` inventories. They did not produce
 `aether-agents-0.3.0.tgz`, so the current archive size and sha256 are pending
 rather than borrowed from an older candidate.
+
+The complete top-level npm dry-run reports for the two clean checkout shapes
+were:
+
+```json
+{"host":"Linux/LF","id":"aether-agents@0.3.0","name":"aether-agents","version":"0.3.0","size":834369,"unpackedSize":3678782,"shasum":"d2b1dc60517c4437dadeb12d452eb6829e546ced","integrity":"sha512-N4BU9/43JVijrFs7QXGCG5l0z+16e/uRRuNXAUZeQjW7f5LGmyzA0CKFPSrfQYrzuYE8XGlLK6sdqhMn+0SNVw==","filename":"aether-agents-0.3.0.tgz","entryCount":618,"bundled":[]}
+{"host":"Windows/default","id":"aether-agents@0.3.0","name":"aether-agents","version":"0.3.0","size":834682,"unpackedSize":3680775,"shasum":"fa1b6a6a9ad08875764423b5b80a3a6fb37c5310","integrity":"sha512-e2ySMNpyfS/4CTp4bo5rj2IKatkACJUO45+Ijf/artqfnFvSJOAcVYymZpm9lau+zD3U0bJoW+9DathsH2TzrQ==","filename":"aether-agents-0.3.0.tgz","entryCount":618,"bundled":[]}
+```
+
+The npm-reported `shasum` and `integrity` values above are host-bound dry-run
+metadata, not a claim that a current archive exists and not a substitute for
+the pending archive SHA-256. Compared with parent `f2bb697`, the unpacked
+package grew by exactly 266 bytes on both platform shapes: `exec.js` +224,
+`exec.js.map` +96, `command_dispatch.d.ts` -30, `command_dispatch.js` -30, and
+`main.js` +6. The entry count and package membership did not change.
 
 The current command surface also includes `aether preview
 start|open|logs|status|stop` and `/preview`. It manages only an explicit argv or
@@ -248,9 +264,9 @@ catch a dropped feature, because it does not know what the notes promised.
 ### Current dry-run packaged file manifest
 
 The exact-head dry run reported 618 entries on GitHub-hosted Ubuntu, GitHub-hosted
-Windows, and local Windows checkouts. The hosted runners measured 3,675,887
-and 3,677,880 bytes unpacked; local default and LF checkouts measured 3,676,942
-and 3,675,887 respectively because byte totals can move with checkout line
+Windows, and local Windows checkouts. The hosted runners measured 3,678,782
+and 3,680,775 bytes unpacked; local default and LF checkouts measured 3,680,775
+and 3,678,782 respectively because byte totals can move with checkout line
 endings and toolchain metadata. Five files are at the package root, four
 generated public documents are under `docs/`, and everything else is under
 `dist/src/`. This is an inventory prediction, not a statement that a current
