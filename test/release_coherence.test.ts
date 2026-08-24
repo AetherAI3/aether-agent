@@ -131,13 +131,33 @@ test(
     // new unrecorded byte result fails closed until its evidence is adjudicated.
     assert.equal(headerEntries, packed.entryCount, "the packet header entry count does not match npm pack");
     assert.equal(manifestEntries, packed.entryCount, "the packet manifest entry count does not match npm pack");
-    const measurements = [...packet.matchAll(/\| Current (?:GitHub-hosted (?:Ubuntu|Windows)|local Windows [A-Za-z-]+) measurement \| ([\d,]+) unpacked bytes(?: \/ ([\d,]+) predicted packed bytes)? \|/g)];
-    assert.equal(measurements.length, 4, "the packet must retain both hosted-runner and both local exact-head measurements");
-    const observedUnpackedBytes = new Set(measurements.map((match) => Number.parseInt(match[1]!.replaceAll(",", ""), 10)));
-    assert.ok(
-      observedUnpackedBytes.has(packed.unpackedSize),
-      `npm pack produced an unrecorded exact-head unpacked size: ${packed.unpackedSize}`,
+    const measurements = new Map(
+      [...packet.matchAll(/\| Current (GitHub-hosted (?:Ubuntu|Windows)|local Windows [A-Za-z-]+) measurement \| ([\d,]+) unpacked bytes(?: \/ ([\d,]+) predicted packed bytes)? \|/g)]
+        .map((match) => [match[1]!, Number.parseInt(match[2]!.replaceAll(",", ""), 10)]),
     );
+    assert.deepEqual(
+      [...measurements.keys()].sort(),
+      [
+        "GitHub-hosted Ubuntu",
+        "GitHub-hosted Windows",
+        "local Windows default-checkout",
+        "local Windows LF-checkout",
+      ].sort(),
+      "the packet must retain both named hosted-runner and both local exact-head measurements",
+    );
+    const githubHost = process.platform === "win32" ? "GitHub-hosted Windows" : "GitHub-hosted Ubuntu";
+    if (process.env["GITHUB_ACTIONS"] === "true") {
+      assert.equal(
+        measurements.get(githubHost),
+        packed.unpackedSize,
+        `${githubHost} package bytes do not match that runner's exact-head npm pack report`,
+      );
+    } else {
+      assert.ok(
+        new Set(measurements.values()).has(packed.unpackedSize),
+        `npm pack produced an unrecorded local exact-head unpacked size: ${packed.unpackedSize}`,
+      );
+    }
 
     const historical = /### Historical candidate archive[\s\S]*?"packedFiles":575,"packedBytes":3022168,"workflows":3[\s\S]*?sha256:70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d/.exec(packet);
     assert.ok(historical, "the historical archive facts are not kept together under their own heading");

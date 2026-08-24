@@ -15,7 +15,7 @@ to npm are founder-owned and are listed at the end, unrun.
 | Historical archive | `aether-agents-0.3.0.tgz` — 739,977 bytes packed / 3,022,168 unpacked / 575 entries |
 | Historical archive sha256 | `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` |
 | Current exact-head dry run | 618 entries / 4 workflows |
-| Current GitHub-hosted Ubuntu measurement | 3,669,584 unpacked bytes |
+| Current GitHub-hosted Ubuntu measurement | 3,675,887 unpacked bytes |
 | Current GitHub-hosted Windows measurement | 3,677,880 unpacked bytes |
 | Current local Windows default-checkout measurement | 3,676,942 unpacked bytes / 833,661 predicted packed bytes |
 | Current local Windows LF-checkout measurement | 3,675,887 unpacked bytes / 833,535 predicted packed bytes |
@@ -140,7 +140,7 @@ at `fb96ee44b03f37a386954a32412728fa7e98a046`; they do not describe the current
 ### Current integration dry-run
 
 On the integration tree, `verify:production` exited 0 and reported 618 entries
-and 4 workflows. GitHub-hosted Ubuntu and Windows runners measured 3,669,584
+and 4 workflows. GitHub-hosted Ubuntu and Windows runners measured 3,675,887
 and 3,677,880 unpacked bytes respectively. The local Windows default checkout
 measured 3,676,942 unpacked / 833,661 predicted packed bytes; an LF checkout on
 that same toolchain measured 3,675,887 unpacked / 833,535 predicted packed
@@ -248,7 +248,7 @@ catch a dropped feature, because it does not know what the notes promised.
 ### Current dry-run packaged file manifest
 
 The exact-head dry run reported 618 entries on GitHub-hosted Ubuntu, GitHub-hosted
-Windows, and local Windows checkouts. The hosted runners measured 3,669,584
+Windows, and local Windows checkouts. The hosted runners measured 3,675,887
 and 3,677,880 bytes unpacked; local default and LF checkouts measured 3,676,942
 and 3,675,887 respectively because byte totals can move with checkout line
 endings and toolchain metadata. Five files are at the package root, four
