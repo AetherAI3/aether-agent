@@ -82,6 +82,24 @@ test("htmlToText strips script/style and collapses to readable text", () => {
   assert.doesNotMatch(text, /<[a-z]/i, "no raw tags remain");
 });
 
+test("htmlToText strips raw-text bodies with whitespace in closing tags", () => {
+  const html =
+    "<p>before</p><script data-purpose='test'>secretScript()</script   >" +
+    "<style media=screen>.secret-style { display: block }</style\n>" +
+    "<p>after</p>";
+  const text = htmlToText(html);
+  assert.match(text, /before/);
+  assert.match(text, /after/);
+  assert.doesNotMatch(text, /secretScript/);
+  assert.doesNotMatch(text, /secret-style/);
+});
+
+test("htmlToText fails closed for unterminated raw-text elements", () => {
+  assert.equal(htmlToText("<p>safe</p><script>"), "safe");
+  assert.equal(htmlToText("<p>safe</p><script>secretScript()"), "safe");
+  assert.equal(htmlToText("<p>safe</p><style>.secret-style {} </style"), "safe");
+});
+
 test("htmlToText caps to maxChars", () => {
   const html = "<p>" + "a".repeat(20000) + "</p>";
   const text = htmlToText(html, 8000);

@@ -209,11 +209,82 @@ function decodeEntities(s: string): string {
   return out;
 }
 
+function isTagNameBoundary(ch: string | undefined): boolean {
+  return ch === undefined || ch === ">" || ch === "/" || /\s/.test(ch);
+}
+
+function findTagEnd(html: string, start: number): number {
+  let quote: '"' | "'" | null = null;
+  for (let i = start; i < html.length; i += 1) {
+    const ch = html[i];
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === ">") {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Remove raw-text elements without relying on a closing-tag regex. HTML permits
+ * whitespace before the closing `>`, and an incomplete closing tag must not
+ * cause script or style source to be returned as readable model context.
+ */
+function stripRawTextElements(html: string, tagName: "script" | "style"): string {
+  const lower = html.toLowerCase();
+  const openPrefix = `<${tagName}`;
+  const closePrefix = `</${tagName}`;
+  let cursor = 0;
+  let searchFrom = 0;
+  let out = "";
+
+  while (searchFrom < html.length) {
+    const openStart = lower.indexOf(openPrefix, searchFrom);
+    if (openStart < 0) break;
+
+    const openNameEnd = openStart + openPrefix.length;
+    if (!isTagNameBoundary(lower[openNameEnd])) {
+      searchFrom = openNameEnd;
+      continue;
+    }
+
+    const openEnd = findTagEnd(html, openNameEnd);
+    out += html.slice(cursor, openStart);
+    if (openEnd < 0) return `${out} `;
+
+    let closeSearch = openEnd + 1;
+    let closeEnd = -1;
+    while (closeSearch < html.length) {
+      const closeStart = lower.indexOf(closePrefix, closeSearch);
+      if (closeStart < 0) return `${out} `;
+
+      const closeNameEnd = closeStart + closePrefix.length;
+      if (!isTagNameBoundary(lower[closeNameEnd])) {
+        closeSearch = closeNameEnd;
+        continue;
+      }
+
+      closeEnd = findTagEnd(html, closeNameEnd);
+      if (closeEnd < 0) return `${out} `;
+      break;
+    }
+    if (closeEnd < 0) return `${out} `;
+
+    out += " ";
+    cursor = closeEnd + 1;
+    searchFrom = cursor;
+  }
+
+  return out + html.slice(cursor);
+}
+
 /** Strip script/style + all tags, decode entities, collapse whitespace, cap. */
 export function htmlToText(html: string, maxChars: number = TEXT_CAP): string {
-  let s = html;
-  s = s.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ");
-  s = s.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ");
+  let s = stripRawTextElements(html, "script");
+  s = stripRawTextElements(s, "style");
   s = s.replace(/<!--[\s\S]*?-->/g, " ");
   // block-ish tags -> newline so structure survives readably
   s = s.replace(/<\/(p|div|li|tr|h[1-6]|br|section|article|header|footer)\s*>/gi, "\n");
