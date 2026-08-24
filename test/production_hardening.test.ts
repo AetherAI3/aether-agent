@@ -87,6 +87,24 @@ test("workflow policy rejects floating actions and unbounded jobs", () => {
   assert.match(validateWorkflowText("block.yml", blockScalar).join("\n"), /ignore-scripts/);
 });
 
+test("workflow policy rejects job-scoped write-all permissions", () => {
+  const workflow = `permissions:\n  contents: read\njobs:\n  test:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    permissions: write-all\n    steps:\n      - run: npm ci --ignore-scripts\n`;
+  assert.match(
+    validateWorkflowText("job-write-all.yml", workflow).join("\n"),
+    /write-all|permissions/i,
+    "a job must not be able to silently widen the workflow's read-only permissions",
+  );
+});
+
+test("workflow policy rejects indirect package publication", () => {
+  const workflow = `permissions:\n  contents: read\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - run: node scripts/publish-wrapper.js\n`;
+  assert.match(
+    validateWorkflowText("release.yml", workflow).join("\n"),
+    /publish|provenance|attestation/i,
+    "release policy must not be bypassed by hiding npm publish behind a wrapper",
+  );
+});
+
 test("publishing workflow must be event-gated, main-derived, and install-smoked", () => {
   const invalid = `on:\n  workflow_dispatch:\npermissions:\n  contents: read\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    environment: npm-production\n    permissions:\n      id-token: write\n      attestations: write\n    steps:\n      - run: npm publish package.tgz --provenance\n`;
   const errors = validateWorkflowText("release.yml", invalid).join("\n");

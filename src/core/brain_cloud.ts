@@ -314,12 +314,27 @@ export class CloudBrain implements Brain {
         });
         for await (const frame of decodeSse(stream)) {
           if (this.aborted) break;
+          if (frame.type === "notice" && frame.notice === "replay_truncated") {
+            failed = "cloud dev session replay was truncated; refusing to execute across a sequence gap";
+            break;
+          }
           // Duplicate delivery is safe by contract: a replayed frame keeps its
-          // seq, so anything at or below the high-water mark is skipped and a
-          // mutating tool_call can never execute twice.
-          if (typeof frame.seq === "number") {
-            if (frame.seq <= this.lastSeq) continue;
-            this.lastSeq = frame.seq;
+          // seq, so anything at or below the high-water mark is skipped. Every
+          // non-liveness frame must otherwise be the next positive safe integer;
+          // malformed or missing sequence data must never reach the host tool
+          // executor.
+          if (frame.type !== "open" && frame.type !== "ping") {
+            if (!Number.isSafeInteger(frame.seq) || (frame.seq as number) <= 0) {
+              failed = "cloud dev session returned a frame with an invalid sequence";
+              break;
+            }
+            const seq = frame.seq as number;
+            if (seq <= this.lastSeq) continue;
+            if (seq !== this.lastSeq + 1) {
+              failed = `cloud dev session sequence gap: expected ${this.lastSeq + 1}, received ${seq}`;
+              break;
+            }
+            this.lastSeq = seq;
             progressed = true;
             reconnects = 0;
           }

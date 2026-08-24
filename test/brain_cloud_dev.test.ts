@@ -166,6 +166,59 @@ test("dev session: a replayed frame (seq <= high-water mark) is skipped — a mu
   });
 });
 
+for (const scenario of [
+  {
+    name: "a replay_truncated notice followed by a sequence gap",
+    frames: [
+      frame({ type: "delta", seq: 1, text: "retained" }),
+      frame({ type: "notice", notice: "replay_truncated", oldest_seq: 4 }),
+      frame({ type: "tool_call", seq: 4, tool_call_id: "tc_gap", name: "write_file", args: { path: "a", content: "b" }, risk: "write" }),
+      frame({ type: "done", seq: 5, ok: true, uvt: 1, cents: 0 }),
+    ],
+  },
+  {
+    name: "a mutating tool_call with no sequence",
+    frames: [
+      frame({ type: "tool_call", tool_call_id: "tc_missing", name: "write_file", args: { path: "a", content: "b" }, risk: "write" }),
+      frame({ type: "done", seq: 1, ok: true, uvt: 1, cents: 0 }),
+    ],
+  },
+  {
+    name: "a mutating tool_call with a fractional sequence",
+    frames: [
+      frame({ type: "tool_call", seq: 0.5, tool_call_id: "tc_fractional", name: "write_file", args: { path: "a", content: "b" }, risk: "write" }),
+      frame({ type: "done", seq: 1, ok: true, uvt: 1, cents: 0 }),
+    ],
+  },
+  {
+    name: "a mutating tool_call after an unannounced sequence gap",
+    frames: [
+      frame({ type: "delta", seq: 1, text: "before gap" }),
+      frame({ type: "tool_call", seq: 3, tool_call_id: "tc_unannounced_gap", name: "write_file", args: { path: "a", content: "b" }, risk: "write" }),
+      frame({ type: "done", seq: 4, ok: true, uvt: 1, cents: 0 }),
+    ],
+  },
+] as const) {
+  test(`dev session fails closed before ${scenario.name}`, async () => {
+    const { fetchImpl } = devServer([[...scenario.frames]]);
+    await withFetch(fetchImpl, async () => {
+      const brain = new CloudBrain(new ApiClient("https://stub.test", tokens));
+      const out: BrainEvent[] = [];
+      for await (const ev of brain.run(TASK)) out.push(ev);
+
+      assert.deepEqual(
+        out.filter((event) => event.type === "tool_call"),
+        [],
+        "an untrusted sequence must never reach the host tool executor",
+      );
+      assert.ok(
+        out.some((event) => event.type === "error" || (event.type === "done" && !event.ok)),
+        "the sequence violation must make the run observably fail closed",
+      );
+    });
+  });
+}
+
 test("dev session: a dropped stream reconnects from last_seq and finishes", async () => {
   const { fetchImpl, calls } = devServer([
     [

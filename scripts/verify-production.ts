@@ -127,6 +127,9 @@ export function validateWorkflowText(name: string, text: string): string[] {
   const errors: string[] = [];
   if (/^\s*pull_request_target\s*:/m.test(text)) errors.push(`${name}: pull_request_target is forbidden`);
   if (!/^permissions:\s*$/m.test(text)) errors.push(`${name}: explicit workflow permissions are required`);
+  if (/^\s*permissions:\s*write-all\s*(?:#.*)?$/mi.test(text)) {
+    errors.push(`${name}: permissions write-all is forbidden at workflow and job scope`);
+  }
 
   const uses = [...text.matchAll(/^\s*(?:-\s*)?uses:\s+([^\s#]+)(?:\s+#.*)?$/gm)].map((match) => match[1]!);
   for (const action of uses) {
@@ -143,6 +146,14 @@ export function validateWorkflowText(name: string, text: string): string[] {
   for (const line of text.split(/\r?\n/)) {
     if (/\bnpm ci(?:\s|$)/.test(line) && !line.trimStart().startsWith("#") && !line.includes("--ignore-scripts")) {
       errors.push(`${name}: npm ci must use --ignore-scripts`);
+    }
+    const command = line.trimStart();
+    const localPublishWrapper = !command.startsWith("#") && (
+      /\bnpm\s+run\s+[^\s#]*publish(?:[-_.:]|\b)/i.test(command)
+      || /\b(?:node|npx|bash|sh|pwsh|powershell)\b[^#\n]*[/\\_.-]publish(?:[-_.]|\b)/i.test(command)
+    );
+    if (localPublishWrapper) {
+      errors.push(`${name}: indirect publish wrappers are forbidden; use an audited direct npm publish --provenance step`);
     }
   }
 

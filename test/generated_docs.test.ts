@@ -26,7 +26,8 @@ const unsignedSource = {
 } as const;
 const sourceContent = ({ generatedAt: _generatedAt, ...content }: { generatedAt: string; [key: string]: unknown }) => content;
 const source = { ...unsignedSource, digest: sha256(sourceContent(unsignedSource)) } as const;
-const CLOUD_1327_HEAD = "1c10f0f7616711b68afb45394fa64ab4ee56f7a0";
+const CLOUD_1327_HEAD = "ca90e65255e01567712ec6c6e3ac35b253b306de";
+const CLOUD_1327_TREE = "8bbe0751099a62d83bfd3a1e4eaa9dd85eef3901";
 const CLOUD_1327_DIGEST = "sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712";
 
 function fixtureRoot(): string {
@@ -119,7 +120,17 @@ test("checked-in Cloud #1327 projection remains compatible with the Agent consum
   const text = readFileSync(join(process.cwd(), "docs", "model-catalogue", "catalogue.source.json"), "utf8");
   const raw = JSON.parse(text) as { generatedAt: string };
   const catalogue = parseCatalogue(text, Date.parse(raw.generatedAt));
-  assert.equal(catalogue.digest, CLOUD_1327_DIGEST, `Cloud #1327 ${CLOUD_1327_HEAD} fixture digest drifted`);
+  const packet = readFileSync(join(process.cwd(), "docs", "releases", "OPERATOR-PACKET-v0.3.0.md"), "utf8");
+  const evidence = packet.match(
+    /Cloud catalogue compatibility \| PR #1327 exact head `([a-f0-9]{40})`; exact tree `([a-f0-9]{40})`; safe-field projection digest `(sha256:[a-f0-9]{64})`/,
+  );
+  assert.ok(evidence, "checked-in Cloud catalogue evidence must record the exact commit and tree identities");
+  assert.deepEqual(
+    { head: evidence[1], tree: evidence[2], digest: evidence[3] },
+    { head: CLOUD_1327_HEAD, tree: CLOUD_1327_TREE, digest: CLOUD_1327_DIGEST },
+    "Cloud catalogue evidence must bind the declared head to its exact tree and projection digest",
+  );
+  assert.equal(catalogue.digest, evidence[3], `Cloud #1327 ${CLOUD_1327_HEAD} fixture digest drifted`);
   assert.equal(catalogue.models.length, 51);
   const safeFields = ["availability", "id", "kind", "label", "modality", "provider", "tierMin"];
   for (const model of catalogue.models) assert.deepEqual(Object.keys(model).sort(), safeFields);
