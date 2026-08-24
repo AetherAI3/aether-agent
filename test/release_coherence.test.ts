@@ -103,7 +103,12 @@ test("the operator packet separates current dry-run evidence from the historical
   assert.ok(existsSync(path), `no docs/releases/OPERATOR-PACKET-v${VERSION}.md`);
   const packet = readFileSync(path, "utf8");
   assert.ok(packet.includes(`v${VERSION}`), "the operator packet does not name the proposed tag");
-  assert.match(packet, /\| Branch base \| `85a75645e8b94e8542bcf6ee0f384037a2915a5e` \(`origin\/main`, after #106\) \|/);
+  assert.match(packet, /\| Original PR branch base \| `85a75645e8b94e8542bcf6ee0f384037a2915a5e` \(`origin\/main`, after #106; historical\) \|/);
+  assert.match(packet, /\| Reconciled base\/current main \| `88b7498457afce482fa69363d908b0e8b3bd4ae9` \(`origin\/main`, after #111\) \|/);
+  assert.doesNotMatch(packet, /\| Branch base \|/);
+  assert.match(packet, /\| Candidate expected GitHub-hosted Ubuntu value \| 3,690,870 unpacked bytes — pending exact-head hosted confirmation \|/);
+  assert.match(packet, /\| Candidate expected GitHub-hosted Windows value \| 3,692,863 unpacked bytes — pending exact-head hosted confirmation \|/);
+  assert.doesNotMatch(packet, /\| Current GitHub-hosted (?:Ubuntu|Windows) measurement \|/);
   assert.match(packet, /\| Current archive \| \*\*PENDING — no exact-head archive has been produced\*\* \|/);
   assert.match(packet, /\| Current archive sha256 \| \*\*PENDING — record only after producing that archive\*\* \|/);
   assert.match(packet, /\| Historical archive \| `aether-agents-0\.3\.0\.tgz` — 739,977 bytes packed \/ 3,022,168 unpacked \/ 575 entries \|/);
@@ -121,31 +126,36 @@ test(
     assert.ok(header, "the operator packet has no parseable current dry-run summary");
     const headerEntries = Number.parseInt(header[1]!.replaceAll(",", ""), 10);
     assert.equal(Number.parseInt(header[2]!, 10), 4, "the current dry run records the wrong workflow count");
-    const manifest = /### Current dry-run packaged file manifest\s+The exact-head dry run reported ([\d,]+) entries on GitHub-hosted Ubuntu, GitHub-hosted\s+Windows, and local Windows checkouts\./.exec(packet);
+    const manifest = /### Current dry-run packaged file manifest\s+The exact-head candidate dry runs reported ([\d,]+) entries on clean Linux\/LF and\s+Windows\/default checkouts\./.exec(packet);
     assert.ok(manifest, "the operator packet has no parseable current dry-run manifest summary");
     const manifestEntries = Number.parseInt(manifest[1]!.replaceAll(",", ""), 10);
 
     // npm's packed and unpacked byte totals move with checkout line endings;
-    // the packet records each observed exact-head result instead of claiming
-    // cross-machine reproducibility. Entry membership remains portable, and a
-    // new unrecorded byte result fails closed until its evidence is adjudicated.
+    // the packet records each observed local exact-head result plus the values
+    // hosted runners are required to confirm. It does not claim the hosted run
+    // already happened. Entry membership remains portable, and a new
+    // unrecorded byte result fails closed until its evidence is adjudicated.
     assert.equal(headerEntries, packed.entryCount, "the packet header entry count does not match npm pack");
     assert.equal(manifestEntries, packed.entryCount, "the packet manifest entry count does not match npm pack");
     const measurements = new Map(
-      [...packet.matchAll(/\| Current (GitHub-hosted (?:Ubuntu|Windows)|local Windows [A-Za-z-]+) measurement \| ([\d,]+) unpacked bytes(?: \/ ([\d,]+) predicted packed bytes)? \|/g)]
+      [...packet.matchAll(/\| (Candidate expected GitHub-hosted (?:Ubuntu|Windows) value|Current local (?:Windows default-checkout|Linux\/LF checkout) measurement) \| ([\d,]+) unpacked bytes(?: \/ ([\d,]+) predicted packed bytes)?(?: — pending exact-head hosted confirmation)? \|/g)]
         .map((match) => [match[1]!, Number.parseInt(match[2]!.replaceAll(",", ""), 10)]),
     );
+    assert.match(packet, /\| Candidate expected GitHub-hosted Ubuntu value \| [\d,]+ unpacked bytes — pending exact-head hosted confirmation \|/);
+    assert.match(packet, /\| Candidate expected GitHub-hosted Windows value \| [\d,]+ unpacked bytes — pending exact-head hosted confirmation \|/);
     assert.deepEqual(
       [...measurements.keys()].sort(),
       [
-        "GitHub-hosted Ubuntu",
-        "GitHub-hosted Windows",
-        "local Windows default-checkout",
-        "local Windows LF-checkout",
+        "Candidate expected GitHub-hosted Ubuntu value",
+        "Candidate expected GitHub-hosted Windows value",
+        "Current local Windows default-checkout measurement",
+        "Current local Linux/LF checkout measurement",
       ].sort(),
-      "the packet must retain both named hosted-runner and both local exact-head measurements",
+      "the packet must retain both pending hosted expectations and both local exact-head measurements",
     );
-    const githubHost = process.platform === "win32" ? "GitHub-hosted Windows" : "GitHub-hosted Ubuntu";
+    const githubHost = process.platform === "win32"
+      ? "Candidate expected GitHub-hosted Windows value"
+      : "Candidate expected GitHub-hosted Ubuntu value";
     if (process.env["GITHUB_ACTIONS"] === "true") {
       assert.equal(
         measurements.get(githubHost),

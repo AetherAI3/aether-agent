@@ -9,16 +9,17 @@ to npm are founder-owned and are listed at the end, unrun.
 |---|---|
 | Package | `aether-agents` |
 | Proposed tag | `v0.3.0` |
-| Branch base | `85a75645e8b94e8542bcf6ee0f384037a2915a5e` (`origin/main`, after #106) |
+| Original PR branch base | `85a75645e8b94e8542bcf6ee0f384037a2915a5e` (`origin/main`, after #106; historical) |
+| Reconciled base/current main | `88b7498457afce482fa69363d908b0e8b3bd4ae9` (`origin/main`, after #111) |
 | Release commit | the merge commit of this integration PR into `main` — **re-run the candidate on it before tagging** (§6.6) |
 | Historical candidate | `fb96ee44b03f37a386954a32412728fa7e98a046` (PR-local evidence commit; historical only, not reachable from current `main`) |
 | Historical archive | `aether-agents-0.3.0.tgz` — 739,977 bytes packed / 3,022,168 unpacked / 575 entries |
 | Historical archive sha256 | `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` |
 | Current exact-head dry run | 618 entries / 4 workflows |
-| Current GitHub-hosted Ubuntu measurement | 3,690,870 unpacked bytes |
-| Current GitHub-hosted Windows measurement | 3,692,863 unpacked bytes |
+| Candidate expected GitHub-hosted Ubuntu value | 3,690,870 unpacked bytes — pending exact-head hosted confirmation |
+| Candidate expected GitHub-hosted Windows value | 3,692,863 unpacked bytes — pending exact-head hosted confirmation |
 | Current local Windows default-checkout measurement | 3,692,863 unpacked bytes / 836,958 predicted packed bytes |
-| Current local Windows LF-checkout measurement | 3,690,870 unpacked bytes / 836,647 predicted packed bytes |
+| Current local Linux/LF checkout measurement | 3,690,870 unpacked bytes / 836,647 predicted packed bytes |
 | Current archive | **PENDING — no exact-head archive has been produced** |
 | Current archive sha256 | **PENDING — record only after producing that archive** |
 | Cloud catalogue compatibility | PR #1327 exact head `ca90e65255e01567712ec6c6e3ac35b253b306de`; exact tree `8bbe0751099a62d83bfd3a1e4eaa9dd85eef3901`; safe-field projection digest `sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712` |
@@ -140,12 +141,13 @@ at `fb96ee44b03f37a386954a32412728fa7e98a046`; they do not describe the current
 ### Current integration dry-run
 
 On the integration tree, `verify:production` exited 0 and reported 618 entries
-and 4 workflows. The exact reconciled candidate records 3,690,870 unpacked
-bytes for GitHub-hosted Ubuntu and 3,692,863 for GitHub-hosted Windows; the
-fresh exact-head hosted run must confirm both values. The local Windows default
-checkout measured 3,692,863 unpacked / 836,958 predicted packed bytes; a clean
-LF checkout on that same Node 24.19.0/npm 11.17.0 toolchain measured 3,690,870
-unpacked / 836,647 predicted packed
+and 4 workflows. Fresh clean platform-shaped candidate checkouts measured
+3,690,870 unpacked bytes for Linux/LF and 3,692,863 for Windows/default. Those
+are the expected hosted-runner values, not claims that exact-head hosted jobs
+have already run; the fresh exact-head hosted run must confirm both. The local
+Windows default checkout measured 3,692,863 unpacked / 836,958 predicted packed
+bytes; the clean LF checkout on that same Node 24.19.0/npm 11.17.0 toolchain
+measured 3,690,870 unpacked / 836,647 predicted packed
 bytes. The membership is identical; byte totals are checkout/toolchain
 observations and are not claimed to be cross-machine reproducible. These were
 `npm pack --dry-run` inventories. They did not produce
@@ -264,11 +266,11 @@ catch a dropped feature, because it does not know what the notes promised.
 
 ### Current dry-run packaged file manifest
 
-The exact-head dry run reported 618 entries on GitHub-hosted Ubuntu, GitHub-hosted
-Windows, and local Windows checkouts. The reconciled candidate records
-3,690,870 and 3,692,863 bytes unpacked for the hosted platform shapes; local
-default and LF checkouts measured 3,692,863 and 3,690,870 respectively because
-byte totals can move with checkout line
+The exact-head candidate dry runs reported 618 entries on clean Linux/LF and
+Windows/default checkouts. Their 3,690,870 and 3,692,863 unpacked-byte results
+are recorded as the expected hosted platform values pending exact-head CI;
+local default and LF checkouts measured 3,692,863 and 3,690,870 respectively
+because byte totals can move with checkout line
 endings and toolchain metadata. Five files are at the package root, four
 generated public documents are under `docs/`, and everything else is under
 `dist/src/`. This is an inventory prediction, not a statement that a current
