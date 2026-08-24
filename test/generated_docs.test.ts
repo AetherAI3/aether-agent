@@ -26,6 +26,8 @@ const unsignedSource = {
 } as const;
 const sourceContent = ({ generatedAt: _generatedAt, ...content }: { generatedAt: string; [key: string]: unknown }) => content;
 const source = { ...unsignedSource, digest: sha256(sourceContent(unsignedSource)) } as const;
+const CLOUD_1327_HEAD = "1c10f0f7616711b68afb45394fa64ab4ee56f7a0";
+const CLOUD_1327_DIGEST = "sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712";
 
 function fixtureRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "aether-docgen-"));
@@ -111,6 +113,17 @@ test("Cloud content digests are stable across generatedAt and unsupported row fi
   assert.doesNotThrow(() => parseCatalogue(JSON.stringify(later), Date.parse(later.generatedAt)));
   const withHosting = { ...source, models: [{ ...source.models[0], hosting: "hosted" }] };
   assert.throws(() => parseCatalogue(JSON.stringify(withHosting), Date.parse(source.generatedAt)), /unsupported fields: hosting/);
+});
+
+test("checked-in Cloud #1327 projection remains compatible with the Agent consumer contract", () => {
+  const text = readFileSync(join(process.cwd(), "docs", "model-catalogue", "catalogue.source.json"), "utf8");
+  const raw = JSON.parse(text) as { generatedAt: string };
+  const catalogue = parseCatalogue(text, Date.parse(raw.generatedAt));
+  assert.equal(catalogue.digest, CLOUD_1327_DIGEST, `Cloud #1327 ${CLOUD_1327_HEAD} fixture digest drifted`);
+  assert.equal(catalogue.models.length, 51);
+  const safeFields = ["availability", "id", "kind", "label", "modality", "provider", "tierMin"];
+  for (const model of catalogue.models) assert.deepEqual(Object.keys(model).sort(), safeFields);
+  assert.equal(catalogue.models.find((model) => model.id === "aether-vision")?.availability, "unavailable");
 });
 
 test("future timestamps and hostile public strings are rejected without leaking their values", () => {

@@ -18,6 +18,7 @@ to npm are founder-owned and are listed at the end, unrun.
 | Current dry-run predicted packed size | 833,661 bytes (inventory estimate; no archive was created) |
 | Current archive | **PENDING — no exact-head archive has been produced** |
 | Current archive sha256 | **PENDING — record only after producing that archive** |
+| Cloud catalogue compatibility | PR #1327 exact head `1c10f0f7616711b68afb45394fa64ab4ee56f7a0`; safe-field projection digest `sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712` |
 
 ## 1. Semantic version decision
 
