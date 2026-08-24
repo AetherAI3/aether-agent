@@ -260,14 +260,14 @@ archive exists.
 |---|---:|
 | `COMMANDS.md`, `LICENSE`, `NOTICE.md`, `README.md`, `package.json` | 5 |
 | `docs/generated/**`, `docs/model-catalogue/**` | 4 |
-| `dist/src/core/**` | 324 |
+| `dist/src/core/**` | 327 |
 | `dist/src/ui/**` | 117 |
-| `dist/src/commands/**` | 129 |
+| `dist/src/commands/**` | 132 |
 | `dist/src/skills/**` (six built-in skills) | 18 |
 | `dist/src/generated/**` | 3 |
 | `dist/src/{index,main,types,version}.*` | 12 |
 
-By extension: 195 `.js`, 195 `.d.ts`, 195 `.js.map`, 14 `.json`, 11 `.md`, 1
+By extension: 197 `.js`, 197 `.d.ts`, 197 `.js.map`, 14 `.json`, 11 `.md`, 1
 `.html`, 1 extensionless. Source maps ship, as they did in 0.1.0; that is
 existing policy, unchanged by this release.
 

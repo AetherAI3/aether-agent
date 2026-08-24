@@ -159,6 +159,53 @@ test(
       );
     }
 
+    const paths = packed.files.map((file) => file.path.replaceAll("\\", "/"));
+    const count = (predicate: (path: string) => boolean): number => paths.filter(predicate).length;
+    const groups = [
+      ["`COMMANDS.md`, `LICENSE`, `NOTICE.md`, `README.md`, `package.json`", count((path) => !path.includes("/"))],
+      ["`docs/generated/**`, `docs/model-catalogue/**`", count((path) => path.startsWith("docs/"))],
+      ["`dist/src/core/**`", count((path) => path.startsWith("dist/src/core/"))],
+      ["`dist/src/ui/**`", count((path) => path.startsWith("dist/src/ui/"))],
+      ["`dist/src/commands/**`", count((path) => path.startsWith("dist/src/commands/"))],
+      ["`dist/src/skills/**` (six built-in skills)", count((path) => path.startsWith("dist/src/skills/"))],
+      ["`dist/src/generated/**`", count((path) => path.startsWith("dist/src/generated/"))],
+      [
+        "`dist/src/{index,main,types,version}.*`",
+        count((path) => /^dist\/src\/(?:index|main|types|version)\./.test(path)),
+      ],
+    ] as const;
+    assert.equal(
+      groups.reduce((total, [, entries]) => total + entries, 0),
+      packed.entryCount,
+      "the independently derived package groups do not cover the full npm manifest",
+    );
+    for (const [label, entries] of groups) {
+      assert.ok(
+        packet.includes(`| ${label} | ${entries} |`),
+        `the packet has a stale package group count for ${label}`,
+      );
+    }
+
+    const extensionCounts = {
+      js: count((path) => path.endsWith(".js") && !path.endsWith(".js.map")),
+      dts: count((path) => path.endsWith(".d.ts")),
+      map: count((path) => path.endsWith(".js.map")),
+      json: count((path) => path.endsWith(".json")),
+      md: count((path) => path.endsWith(".md")),
+      html: count((path) => path.endsWith(".html")),
+      extensionless: count((path) => !/\.[^/]+$/.test(path)),
+    };
+    const normalizedPacket = packet.replace(/\s+/g, " ");
+    assert.ok(
+      normalizedPacket.includes(
+        `By extension: ${extensionCounts.js} \`.js\`, ${extensionCounts.dts} \`.d.ts\`, `
+        + `${extensionCounts.map} \`.js.map\`, ${extensionCounts.json} \`.json\`, `
+        + `${extensionCounts.md} \`.md\`, ${extensionCounts.html} \`.html\`, `
+        + `${extensionCounts.extensionless} extensionless.`,
+      ),
+      "the packet has a stale extension manifest",
+    );
+
     const historical = /### Historical candidate archive[\s\S]*?"packedFiles":575,"packedBytes":3022168,"workflows":3[\s\S]*?sha256:70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d/.exec(packet);
     assert.ok(historical, "the historical archive facts are not kept together under their own heading");
   },
