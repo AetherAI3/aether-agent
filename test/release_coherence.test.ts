@@ -117,27 +117,26 @@ test(
   () => {
     const packet = read("docs", "releases", `OPERATOR-PACKET-v${VERSION}.md`);
     const packed = currentPackReport();
-    const header = /\| Current exact-head dry run \| ([\d,]+) entries \/ ([\d,]+) unpacked bytes \/ ([\d,]+) workflows \|/.exec(packet);
+    const header = /\| Current exact-head dry run \| ([\d,]+) entries \/ ([\d,]+) workflows \|/.exec(packet);
     assert.ok(header, "the operator packet has no parseable current dry-run summary");
     const headerEntries = Number.parseInt(header[1]!.replaceAll(",", ""), 10);
-    const headerBytes = Number.parseInt(header[2]!.replaceAll(",", ""), 10);
-    assert.equal(Number.parseInt(header[3]!, 10), 4, "the current dry run records the wrong workflow count");
-    const manifest = /### Current dry-run packaged file manifest\s+The exact-head dry run reported ([\d,]+) entries and ([\d,]+) bytes unpacked\./.exec(packet);
+    assert.equal(Number.parseInt(header[2]!, 10), 4, "the current dry run records the wrong workflow count");
+    const manifest = /### Current dry-run packaged file manifest\s+The exact-head dry run reported ([\d,]+) entries on GitHub-hosted Ubuntu, GitHub-hosted\s+Windows, and local Windows checkouts\./.exec(packet);
     assert.ok(manifest, "the operator packet has no parseable current dry-run manifest summary");
     const manifestEntries = Number.parseInt(manifest[1]!.replaceAll(",", ""), 10);
-    const manifestBytes = Number.parseInt(manifest[2]!.replaceAll(",", ""), 10);
 
     // npm's packed and unpacked byte totals move with checkout line endings;
-    // the packet explicitly records one machine's result, not cross-machine
-    // reproducibility. Entry membership is portable. The two byte claims in
-    // the packet must still agree with each other so an old manifest cannot
-    // survive beside a newly measured header.
+    // the packet records each observed exact-head result instead of claiming
+    // cross-machine reproducibility. Entry membership remains portable, and a
+    // new unrecorded byte result fails closed until its evidence is adjudicated.
     assert.equal(headerEntries, packed.entryCount, "the packet header entry count does not match npm pack");
     assert.equal(manifestEntries, packed.entryCount, "the packet manifest entry count does not match npm pack");
-    assert.equal(
-      manifestBytes,
-      headerBytes,
-      "the packet mixes current dry-run byte measurements from different release bases",
+    const measurements = [...packet.matchAll(/\| Current (?:GitHub-hosted runner|local Windows [A-Za-z-]+) measurement \| ([\d,]+) unpacked bytes(?: \/ ([\d,]+) predicted packed bytes)? \|/g)];
+    assert.equal(measurements.length, 3, "the packet must retain hosted-runner and both local exact-head measurements");
+    const observedUnpackedBytes = new Set(measurements.map((match) => Number.parseInt(match[1]!.replaceAll(",", ""), 10)));
+    assert.ok(
+      observedUnpackedBytes.has(packed.unpackedSize),
+      `npm pack produced an unrecorded exact-head unpacked size: ${packed.unpackedSize}`,
     );
 
     const historical = /### Historical candidate archive[\s\S]*?"packedFiles":575,"packedBytes":3022168,"workflows":3[\s\S]*?sha256:70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d/.exec(packet);
