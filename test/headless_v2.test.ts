@@ -369,6 +369,26 @@ test("v2 fails closed when verification mutates the workspace it claims to verif
   assert.equal((checkpoint["verification"] as Record<string, unknown>)["status"], "unattributable");
 });
 
+test("v2 labels an unconfigured host verifier as neither authoritative nor commit-bound", async () => {
+  const root = repository();
+  const directory = mkdtempSync(join(tmpdir(), "aether-headless-v2-checkpoints-"));
+  const lines: string[] = [];
+  const code = await runHeadlessExec(context(root), "inspect", {
+    permission: "deny", allowedTools: [], capabilityPacks: [], timeoutMs: 60_000,
+    brain: new FakeV2Brain(), driver: "selftest", protocol: HEADLESS_PROTOCOL_V2,
+    checkpointDirectory: directory, sessionId: "unverified-session",
+    writeLine: (line) => lines.push(line.trimEnd()),
+  });
+  assert.equal(code, 4);
+  assert.deepEqual(validateHeadlessFrames(lines, HEADLESS_PROTOCOL_V2), []);
+  const verification = lines.map((line) => JSON.parse(line) as Record<string, unknown>)
+    .find((frame) => frame["type"] === "verification");
+  assert.equal(verification?.["status"], "unverified");
+  assert.equal(verification?.["authoritative"], false);
+  assert.equal(verification?.["commit_bound"], false);
+  assert.equal(verification?.["output"], "[not configured]");
+});
+
 test("bundled selftest child forwards pause and resume with truthful acknowledgements", async () => {
   const brain = new BundledChildBrain({ mode: "selftest" });
   try {

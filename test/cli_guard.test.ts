@@ -96,6 +96,38 @@ test("auht is an adjacent-transposition typo and makes no hosted request", async
   }
 });
 
+test("a wrong-case command is guarded and makes no hosted request", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "aether-guard-"));
+  let hostedCalls = 0;
+  const server = createServer((_req, res) => {
+    hostedCalls++;
+    res.writeHead(500, { "content-type": "application/json" });
+    res.end('{"error":"the wrong-case guard should have stopped before this request"}');
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const { port } = server.address() as AddressInfo;
+    const r = await runCli(["Vault"], dir, {
+      AETHER_BASE_URL: `http://127.0.0.1:${port}`,
+      AETHER_BACKEND: "cloud",
+    });
+    if (r.exit === "SPAWN_BLOCKED") { t.skip("sandbox blocks child process spawning"); return; }
+    assert.equal(r.exit, 2);
+    assert.match(r.err, /unknown command: Vault/);
+    assert.match(r.err, /did you mean: aether vault\?/);
+    assert.match(r.err, /aether chat Vault/);
+    assert.equal(hostedCalls, 0, "a wrong-case command must be rejected before any hosted request");
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => err ? reject(err) : resolve()),
+    );
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a non-near-miss word flows to chat and fails with the network hint", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "aether-guard-"));
   try {

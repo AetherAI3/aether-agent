@@ -130,8 +130,8 @@ test("lookup is exact — aliases yes, near misses and case variants never", () 
   assert.equal(findDispatchedCommand(table, ""), undefined);
   // Case-sensitive on purpose: main.ts's switch is, so lowercasing here would
   // make a migrated command answer to SESSIONS while every command still in
-  // the switch does not — and a wrong-case token for those does not even reach
-  // the typo guard, it becomes a billed chat turn.
+  // the switch does not. The top-level guard catches the wrong-case token and
+  // names the canonical command without dispatching or entering chat.
   assert.equal(findDispatchedCommand(table, "SESSIONS"), undefined);
   assert.equal(findDispatchedCommand(table, "Sessions"), undefined);
 });

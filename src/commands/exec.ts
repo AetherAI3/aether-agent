@@ -520,7 +520,8 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
 
   let verification: VerifyOutcome;
   let verificationOutput = "[cancelled before verification]";
-  let verificationBound = false;
+  let verificationAuthoritative = false;
+  let verificationCommitBound = false;
   if (cancelled) {
     verification = { status: "error", remaining: 0, exitCode: authorityExpired ? EXEC_EXIT.authority : timedOut ? 124 : 130 };
     if (checkpoint) checkpoint.verification.status = "cancelled";
@@ -534,21 +535,23 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
       );
       const after = captureHeadlessWorkspace(cwd);
       verificationOutput = result.output;
-      verificationBound = sameWorkspace(before, after);
-      verification = verificationBound
+      verificationAuthoritative = true;
+      verificationCommitBound = sameWorkspace(before, after);
+      verification = verificationCommitBound
         ? verificationStatus(result, true)
         : { status: "error", remaining: 0, exitCode: result.exitCode || 1 };
       if (checkpoint) {
-        checkpoint.verification.status = verificationBound
+        checkpoint.verification.status = verificationCommitBound
           ? result.exitCode === 0 ? "ok" : "failed"
           : "unattributable";
         checkpoint.verification.exit_code = result.exitCode;
-        checkpoint.verification.head = verificationBound ? after.head : null;
-        checkpoint.verification.tree_digest = verificationBound ? after.tree_digest : null;
-        if (verificationBound) checkpoint.workspace = after;
+        checkpoint.verification.head = verificationCommitBound ? after.head : null;
+        checkpoint.verification.tree_digest = verificationCommitBound ? after.tree_digest : null;
+        if (verificationCommitBound) checkpoint.workspace = after;
         persistCheckpoint();
       }
     } catch (error) {
+      verificationAuthoritative = true;
       verification = { status: "error", remaining: 0, exitCode: 1 };
       verificationOutput = error instanceof Error ? error.message : String(error);
       if (checkpoint) {
@@ -563,11 +566,11 @@ export async function runHeadlessExec(ctx: AppContext, task: string, opts: ExecO
       : null;
     verification = verificationStatus(result, Boolean(opts.verifyCommand));
     verificationOutput = result?.output ?? "[not configured]";
-    verificationBound = !v2;
+    verificationAuthoritative = result !== null;
   }
   writer.emit("verification", {
     status: verification.status, exit_code: verification.exitCode,
-    authoritative: true, commit_bound: verificationBound, output: verificationOutput,
+    authoritative: verificationAuthoritative, commit_bound: verificationCommitBound, output: verificationOutput,
     ...(v2 && checkpoint ? { head: checkpoint.verification.head, tree_digest: checkpoint.verification.tree_digest } : {}),
   });
   let exitCode = protocolFailed ? EXEC_EXIT.protocol

@@ -293,16 +293,29 @@ test("undeclared tools and permission escalation are denied with receipts", asyn
 test("failed or absent authoritative verification can never exit zero", async () => {
   const root = mkdtempSync(join(tmpdir(), "aether-headless-"));
   const event: BrainEvent = { type: "done", ok: true, result: "claimed success", remaining: 0, reason: "" };
+  const failedLines: string[] = [];
   const failed = await runHeadlessExec(context(root), "task", {
     permission: "deny", allowedTools: [], capabilityPacks: [], timeoutMs: 5000,
-    verifyCommand: `${JSON.stringify(process.execPath)} -e "process.exit(7)"`, brain: new FakeBrain([event]), writeLine: () => {},
+    verifyCommand: `${JSON.stringify(process.execPath)} -e "process.exit(7)"`, brain: new FakeBrain([event]),
+    writeLine: (line) => failedLines.push(line.trimEnd()),
   });
+  const absentLines: string[] = [];
   const absent = await runHeadlessExec(context(root), "task", {
     permission: "deny", allowedTools: [], capabilityPacks: [], timeoutMs: 5000,
-    brain: new FakeBrain([event]), writeLine: () => {},
+    brain: new FakeBrain([event]), writeLine: (line) => absentLines.push(line.trimEnd()),
   });
   assert.equal(failed, 1);
   assert.equal(absent, 4);
+  const failedVerification = failedLines.map((line) => JSON.parse(line) as Record<string, unknown>)
+    .find((frame) => frame["type"] === "verification");
+  assert.equal(failedVerification?.["authoritative"], true);
+  assert.equal(failedVerification?.["commit_bound"], false, "v1 does not capture a repository binding");
+  const absentVerification = absentLines.map((line) => JSON.parse(line) as Record<string, unknown>)
+    .find((frame) => frame["type"] === "verification");
+  assert.equal(absentVerification?.["status"], "unverified");
+  assert.equal(absentVerification?.["authoritative"], false);
+  assert.equal(absentVerification?.["commit_bound"], false);
+  assert.equal(absentVerification?.["output"], "[not configured]");
 });
 
 function runControlMutation(root: string, input: string): { status: number | null; frames: Record<string, unknown>[] } {

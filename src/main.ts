@@ -247,7 +247,7 @@ export async function main(argv: string[]): Promise<number> {
       // bare command-shaped token a Damerau edit away from a real subcommand —
       // `aether auht` should not become a paid chat call about "auht". Multi-
       // word prompts and non-matching words flow to chat exactly as before.
-      if (rest.length === 0 && typeof cmd === "string" && /^[a-z][a-z-]*$/.test(cmd)) {
+      if (rest.length === 0 && typeof cmd === "string" && /^[A-Za-z][A-Za-z-]*$/.test(cmd)) {
         const near = suggestTopLevel(cmd);
         if (near) {
           process.stderr.write(

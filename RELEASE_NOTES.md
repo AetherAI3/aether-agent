@@ -53,7 +53,7 @@ either.
   and session-correlated pause, resume, steer, and cancellation acknowledgements. It retains
   sequence and correlation IDs, explicit permission decisions, bounded tool
   receipts, structured stdin controls, and exactly one terminal result. Network
-  agent shell, Git, and network tools are disabled; host-run verification is authoritative,
+  agent shell, Git, and network tools are disabled; configured host-run verification is authoritative,
   so a model claim can never turn a failing, absent, or workspace-mutating gate into exit 0.
   Cloud pause, resume, and steer are accepted only after the dev-session endpoint returns a
   valid acknowledgement; transport loss or malformed state fails closed. The packaged

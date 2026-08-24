@@ -161,10 +161,10 @@ export function commandFlags(command: DispatchedCommand, values: Record<string, 
  * job — and deliberately case-SENSITIVE, because the `switch` in main.ts is.
  *
  * Lowercasing here would make migrated commands answer to `DOCTOR` while every
- * command still in the switch does not, and a wrong-case token for those never
- * even reaches the typo guard (its pattern is lower-case only) — it falls
- * through to cmdChat and bills a turn. One casing rule for the whole CLI is
- * worth more than leniency for the commands that happen to have moved.
+ * command still in the switch does not. Wrong-case tokens stay non-commands and
+ * the top-level guard reports the canonical spelling before chat can bill a
+ * turn. One casing rule for the whole CLI is worth more than leniency for the
+ * commands that happen to have moved.
  */
 export function findDispatchedCommand(
   commands: readonly DispatchedCommand[],
