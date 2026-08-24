@@ -15,10 +15,10 @@ to npm are founder-owned and are listed at the end, unrun.
 | Historical archive | `aether-agents-0.3.0.tgz` — 739,977 bytes packed / 3,022,168 unpacked / 575 entries |
 | Historical archive sha256 | `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` |
 | Current exact-head dry run | 618 entries / 4 workflows |
-| Current GitHub-hosted Ubuntu measurement | 3,675,887 unpacked bytes |
-| Current GitHub-hosted Windows measurement | 3,677,880 unpacked bytes |
-| Current local Windows default-checkout measurement | 3,676,942 unpacked bytes / 833,661 predicted packed bytes |
-| Current local Windows LF-checkout measurement | 3,675,887 unpacked bytes / 833,535 predicted packed bytes |
+| Current GitHub-hosted Ubuntu measurement | 3,676,592 unpacked bytes |
+| Current GitHub-hosted Windows measurement | 3,678,585 unpacked bytes |
+| Current local Windows default-checkout measurement | 3,678,585 unpacked bytes / 834,165 predicted packed bytes |
+| Current local Windows LF-checkout measurement | 3,676,592 unpacked bytes / 833,838 predicted packed bytes |
 | Current archive | **PENDING — no exact-head archive has been produced** |
 | Current archive sha256 | **PENDING — record only after producing that archive** |
 | Cloud catalogue compatibility | PR #1327 exact head `1c10f0f7616711b68afb45394fa64ab4ee56f7a0`; safe-field projection digest `sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712` |
@@ -140,10 +140,10 @@ at `fb96ee44b03f37a386954a32412728fa7e98a046`; they do not describe the current
 ### Current integration dry-run
 
 On the integration tree, `verify:production` exited 0 and reported 618 entries
-and 4 workflows. GitHub-hosted Ubuntu and Windows runners measured 3,675,887
-and 3,677,880 unpacked bytes respectively. The local Windows default checkout
-measured 3,676,942 unpacked / 833,661 predicted packed bytes; an LF checkout on
-that same toolchain measured 3,675,887 unpacked / 833,535 predicted packed
+and 4 workflows. GitHub-hosted Ubuntu and Windows runners measured 3,676,592
+and 3,678,585 unpacked bytes respectively. The local Windows default checkout
+measured 3,678,585 unpacked / 834,165 predicted packed bytes; an LF checkout on
+that same toolchain measured 3,676,592 unpacked / 833,838 predicted packed
 bytes. The membership is identical; byte totals are checkout/toolchain
 observations and are not claimed to be cross-machine reproducible. These were
 `npm pack --dry-run` inventories. They did not produce

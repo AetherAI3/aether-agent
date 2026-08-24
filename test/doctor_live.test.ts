@@ -7,8 +7,13 @@ import type { AppContext } from "../src/core/context.js";
 import type { McpClient } from "../src/core/mcp.js";
 import { LocalMcpStore } from "../src/core/mcp_store.js";
 import type { RunResult, Runner } from "../src/core/worktree.js";
-import type { StreamFrame } from "../src/core/stream.js";
 import type { HealthCheck, HealthReport } from "../src/core/health.js";
+import {
+  CLOUD_DOCTOR_CONTRACT_COMMIT,
+  CLOUD_DOCTOR_PROBE_CONTENT,
+  cloudDoctorCreateRequest,
+  cloudDoctorEngineFrames,
+} from "./fixtures/cloud_doctor_engine.js";
 import {
   agentUnproven,
   branchFreshness,
@@ -49,7 +54,7 @@ function fakeRunner(table: Record<string, Partial<RunResult>>): Runner {
   };
 }
 
-function sseBytes(frames: readonly StreamFrame[]): AsyncIterable<Uint8Array> {
+function sseBytes(frames: readonly Record<string, unknown>[]): AsyncIterable<Uint8Array> {
   const encoder = new TextEncoder();
   return {
     async *[Symbol.asyncIterator]() {
@@ -62,8 +67,7 @@ function sseBytes(frames: readonly StreamFrame[]): AsyncIterable<Uint8Array> {
 
 interface FakeServer {
   created?: Record<string, unknown>;
-  frames?: StreamFrame[];
-  controlFails?: boolean;
+  frames?: Array<Record<string, unknown>>;
   closeFails?: boolean;
   catalog?: unknown;
 }
@@ -91,10 +95,7 @@ function fakeCtx(server: FakeServer = {}, cwd = process.cwd()): Recorded {
       },
       async postJson(path: string, body: unknown): Promise<unknown> {
         posts.push({ path, body });
-        if (path.endsWith("/control")) {
-          if (server.controlFails) throw new Error("control refused");
-          return { ok: true };
-        }
+        if (path.endsWith("/control")) throw new Error("doctor_control_unsupported");
         if (path.endsWith("/tool-results")) return { ok: true };
         return server.created ?? { session_id: "sess-0198f4c2" };
       },
@@ -112,12 +113,8 @@ function fakeCtx(server: FakeServer = {}, cwd = process.cwd()): Recorded {
   return { ctx, posts, deletes };
 }
 
-const HAPPY_FRAMES: StreamFrame[] = [
-  { type: "session", seq: 1, sessionId: "sess-0198f4c2", protocolVersion: 1 },
-  { type: "tool_call", seq: 2, toolCallId: "tc-1", name: "read_file", args: {} },
-  { type: "tool_result_ack", seq: 3, toolCallId: "tc-1" },
-  { type: "done", seq: 4, uvt: 0, cents: 0, ok: true },
-];
+const SESSION_ID = "sess-0198f4c2";
+const CLOUD_DOCTOR_FRAMES = cloudDoctorEngineFrames(SESSION_ID);
 
 function emptyStore(): LocalMcpStore {
   return new LocalMcpStore(join(mkdtempSync(join(tmpdir(), "aether-live-mcp-")), "mcp.json"));
@@ -159,10 +156,15 @@ test("only a tool that declares itself readOnly AND doctorSafe may be called", (
   assert.equal(pickDoctorSafeTool([{ name: "ping", readOnly: true, doctorSafe: true }]), "ping");
 });
 
-test("every agent probe reports not-checked when the loop cannot be proven", () => {
+test("an unproven doctor loop never treats unsupported coding controls as a check", () => {
   const checks = agentUnproven("server said no");
   assert.equal(checks.length, 5);
   for (const check of checks) {
+    if (check.id === "agent.session.control") {
+      assert.equal(check.verified.state, "na");
+      assert.match(String(check.verified.evidence), /purpose="doctor" deliberately rejects/);
+      continue;
+    }
     assert.equal(check.verified.state, "not-checked", `${check.id} must not claim a pass`);
     assert.equal(check.reachable.state, "not-checked");
     assert.match(String(check.verified.evidence), /server said no/);
@@ -342,9 +344,10 @@ test("a server that will not confirm a non-billable session is closed, not drive
   const report = await liveReport(ctx, liveOpts());
 
   assert.equal(report.mode, "live");
-  for (const id of ["agent.frames", "agent.session.control", "agent.tool.roundtrip"]) {
+  for (const id of ["agent.frames", "agent.tool.roundtrip"]) {
     assert.equal(find(report, id).verified.state, "not-checked");
   }
+  assert.equal(find(report, "agent.session.control").verified.state, "na");
   assert.match(
     String(find(report, "agent.session").verified.evidence),
     /non-billable doctor session/,
@@ -363,9 +366,7 @@ test("the create request carries the doctor purpose and a zero spend ceiling", a
   await liveReport(ctx, liveOpts());
   const create = posts.find((p) => p.path === "/agent/dev/sessions");
   assert.ok(create);
-  const body = create.body as Record<string, unknown>;
-  assert.equal(body["purpose"], "doctor");
-  assert.equal(body["max_uvt"], 0);
+  assert.deepEqual(create.body, cloudDoctorCreateRequest(RUN_ID));
 });
 
 test("the live catalogue probe accepts the production envelope and legacy array", async () => {
@@ -391,30 +392,40 @@ test("the live catalogue probe names an invalid envelope instead of inventing ze
   assert.doesNotMatch(String(result.verified.evidence), /0 catalog item/);
 });
 
-test("a confirmed doctor session proves frames, control and the tool round trip", async () => {
+test("the exact Cloud doctor engine fixture completes its sandboxed write/read probe", async () => {
   const { ctx, posts, deletes } = fakeCtx({
-    created: { session_id: "sess-0198f4c2", purpose: "doctor", billable: false },
-    frames: HAPPY_FRAMES,
+    created: { session_id: SESSION_ID, purpose: "doctor", billable: false },
+    frames: CLOUD_DOCTOR_FRAMES,
   });
   const report = await liveReport(ctx, liveOpts());
 
   assert.equal(find(report, "agent.session").verified.state, "yes");
   assert.equal(find(report, "agent.frames").verified.state, "yes");
-  assert.match(String(find(report, "agent.frames").verified.evidence), /seq 1\.\.4/);
-  assert.equal(find(report, "agent.session.control").verified.state, "yes");
+  assert.match(String(find(report, "agent.frames").verified.evidence), /seq 1\.\.8/);
+  assert.equal(find(report, "agent.session.control").verified.state, "na");
   assert.equal(find(report, "agent.tool.roundtrip").verified.state, "yes");
   assert.equal(find(report, "agent.session.close").verified.state, "yes");
   assert.equal(find(report, "spend.none").verified.state, "yes");
 
-  // pause, then resume, then steer — in that order, with the run nonce.
-  const control = posts
-    .filter((p) => p.path.endsWith("/control"))
-    .map((p) => p.body as Record<string, unknown>);
+  assert.equal(CLOUD_DOCTOR_CONTRACT_COMMIT, "66eb07505684af2482669aede9af5da5ccfac04e");
   assert.deepEqual(
-    control.map((c) => c["action"]),
-    ["pause", "resume", "steer"],
+    posts.filter((p) => p.path.endsWith("/tool-results")).map((p) => p.body),
+    [
+      {
+        tool_call_id: `doctor:write_file:${SESSION_ID.slice(0, 8)}`,
+        status: "ok",
+        exit_code: 0,
+        output: CLOUD_DOCTOR_PROBE_CONTENT,
+      },
+      {
+        tool_call_id: `doctor:read_file:${SESSION_ID.slice(0, 8)}`,
+        status: "ok",
+        exit_code: 0,
+        output: CLOUD_DOCTOR_PROBE_CONTENT,
+      },
+    ],
   );
-  assert.equal(control[2]?.["note"], `doctor-${RUN_ID}`);
+  assert.equal(posts.some((p) => p.path.endsWith("/control")), false);
   assert.equal(deletes.length, 1);
 });
 
@@ -446,22 +457,22 @@ test("an out-of-order frame fails the sequence proof", async () => {
   assert.equal(find(report, "agent.frames").severity, "error");
 });
 
-test("an unacknowledged control action fails the control proof", async () => {
+test("doctor purpose never issues pause, resume, or steer", async () => {
   const { ctx } = fakeCtx({
-    created: { session_id: "sess-0198f4c2", purpose: "doctor", billable: false },
-    frames: HAPPY_FRAMES,
-    controlFails: true,
+    created: { session_id: SESSION_ID, purpose: "doctor", billable: false },
+    frames: CLOUD_DOCTOR_FRAMES,
   });
   const report = await liveReport(ctx, liveOpts());
   const control = find(report, "agent.session.control");
-  assert.equal(control.verified.state, "no");
-  assert.match(String(control.verified.evidence), /pause unacked/);
+  assert.equal(control.verified.state, "na");
+  assert.equal(control.severity, "info");
+  assert.match(String(control.verified.evidence), /not part of the zero-spend probe/);
 });
 
 test("a session that will not close is an orphan, and says so", async () => {
   const { ctx } = fakeCtx({
     created: { session_id: "sess-0198f4c2", purpose: "doctor", billable: false },
-    frames: HAPPY_FRAMES,
+    frames: CLOUD_DOCTOR_FRAMES,
     closeFails: true,
   });
   const report = await liveReport(ctx, liveOpts());
@@ -504,7 +515,7 @@ test("a live run leaves no doctor sandbox behind", async () => {
   const before = readdirSync(tmpdir()).filter((n) => n.startsWith("aether-doctor-")).length;
   const { ctx } = fakeCtx({
     created: { session_id: "sess-0198f4c2", purpose: "doctor", billable: false },
-    frames: HAPPY_FRAMES,
+    frames: CLOUD_DOCTOR_FRAMES,
   });
   await liveReport(ctx, liveOpts());
   const after = readdirSync(tmpdir()).filter((n) => n.startsWith("aether-doctor-")).length;
@@ -514,7 +525,7 @@ test("a live run leaves no doctor sandbox behind", async () => {
 test("a live report never leaks the stored credential", async () => {
   const { ctx } = fakeCtx({
     created: { session_id: "sess-0198f4c2", purpose: "doctor", billable: false },
-    frames: HAPPY_FRAMES,
+    frames: CLOUD_DOCTOR_FRAMES,
   });
   const report = await liveReport(ctx, liveOpts());
   assert.equal(JSON.stringify(report).includes("SYNTHETIC-TOKEN"), false);
