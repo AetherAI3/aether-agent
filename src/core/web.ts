@@ -209,11 +209,206 @@ function decodeEntities(s: string): string {
   return out;
 }
 
+function isTagNameBoundary(ch: string | undefined): boolean {
+  return ch === undefined || ch === ">" || ch === "/"
+    || ch === "\t" || ch === "\n" || ch === "\f" || ch === "\r" || ch === " ";
+}
+
+function asciiLowerCode(code: number): number {
+  return code >= 65 && code <= 90 ? code + 32 : code;
+}
+
+function findAsciiCaseInsensitive(html: string, needle: string, start: number): number {
+  const lastStart = html.length - needle.length;
+  for (let i = start; i <= lastStart; i += 1) {
+    let matched = true;
+    for (let j = 0; j < needle.length; j += 1) {
+      if (asciiLowerCode(html.charCodeAt(i + j)) !== needle.charCodeAt(j)) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) return i;
+  }
+  return -1;
+}
+
+function findTagEnd(html: string, start: number): number {
+  let quote: '"' | "'" | null = null;
+  for (let i = start; i < html.length; i += 1) {
+    const ch = html[i];
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === ">") {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function matchesAsciiCaseInsensitiveAt(html: string, needle: string, start: number): boolean {
+  if (start < 0 || start + needle.length > html.length) return false;
+  for (let i = 0; i < needle.length; i += 1) {
+    if (asciiLowerCode(html.charCodeAt(start + i)) !== needle.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
+function hasTagNameAt(html: string, name: string, start: number): boolean {
+  return matchesAsciiCaseInsensitiveAt(html, name, start)
+    && isTagNameBoundary(html[start + name.length]);
+}
+
+function findRawTextCloseEnd(html: string, tagName: "script" | "style", start: number): number {
+  const closePrefix = `</${tagName}`;
+  let searchFrom = start;
+  while (searchFrom < html.length) {
+    const closeStart = findAsciiCaseInsensitive(html, closePrefix, searchFrom);
+    if (closeStart < 0) return -1;
+
+    const closeNameEnd = closeStart + closePrefix.length;
+    if (!isTagNameBoundary(html[closeNameEnd])) {
+      searchFrom = closeNameEnd;
+      continue;
+    }
+    return findTagEnd(html, closeNameEnd);
+  }
+  return -1;
+}
+
+/**
+ * Locate the end of a script element using the security-relevant WHATWG script
+ * data states. In double-escaped data, `</script>` exits double escaping; it is
+ * not the element's closing tag. EOF in any state fails closed via `-1`.
+ *
+ * The scan advances monotonically and performs only fixed-size comparisons, so
+ * adversarial near-matches remain linear in the input length.
+ */
+function findScriptCloseEnd(html: string, start: number): number {
+  type ScriptDataState =
+    | "data"
+    | "escaped"
+    | "escaped-dash"
+    | "escaped-dash-dash"
+    | "double-escaped"
+    | "double-escaped-dash"
+    | "double-escaped-dash-dash";
+  let state: ScriptDataState = "data";
+  let i = start;
+
+  while (i < html.length) {
+    if (state === "data" && html.startsWith("<!--", i)) {
+      // Script-data escape start consumes `<!--` and leaves the tokenizer in
+      // escaped-dash-dash, where a following `>` returns to script data.
+      state = "escaped-dash-dash";
+      i += 4;
+      continue;
+    }
+
+    if (state === "data") {
+      if (html[i] === "<" && html[i + 1] === "/" && hasTagNameAt(html, "script", i + 2)) {
+        return findTagEnd(html, i + 2 + "script".length);
+      }
+      i += 1;
+      continue;
+    }
+
+    const doubleEscaped: boolean = state === "double-escaped"
+      || state === "double-escaped-dash"
+      || state === "double-escaped-dash-dash";
+
+    if (html[i] === "<") {
+      if (html[i + 1] === "/" && hasTagNameAt(html, "script", i + 2)) {
+        const nameEnd = i + 2 + "script".length;
+        if (doubleEscaped) {
+          // WHATWG script-data double-escape-end: reconsume the boundary in
+          // escaped state; this token does not close the script element.
+          state = "escaped";
+          i = nameEnd;
+          continue;
+        }
+        return findTagEnd(html, nameEnd);
+      }
+
+      if (!doubleEscaped && hasTagNameAt(html, "script", i + 1)) {
+        state = "double-escaped";
+        i += 1 + "script".length;
+        continue;
+      }
+
+      state = doubleEscaped ? "double-escaped" : "escaped";
+      i += 1;
+      continue;
+    }
+
+    if (html[i] === "-") {
+      if (state === "escaped") state = "escaped-dash";
+      else if (state === "escaped-dash" || state === "escaped-dash-dash") state = "escaped-dash-dash";
+      else if (state === "double-escaped") state = "double-escaped-dash";
+      else state = "double-escaped-dash-dash";
+      i += 1;
+      continue;
+    }
+
+    if (html[i] === ">"
+      && (state === "escaped-dash-dash" || state === "double-escaped-dash-dash")) {
+      state = "data";
+      i += 1;
+      continue;
+    }
+
+    if (state === "escaped-dash" || state === "escaped-dash-dash") state = "escaped";
+    else if (state === "double-escaped-dash" || state === "double-escaped-dash-dash") state = "double-escaped";
+    i += 1;
+  }
+
+  return -1;
+}
+
+/**
+ * Remove raw-text elements without relying on a closing-tag regex. HTML permits
+ * whitespace before the closing `>`, and an incomplete closing tag must not
+ * cause script or style source to be returned as readable model context.
+ */
+function stripRawTextElements(html: string, tagName: "script" | "style"): string {
+  const openPrefix = `<${tagName}`;
+  let cursor = 0;
+  let searchFrom = 0;
+  let out = "";
+
+  while (searchFrom < html.length) {
+    const openStart = findAsciiCaseInsensitive(html, openPrefix, searchFrom);
+    if (openStart < 0) break;
+
+    const openNameEnd = openStart + openPrefix.length;
+    if (!isTagNameBoundary(html[openNameEnd])) {
+      searchFrom = openNameEnd;
+      continue;
+    }
+
+    const openEnd = findTagEnd(html, openNameEnd);
+    out += html.slice(cursor, openStart);
+    if (openEnd < 0) return `${out} `;
+
+    const closeEnd = tagName === "script"
+      ? findScriptCloseEnd(html, openEnd + 1)
+      : findRawTextCloseEnd(html, tagName, openEnd + 1);
+    if (closeEnd < 0) return `${out} `;
+
+    out += " ";
+    cursor = closeEnd + 1;
+    searchFrom = cursor;
+  }
+
+  return out + html.slice(cursor);
+}
+
 /** Strip script/style + all tags, decode entities, collapse whitespace, cap. */
 export function htmlToText(html: string, maxChars: number = TEXT_CAP): string {
-  let s = html;
-  s = s.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ");
-  s = s.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ");
+  let s = stripRawTextElements(html, "script");
+  s = stripRawTextElements(s, "style");
   s = s.replace(/<!--[\s\S]*?-->/g, " ");
   // block-ish tags -> newline so structure survives readably
   s = s.replace(/<\/(p|div|li|tr|h[1-6]|br|section|article|header|footer)\s*>/gi, "\n");
