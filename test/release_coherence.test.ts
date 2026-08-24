@@ -131,8 +131,8 @@ test(
     // new unrecorded byte result fails closed until its evidence is adjudicated.
     assert.equal(headerEntries, packed.entryCount, "the packet header entry count does not match npm pack");
     assert.equal(manifestEntries, packed.entryCount, "the packet manifest entry count does not match npm pack");
-    const measurements = [...packet.matchAll(/\| Current (?:GitHub-hosted runner|local Windows [A-Za-z-]+) measurement \| ([\d,]+) unpacked bytes(?: \/ ([\d,]+) predicted packed bytes)? \|/g)];
-    assert.equal(measurements.length, 3, "the packet must retain hosted-runner and both local exact-head measurements");
+    const measurements = [...packet.matchAll(/\| Current (?:GitHub-hosted (?:Ubuntu|Windows)|local Windows [A-Za-z-]+) measurement \| ([\d,]+) unpacked bytes(?: \/ ([\d,]+) predicted packed bytes)? \|/g)];
+    assert.equal(measurements.length, 4, "the packet must retain both hosted-runner and both local exact-head measurements");
     const observedUnpackedBytes = new Set(measurements.map((match) => Number.parseInt(match[1]!.replaceAll(",", ""), 10)));
     assert.ok(
       observedUnpackedBytes.has(packed.unpackedSize),
