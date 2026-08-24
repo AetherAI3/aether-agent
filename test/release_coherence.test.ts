@@ -44,6 +44,92 @@ function currentPackReport(): ReturnType<typeof createPackReport> {
   return cachedPackReport;
 }
 
+type PacketRows = Map<string, string[]>;
+
+const ORIGINAL_BASE_LABEL = "Original PR branch base";
+const ORIGINAL_BASE_VALUE = "`85a75645e8b94e8542bcf6ee0f384037a2915a5e` (`origin/main`, after #106; historical)";
+const RECONCILED_BASE_LABEL = "Reconciled base/current main";
+const RECONCILED_BASE_VALUE = "`88b7498457afce482fa69363d908b0e8b3bd4ae9` (`origin/main`, after #111)";
+const HOSTED_UBUNTU_LABEL = "Candidate expected GitHub-hosted Ubuntu value";
+const HOSTED_WINDOWS_LABEL = "Candidate expected GitHub-hosted Windows value";
+const LOCAL_WINDOWS_LABEL = "Current local Windows default-checkout measurement";
+const LOCAL_LINUX_LABEL = "Current local Linux/LF checkout measurement";
+const EXPECTED_UBUNTU_UNPACKED = 3_690_870;
+const EXPECTED_WINDOWS_UNPACKED = 3_692_863;
+const EXPECTED_LINUX_PACKED = 836_647;
+const EXPECTED_WINDOWS_PACKED = 836_958;
+
+function parsePacketRows(packet: string): PacketRows {
+  const rows: PacketRows = new Map();
+  for (const line of packet.split(/\r?\n/)) {
+    const match = /^\| ([^|]+?) \| ([^|]+?) \|$/.exec(line);
+    if (!match) continue;
+    const label = match[1]!;
+    const values = rows.get(label) ?? [];
+    values.push(match[2]!);
+    rows.set(label, values);
+  }
+  return rows;
+}
+
+function onlyPacketRow(rows: PacketRows, label: string): string {
+  const values = rows.get(label) ?? [];
+  assert.equal(values.length, 1, `the operator packet must contain exactly one ${label} row`);
+  return values[0]!;
+}
+
+function assertPacketProvenance(packet: string): PacketRows {
+  const rows = parsePacketRows(packet);
+  const baseLabels = [...rows.keys()].filter((label) => /base/i.test(label)).sort();
+  assert.deepEqual(
+    baseLabels,
+    [ORIGINAL_BASE_LABEL, RECONCILED_BASE_LABEL].sort(),
+    "the operator packet must contain only the historical and reconciled base rows",
+  );
+  assert.equal(onlyPacketRow(rows, ORIGINAL_BASE_LABEL), ORIGINAL_BASE_VALUE);
+  assert.equal(onlyPacketRow(rows, RECONCILED_BASE_LABEL), RECONCILED_BASE_VALUE);
+
+  const measurementLabels = [...rows.keys()]
+    .filter((label) => /GitHub-hosted/.test(label) || /^Current local .* measurement$/.test(label))
+    .sort();
+  assert.deepEqual(
+    measurementLabels,
+    [HOSTED_UBUNTU_LABEL, HOSTED_WINDOWS_LABEL, LOCAL_WINDOWS_LABEL, LOCAL_LINUX_LABEL].sort(),
+    "the operator packet must contain exactly two pending hosted expectations and two local measurements",
+  );
+  assert.equal(
+    onlyPacketRow(rows, HOSTED_UBUNTU_LABEL),
+    "3,690,870 unpacked bytes — pending exact-head hosted confirmation",
+  );
+  assert.equal(
+    onlyPacketRow(rows, HOSTED_WINDOWS_LABEL),
+    "3,692,863 unpacked bytes — pending exact-head hosted confirmation",
+  );
+  assert.equal(
+    onlyPacketRow(rows, LOCAL_WINDOWS_LABEL),
+    "3,692,863 unpacked bytes / 836,958 predicted packed bytes",
+  );
+  assert.equal(
+    onlyPacketRow(rows, LOCAL_LINUX_LABEL),
+    "3,690,870 unpacked bytes / 836,647 predicted packed bytes",
+  );
+
+  const normalized = packet.replace(/\s+/g, " ");
+  assert.ok(
+    normalized.includes(
+      "Those are the expected hosted-runner values, not claims that exact-head hosted jobs have already run; the fresh exact-head hosted run must confirm both.",
+    ),
+    "the operator packet must keep candidate host values explicitly pending fresh hosted confirmation",
+  );
+  assert.ok(
+    normalized.includes(
+      "Their 3,690,870 and 3,692,863 unpacked-byte results are recorded as the expected hosted platform values pending exact-head CI;",
+    ),
+    "the packaged-manifest prose must keep hosted values pending exact-head CI",
+  );
+  return rows;
+}
+
 // ── Gate A: one release, named consistently ─────────────────────────────────
 
 test("the lockfile names the same version as the manifest, in both places", () => {
@@ -103,12 +189,7 @@ test("the operator packet separates current dry-run evidence from the historical
   assert.ok(existsSync(path), `no docs/releases/OPERATOR-PACKET-v${VERSION}.md`);
   const packet = readFileSync(path, "utf8");
   assert.ok(packet.includes(`v${VERSION}`), "the operator packet does not name the proposed tag");
-  assert.match(packet, /\| Original PR branch base \| `85a75645e8b94e8542bcf6ee0f384037a2915a5e` \(`origin\/main`, after #106; historical\) \|/);
-  assert.match(packet, /\| Reconciled base\/current main \| `88b7498457afce482fa69363d908b0e8b3bd4ae9` \(`origin\/main`, after #111\) \|/);
-  assert.doesNotMatch(packet, /\| Branch base \|/);
-  assert.match(packet, /\| Candidate expected GitHub-hosted Ubuntu value \| 3,690,870 unpacked bytes — pending exact-head hosted confirmation \|/);
-  assert.match(packet, /\| Candidate expected GitHub-hosted Windows value \| 3,692,863 unpacked bytes — pending exact-head hosted confirmation \|/);
-  assert.doesNotMatch(packet, /\| Current GitHub-hosted (?:Ubuntu|Windows) measurement \|/);
+  assertPacketProvenance(packet);
   assert.match(packet, /\| Current archive \| \*\*PENDING — no exact-head archive has been produced\*\* \|/);
   assert.match(packet, /\| Current archive sha256 \| \*\*PENDING — record only after producing that archive\*\* \|/);
   assert.match(packet, /\| Historical archive \| `aether-agents-0\.3\.0\.tgz` — 739,977 bytes packed \/ 3,022,168 unpacked \/ 575 entries \|/);
@@ -116,11 +197,52 @@ test("the operator packet separates current dry-run evidence from the historical
   assert.doesNotMatch(packet, /fb96ee44[^\n]*(?:ancestor of #96|ancestor of current `main`)/);
 });
 
+test("the operator packet fails closed on contradictory release-evidence mutations", () => {
+  const packet = read("docs", "releases", `OPERATOR-PACKET-v${VERSION}.md`);
+  const mutations = [
+    [
+      "duplicate reconciled base",
+      packet.replace(
+        `| ${RECONCILED_BASE_LABEL} | ${RECONCILED_BASE_VALUE} |`,
+        `| ${RECONCILED_BASE_LABEL} | \`deadbeef\` (contradictory) |\n| ${RECONCILED_BASE_LABEL} | ${RECONCILED_BASE_VALUE} |`,
+      ),
+    ],
+    [
+      "duplicate hosted expectation",
+      packet.replace(
+        `| ${HOSTED_UBUNTU_LABEL} | 3,690,870 unpacked bytes — pending exact-head hosted confirmation |`,
+        `| ${HOSTED_UBUNTU_LABEL} | 1 unpacked byte — pending exact-head hosted confirmation |\n| ${HOSTED_UBUNTU_LABEL} | 3,690,870 unpacked bytes — pending exact-head hosted confirmation |`,
+      ),
+    ],
+    [
+      "stale local packed size",
+      packet.replace("3,690,870 unpacked bytes / 836,647 predicted packed bytes", "3,690,870 unpacked bytes / 836,646 predicted packed bytes"),
+    ],
+    [
+      "stale local unpacked size",
+      packet.replace("3,690,870 unpacked bytes / 836,647 predicted packed bytes", "3,690,869 unpacked bytes / 836,647 predicted packed bytes"),
+    ],
+    [
+      "premature hosted-completion prose",
+      packet.replace(
+        /Those\r?\nare the expected hosted-runner values, not claims that exact-head hosted jobs\r?\nhave already run; the fresh exact-head hosted run must confirm both\./,
+        "Those\nare completed exact-head GitHub-hosted measurements.",
+      ),
+    ],
+  ] as const;
+
+  for (const [name, mutant] of mutations) {
+    assert.notEqual(mutant, packet, `${name} mutation did not alter the packet fixture`);
+    assert.throws(() => assertPacketProvenance(mutant), name);
+  }
+});
+
 test(
   "the operator packet's current manifest agrees with npm pack without claiming cross-machine byte identity",
   { timeout: 120_000 },
   () => {
     const packet = read("docs", "releases", `OPERATOR-PACKET-v${VERSION}.md`);
+    const rows = assertPacketProvenance(packet);
     const packed = currentPackReport();
     const header = /\| Current exact-head dry run \| ([\d,]+) entries \/ ([\d,]+) workflows \|/.exec(packet);
     assert.ok(header, "the operator packet has no parseable current dry-run summary");
@@ -137,36 +259,24 @@ test(
     // unrecorded byte result fails closed until its evidence is adjudicated.
     assert.equal(headerEntries, packed.entryCount, "the packet header entry count does not match npm pack");
     assert.equal(manifestEntries, packed.entryCount, "the packet manifest entry count does not match npm pack");
-    const measurements = new Map(
-      [...packet.matchAll(/\| (Candidate expected GitHub-hosted (?:Ubuntu|Windows) value|Current local (?:Windows default-checkout|Linux\/LF checkout) measurement) \| ([\d,]+) unpacked bytes(?: \/ ([\d,]+) predicted packed bytes)?(?: — pending exact-head hosted confirmation)? \|/g)]
-        .map((match) => [match[1]!, Number.parseInt(match[2]!.replaceAll(",", ""), 10)]),
-    );
-    assert.match(packet, /\| Candidate expected GitHub-hosted Ubuntu value \| [\d,]+ unpacked bytes — pending exact-head hosted confirmation \|/);
-    assert.match(packet, /\| Candidate expected GitHub-hosted Windows value \| [\d,]+ unpacked bytes — pending exact-head hosted confirmation \|/);
-    assert.deepEqual(
-      [...measurements.keys()].sort(),
-      [
-        "Candidate expected GitHub-hosted Ubuntu value",
-        "Candidate expected GitHub-hosted Windows value",
-        "Current local Windows default-checkout measurement",
-        "Current local Linux/LF checkout measurement",
-      ].sort(),
-      "the packet must retain both pending hosted expectations and both local exact-head measurements",
-    );
-    const githubHost = process.platform === "win32"
-      ? "Candidate expected GitHub-hosted Windows value"
-      : "Candidate expected GitHub-hosted Ubuntu value";
+    const githubHost = process.platform === "win32" ? HOSTED_WINDOWS_LABEL : HOSTED_UBUNTU_LABEL;
+    const expectedHostedUnpacked = process.platform === "win32"
+      ? EXPECTED_WINDOWS_UNPACKED
+      : EXPECTED_UBUNTU_UNPACKED;
+    assert.ok(onlyPacketRow(rows, githubHost).includes(expectedHostedUnpacked.toLocaleString("en-US")));
     if (process.env["GITHUB_ACTIONS"] === "true") {
       assert.equal(
-        measurements.get(githubHost),
+        expectedHostedUnpacked,
         packed.unpackedSize,
         `${githubHost} package bytes do not match that runner's exact-head npm pack report`,
       );
     } else {
-      assert.ok(
-        new Set(measurements.values()).has(packed.unpackedSize),
-        `npm pack produced an unrecorded local exact-head unpacked size: ${packed.unpackedSize}`,
-      );
+      const expectedLocalUnpacked = process.platform === "win32"
+        ? EXPECTED_WINDOWS_UNPACKED
+        : EXPECTED_UBUNTU_UNPACKED;
+      const expectedLocalPacked = process.platform === "win32" ? EXPECTED_WINDOWS_PACKED : EXPECTED_LINUX_PACKED;
+      assert.equal(packed.unpackedSize, expectedLocalUnpacked, "the named local unpacked-byte evidence is stale");
+      assert.equal(packed.size, expectedLocalPacked, "the named local packed-byte evidence is stale");
     }
 
     const paths = packed.files.map((file) => file.path.replaceAll("\\", "/"));
