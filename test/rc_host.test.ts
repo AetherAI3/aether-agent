@@ -265,16 +265,28 @@ test("/rc off revokes at the broker, clears durable state, and does not end the 
   assert.equal(host.publish("done", { status: "passed" }), false);
 });
 
-test("/rc off with the broker down still tears down locally and says so honestly", async () => {
+test("/rc off with the broker down retains a retryable revocation tombstone", async () => {
   const broker = new MockBroker();
   const statePath = tempStatePath();
   const host = client(broker, statePath);
   await host.start();
   broker.networkDown = true;
   const status = await host.off();
-  assert.equal(status.phase, "off");
+  assert.equal(status.phase, "failed");
+  assert.equal(existsSync(statePath), true, "the session handle must survive for a revoke retry");
+  assert.match(status.detail ?? "", /revocation is unconfirmed/);
+  assert.equal(host.publish("done", { status: "passed" }), false, "the local relay stays stopped");
+
+  // A fresh process must not accidentally resume a session the user asked to
+  // revoke. It can still retry `/rc off` once the broker recovers.
+  const fresh = client(broker, statePath);
+  const refusedResume = await fresh.start();
+  assert.equal(refusedResume.phase, "failed");
+  assert.match(refusedResume.detail ?? "", /retry `\/rc off`/);
+  broker.networkDown = false;
+  const retried = await fresh.off();
+  assert.equal(retried.phase, "off");
   assert.equal(existsSync(statePath), false);
-  assert.match(status.detail ?? "", /broker unreachable/);
 });
 
 test("reconnect backoff: 1 s doubling to the 60 s cap, jitter within ±25 %", () => {

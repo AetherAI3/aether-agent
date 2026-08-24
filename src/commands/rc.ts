@@ -144,10 +144,17 @@ export async function cmdRc(ctx: AppContext, argv: string[], options: RcOptions 
     }
     const host = getRemoteHost() ?? options.host ?? buildHost(ctx);
     const status = await host.off();
-    setRemoteHost(null);
     renderStatus(status, out);
-    out.write("Remote access is revoked. The local session is unaffected.\n");
-    return RC_EXIT.ok;
+    if (status.phase === "off") {
+      setRemoteHost(null);
+      out.write("Remote access is revoked. The local session is unaffected.\n");
+      return RC_EXIT.ok;
+    }
+    // Keep the stopped host reachable so the same process can retry. Its
+    // durable tombstone also survives process exit.
+    setRemoteHost(host);
+    err.write("Remote relay is stopped, but broker revocation is not confirmed. Retry: /rc off\n");
+    return RC_EXIT.failed;
   }
 
   // start — everything else is an optional session name.

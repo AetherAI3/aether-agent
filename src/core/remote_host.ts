@@ -116,6 +116,9 @@ interface RcHostState {
   redemptionUrl?: string;
   expiresAt?: string;
   hostSecret?: string;
+  /** `/rc off` was requested but the broker has not acknowledged revocation.
+   *  Keep the session handle so a later `/rc off` can retry; never resume it. */
+  revokePending?: boolean;
   lastAckedSeq: number;
   outbox: StoredRcEvent[];
 }
@@ -173,6 +176,12 @@ export class RemoteHostClient {
     this.stopped = false;
     const resumed = this.loadState();
     if (resumed) {
+      if (resumed.revokePending) {
+        this.state = resumed;
+        this.stopped = true;
+        this.fail("remote revocation is still unconfirmed; retry `/rc off` when the broker is reachable");
+        return this.status();
+      }
       const attached = await this.attach(resumed);
       if (attached === "active" || attached === "failed") return this.status();
       // Session gone (expired/revoked server-side): fall through to register.
@@ -358,11 +367,18 @@ export class RemoteHostClient {
     this.stopTimers();
     this.stopped = true;
     if (sessionId) {
+      // Durable intent first: if the network request fails, retain the exact
+      // server-side handle needed to retry. A later start refuses to re-attach
+      // while this tombstone exists.
+      this.state!.revokePending = true;
+      this.persist();
       try {
         await this.options.transport.postJson(rcRevokePath(sessionId), {});
         this.detail = "remote access revoked";
       } catch (error) {
-        this.detail = `revoke sent locally; broker unreachable (${describe(error)}) — grants expire server-side per TTL`;
+        this.phase = "failed";
+        this.detail = `local relay stopped, but broker revocation is unconfirmed (${describe(error)}); retry \`/rc off\``;
+        return this.status();
       }
     } else {
       this.detail = "remote control was not active";

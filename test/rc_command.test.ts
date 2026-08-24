@@ -113,6 +113,29 @@ test("rc off revokes and the command (the local session's process) carries on", 
   assert.match(statusOut.text(), /off/);
 });
 
+test("rc off does not claim revocation when the broker did not acknowledge it", async () => {
+  setRemoteHost(null);
+  const statePath = join(mkdtempSync(join(tmpdir(), "aether-rc-cmd-")), "state.json");
+  const failing: RcTransport = {
+    async postJson<T>(path: string): Promise<T> {
+      if (path === "/remote/sessions") {
+        return { session_id: "rs_pending_revoke" } as T;
+      }
+      throw new Error("offline");
+    },
+  };
+  const h = new RemoteHostClient({ transport: failing, statePath, projectRoot: "C:\\proj", env: {} });
+  await h.start();
+  setRemoteHost(h);
+  const out = sink();
+  const err = sink();
+  const code = await cmdRc(context("tok"), ["off"], { out: out.stream, err: err.stream });
+  assert.equal(code, RC_EXIT.failed);
+  assert.doesNotMatch(out.text(), /Remote access is revoked/);
+  assert.match(err.text(), /revocation is not confirmed/);
+  setRemoteHost(null);
+});
+
 test("usage errors exit 2 and state paths are per-project and stable", async () => {
   const err = sink();
   const code = await cmdRc(context("tok"), ["status", "extra"], { out: err.stream, err: err.stream });
