@@ -4,7 +4,7 @@
   "source": {
     "kind": "cloud-public-projection",
     "version": "model-catalogue-v1",
-    "digest": "sha256:2bd01b255f3a7a5ff5f6c3d098dd6d3483b678359ab377c2c5f5b31faddabc9d"
+    "digest": "sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712"
   },
   "availabilitySemantics": "listed-not-entitled",
   "offlineFallback": true,
@@ -17,8 +17,7 @@
       "kind": "orchestrator",
       "tierMin": "pro",
       "modality": "text",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "aether-neo-5.1t",
@@ -27,7 +26,6 @@
       "kind": "orchestrator",
       "tierMin": "solo",
       "modality": "text",
-      "hosting": "hosted",
       "availability": "available"
     },
     {
@@ -36,9 +34,8 @@
       "provider": "aether",
       "kind": "orchestrator",
       "tierMin": "pro",
-      "modality": "text",
-      "hosting": "hosted",
-      "availability": "available"
+      "modality": "multimodal",
+      "availability": "unavailable"
     },
     {
       "id": "dsv4_flash",
@@ -47,7 +44,6 @@
       "kind": "model",
       "tierMin": "free",
       "modality": "text",
-      "hosting": "hosted",
       "availability": "available"
     },
     {
@@ -57,7 +53,6 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "text",
-      "hosting": "hosted",
       "availability": "available"
     },
     {
@@ -67,8 +62,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "text",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "gemma4_26b_moe",
@@ -77,7 +71,6 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "text",
-      "hosting": "hosted",
       "availability": "unavailable"
     },
     {
@@ -87,8 +80,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "text",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "gemma4_31b_free",
@@ -97,7 +89,6 @@
       "kind": "model",
       "tierMin": "free",
       "modality": "text",
-      "hosting": "hosted",
       "availability": "unavailable"
     },
     {
@@ -107,7 +98,6 @@
       "kind": "model",
       "tierMin": "solo",
       "modality": "text",
-      "hosting": "hosted",
       "availability": "available"
     },
     {
@@ -117,7 +107,6 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "text",
-      "hosting": "hosted",
       "availability": "available"
     },
     {
@@ -127,7 +116,6 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "text",
-      "hosting": "hosted",
       "availability": "available"
     },
     {
@@ -137,7 +125,6 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "text",
-      "hosting": "hosted",
       "availability": "available"
     },
     {
@@ -147,7 +134,6 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "text",
-      "hosting": "hosted",
       "availability": "available"
     },
     {
@@ -157,7 +143,6 @@
       "kind": "model",
       "tierMin": "free",
       "modality": "text",
-      "hosting": "hosted",
       "availability": "available"
     },
     {
@@ -167,8 +152,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "text",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "kimi_k26_thinking",
@@ -177,7 +161,6 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "text",
-      "hosting": "hosted",
       "availability": "unavailable"
     },
     {
@@ -187,8 +170,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "text",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "opus",
@@ -197,7 +179,6 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "text",
-      "hosting": "hosted",
       "availability": "available"
     },
     {
@@ -207,7 +188,6 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "text",
-      "hosting": "hosted",
       "availability": "available"
     },
     {
@@ -217,7 +197,6 @@
       "kind": "model",
       "tierMin": "solo",
       "modality": "text",
-      "hosting": "hosted",
       "availability": "available"
     },
     {
@@ -227,8 +206,7 @@
       "kind": "model",
       "tierMin": "solo",
       "modality": "image",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_flux2_klein",
@@ -237,8 +215,7 @@
       "kind": "model",
       "tierMin": "solo",
       "modality": "image",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_flux2_max",
@@ -247,8 +224,7 @@
       "kind": "model",
       "tierMin": "solo",
       "modality": "image",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_flux2_pro",
@@ -257,8 +233,7 @@
       "kind": "model",
       "tierMin": "solo",
       "modality": "image",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_gpt_image2",
@@ -267,8 +242,7 @@
       "kind": "model",
       "tierMin": "solo",
       "modality": "image",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_gpt5_image",
@@ -277,8 +251,7 @@
       "kind": "model",
       "tierMin": "solo",
       "modality": "image",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_gpt5_image_mini",
@@ -287,8 +260,7 @@
       "kind": "model",
       "tierMin": "solo",
       "modality": "image",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_grok_video",
@@ -297,8 +269,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "video",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_hailuo23",
@@ -307,8 +278,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "video",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_happyhorse",
@@ -317,8 +287,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "video",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_kling",
@@ -327,8 +296,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "video",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_kling_o1",
@@ -337,8 +305,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "video",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_kling_pro",
@@ -347,8 +314,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "video",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_nano_banana",
@@ -357,8 +323,7 @@
       "kind": "model",
       "tierMin": "solo",
       "modality": "image",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_nano_banana2",
@@ -367,8 +332,7 @@
       "kind": "model",
       "tierMin": "solo",
       "modality": "image",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_nano_pro",
@@ -377,8 +341,7 @@
       "kind": "model",
       "tierMin": "free",
       "modality": "image",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_recraft",
@@ -387,8 +350,7 @@
       "kind": "model",
       "tierMin": "solo",
       "modality": "image",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_recraft_v4",
@@ -397,8 +359,7 @@
       "kind": "model",
       "tierMin": "solo",
       "modality": "image",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_riverflow_fast",
@@ -407,8 +368,7 @@
       "kind": "model",
       "tierMin": "solo",
       "modality": "image",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_riverflow_pro",
@@ -417,8 +377,7 @@
       "kind": "model",
       "tierMin": "solo",
       "modality": "image",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_seedance",
@@ -427,8 +386,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "video",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_seedance_fast",
@@ -437,8 +395,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "video",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_seedance15_pro",
@@ -447,8 +404,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "video",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_seedream45",
@@ -457,8 +413,7 @@
       "kind": "model",
       "tierMin": "solo",
       "modality": "image",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_sora2_pro",
@@ -467,8 +422,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "video",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_veo31",
@@ -477,8 +431,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "video",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_veo31_fast",
@@ -487,8 +440,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "video",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_veo31_lite",
@@ -497,8 +449,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "video",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_wan26",
@@ -507,8 +458,7 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "video",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     },
     {
       "id": "vision_wan27",
@@ -517,9 +467,8 @@
       "kind": "model",
       "tierMin": "pro",
       "modality": "video",
-      "hosting": "hosted",
-      "availability": "available"
+      "availability": "unavailable"
     }
   ],
-  "digest": "sha256:25fdd2f0807cd548d76667c1458a096adf4a0a3c2556347e8a3eaaf412059000"
+  "digest": "sha256:c9fe0efd73b5c390b0274e15640da7cbfe036e759d121984699d6d2d39564de1"
 }

@@ -22,7 +22,6 @@ export interface PublicCatalogueModel {
   kind: "model" | "orchestrator";
   tierMin: "free" | "solo" | "pro" | "team";
   modality: "text" | "image" | "video" | "audio" | "multimodal" | "unknown";
-  hosting: "local" | "hosted" | "unknown";
   availability: "available" | "unavailable" | "unknown";
 }
 
@@ -167,7 +166,7 @@ export function parseCatalogue(text: string, now = Date.now()): PublicCatalogueS
   for (const [index, item] of source.models.entries()) {
     if (item === null || typeof item !== "object" || Array.isArray(item)) throw new Error(`public catalogue model ${index} must be an object`);
     const model = item as Partial<PublicCatalogueModel>;
-    const modelKeys = new Set(["id", "label", "provider", "kind", "tierMin", "modality", "hosting", "availability"]);
+    const modelKeys = new Set(["id", "label", "provider", "kind", "tierMin", "modality", "availability"]);
     const unexpectedModelKeys = Object.keys(model).filter((key) => !modelKeys.has(key));
     if (unexpectedModelKeys.length) throw new Error(`public catalogue model ${index} contains unsupported fields: ${unexpectedModelKeys.join(", ")}`);
     if (typeof model.id !== "string") throw new Error(`public catalogue model ${index} has an invalid id`);
@@ -182,11 +181,10 @@ export function parseCatalogue(text: string, now = Date.now()): PublicCatalogueS
     if (model.kind !== "model" && model.kind !== "orchestrator") throw new Error(`public catalogue model ${model.id} has an invalid kind`);
     if (!(["free", "solo", "pro", "team"] as const).includes(model.tierMin as "free")) throw new Error(`public catalogue model ${model.id} has an invalid tierMin`);
     if (!(["text", "image", "video", "audio", "multimodal", "unknown"] as const).includes(model.modality as "text")) throw new Error(`public catalogue model ${model.id} has an invalid modality`);
-    if (!(["local", "hosted", "unknown"] as const).includes(model.hosting as "local")) throw new Error(`public catalogue model ${model.id} has an invalid hosting state`);
     if (!(["available", "unavailable", "unknown"] as const).includes(model.availability as "available")) throw new Error(`public catalogue model ${model.id} has an invalid availability state`);
   }
-  const { digest: _digest, ...unsigned } = source as PublicCatalogueSource;
-  if (sha256(unsigned) !== source.digest) throw new Error("public catalogue projection digest does not match its canonical payload");
+  const { digest: _digest, generatedAt: _generatedAt, ...content } = source as PublicCatalogueSource;
+  if (sha256(content) !== source.digest) throw new Error("public catalogue projection digest does not match its canonical content");
   return source as PublicCatalogueSource;
 }
 
@@ -287,9 +285,9 @@ export function renderCatalogueMarkdown(catalogue: GeneratedCatalogue): string {
     `- Offline fallback snapshot: ${catalogue.offlineFallback ? "yes" : "no"}`,
     `- Digest: ${inlineCode(catalogue.digest)}`,
     "",
-    "| Model | ID | Provider | Modality | Tier | Hosting | Availability |",
-    "|---|---|---|---|---|---|---|",
-    ...catalogue.models.map((model) => `| ${escapeMarkdown(model.label)} | ${inlineCode(model.id)} | ${escapeMarkdown(model.provider)} | ${escapeMarkdown(model.modality)} | ${escapeMarkdown(model.tierMin)} | ${escapeMarkdown(model.hosting)} | ${escapeMarkdown(model.availability)} |`),
+    "| Model | ID | Provider | Modality | Tier | Availability |",
+    "|---|---|---|---|---|---|",
+    ...catalogue.models.map((model) => `| ${escapeMarkdown(model.label)} | ${inlineCode(model.id)} | ${escapeMarkdown(model.provider)} | ${escapeMarkdown(model.modality)} | ${escapeMarkdown(model.tierMin)} | ${escapeMarkdown(model.availability)} |`),
     "",
     "Runtime availability is account-scoped. Use `aether models` while signed in for the authoritative live result. This snapshot contains no prices, spend caps, internal routes, or credentials.",
   ];
@@ -300,12 +298,11 @@ export function renderCatalogueHtml(catalogue: GeneratedCatalogue): string {
   const providers = [...new Set(catalogue.models.map((model) => model.provider))].sort();
   const modalities = ["text", "image", "video", "audio", "multimodal", "unknown"] as const;
   const tiers = ["free", "solo", "pro", "team"] as const;
-  const hostingStates = ["local", "hosted", "unknown"] as const;
   const availabilityStates = ["available", "unavailable", "unknown"] as const;
   const cards = catalogue.models.map((model) => `
-      <article class="card" data-search="${escapeHtml(`${model.label} ${model.id} ${model.provider} ${model.kind} ${model.modality} ${model.tierMin} ${model.hosting} ${model.availability}`.toLowerCase())}" data-provider="${escapeHtml(model.provider)}" data-modality="${model.modality}" data-tier="${model.tierMin}" data-hosting="${model.hosting}" data-availability="${model.availability}">
+      <article class="card" data-search="${escapeHtml(`${model.label} ${model.id} ${model.provider} ${model.kind} ${model.modality} ${model.tierMin} ${model.availability}`.toLowerCase())}" data-provider="${escapeHtml(model.provider)}" data-modality="${model.modality}" data-tier="${model.tierMin}" data-availability="${model.availability}">
         <h2>${escapeHtml(model.label)}</h2><p><code>${escapeHtml(model.id)}</code></p>
-        <dl><div><dt>Provider</dt><dd>${escapeHtml(model.provider)}</dd></div><div><dt>Modality</dt><dd>${model.modality}</dd></div><div><dt>Minimum documented tier</dt><dd>${model.tierMin}</dd></div><div><dt>Hosting</dt><dd>${model.hosting}</dd></div><div><dt>Availability</dt><dd>${model.availability}</dd></div></dl>
+        <dl><div><dt>Provider</dt><dd>${escapeHtml(model.provider)}</dd></div><div><dt>Modality</dt><dd>${model.modality}</dd></div><div><dt>Minimum documented tier</dt><dd>${model.tierMin}</dd></div><div><dt>Availability</dt><dd>${model.availability}</dd></div></dl>
       </article>`).join("");
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -314,10 +311,10 @@ export function renderCatalogueHtml(catalogue: GeneratedCatalogue): string {
 <body><main><h1>Public model catalogue snapshot</h1><p class="lede">${escapeHtml(catalogue.scopeNote)}</p>
 <p class="meta">Snapshot: <time datetime="${catalogue.generatedAt}">${catalogue.generatedAt}</time> · Cloud source: ${escapeHtml(catalogue.source.version)} · Source digest: <code>${catalogue.source.digest}</code> · Catalogue digest: <code>${catalogue.digest}</code> · Offline fallback: ${catalogue.offlineFallback ? "yes" : "no"}</p>
 <p>This page is useful without JavaScript. Runtime availability is account-scoped; use <code>aether models</code> while signed in for the authoritative live result. No prices or spend caps are asserted here.</p>
-<form class="controls" role="search" onsubmit="return false"><label>Search<input id="q" type="search" autocomplete="off" placeholder="Model, ID, or provider"></label><label>Provider<select id="provider"><option value="">All providers</option>${providers.map((item) => `<option>${escapeHtml(item)}</option>`).join("")}</select></label><label>Modality<select id="modality"><option value="">All modalities</option>${modalities.map((item) => `<option>${item}</option>`).join("")}</select></label><label>Tier<select id="tier"><option value="">All tiers</option>${tiers.map((item) => `<option>${item}</option>`).join("")}</select></label><label>Local or hosted<select id="hosting"><option value="">All hosting states</option>${hostingStates.map((item) => `<option>${item}</option>`).join("")}</select></label><label>Availability<select id="availability"><option value="">All availability states</option>${availabilityStates.map((item) => `<option>${item}</option>`).join("")}</select></label></form>
+<form class="controls" role="search" onsubmit="return false"><label>Search<input id="q" type="search" autocomplete="off" placeholder="Model, ID, or provider"></label><label>Provider<select id="provider"><option value="">All providers</option>${providers.map((item) => `<option>${escapeHtml(item)}</option>`).join("")}</select></label><label>Modality<select id="modality"><option value="">All modalities</option>${modalities.map((item) => `<option>${item}</option>`).join("")}</select></label><label>Tier<select id="tier"><option value="">All tiers</option>${tiers.map((item) => `<option>${item}</option>`).join("")}</select></label><label>Availability<select id="availability"><option value="">All availability states</option>${availabilityStates.map((item) => `<option>${item}</option>`).join("")}</select></label></form>
 <p id="status" aria-live="polite"></p><section class="grid" aria-label="Documented catalogue models">${cards}
 </section><noscript><p>Search and filters require JavaScript; every catalogue entry remains visible above.</p></noscript></main>
-<script>document.body.dataset.enhanced="";const q=document.querySelector("#q"),filters=["provider","modality","tier","hosting","availability"].map(id=>document.querySelector("#"+id)),s=document.querySelector("#status"),cards=[...document.querySelectorAll(".card")];function apply(){const needle=q.value.trim().toLowerCase();let shown=0;for(const card of cards){const visible=(!needle||card.dataset.search.includes(needle))&&filters.every(filter=>!filter.value||card.dataset[filter.id]===filter.value);card.classList.toggle("hidden",!visible);if(visible)shown++}s.textContent=shown+" of "+cards.length+" entries shown"}q.addEventListener("input",apply);for(const filter of filters)filter.addEventListener("change",apply);apply();</script></body></html>\n`;
+<script>document.body.dataset.enhanced="";const q=document.querySelector("#q"),filters=["provider","modality","tier","availability"].map(id=>document.querySelector("#"+id)),s=document.querySelector("#status"),cards=[...document.querySelectorAll(".card")];function apply(){const needle=q.value.trim().toLowerCase();let shown=0;for(const card of cards){const visible=(!needle||card.dataset.search.includes(needle))&&filters.every(filter=>!filter.value||card.dataset[filter.id]===filter.value);card.classList.toggle("hidden",!visible);if(visible)shown++}s.textContent=shown+" of "+cards.length+" entries shown"}q.addEventListener("input",apply);for(const filter of filters)filter.addEventListener("change",apply);apply();</script></body></html>\n`;
 }
 
 function replaceBounded(text: string, markers: readonly [string, string], body: string, path: string): string {

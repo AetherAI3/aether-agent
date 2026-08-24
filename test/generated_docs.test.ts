@@ -8,6 +8,7 @@ import {
   PUBLIC_CATALOGUE_SCHEMA,
   buildGeneratedOutputs,
   generateDocumentation,
+  parseCatalogue,
   renderCommandReference,
   sha256,
 } from "../scripts/generate-docs.js";
@@ -20,10 +21,11 @@ const unsignedSource = {
   availabilitySemantics: "listed-not-entitled",
   scopeNote: "A sanitized, dated subset; live availability remains account-scoped.",
   models: [
-    { id: "model_a", label: "Model A", provider: "unknown", kind: "model", tierMin: "pro", modality: "unknown", hosting: "hosted", availability: "unknown" },
+    { id: "model_a", label: "Model A", provider: "unknown", kind: "model", tierMin: "pro", modality: "unknown", availability: "unknown" },
   ],
 } as const;
-const source = { ...unsignedSource, digest: sha256(unsignedSource) } as const;
+const sourceContent = ({ generatedAt: _generatedAt, ...content }: { generatedAt: string; [key: string]: unknown }) => content;
+const source = { ...unsignedSource, digest: sha256(sourceContent(unsignedSource)) } as const;
 
 function fixtureRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "aether-docgen-"));
@@ -93,20 +95,28 @@ test("Cloud projection digest, freshness, schema, and safe model fields are mand
   const changed = { ...source, digest: `sha256:${"0".repeat(64)}` };
   assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify(changed) }), /digest does not match/);
   const genericUnsigned = { ...unsignedSource, models: [{ ...source.models[0], id: "model" }] };
-  const generic = { ...genericUnsigned, digest: sha256(genericUnsigned) };
+  const generic = { ...genericUnsigned, digest: sha256(sourceContent(genericUnsigned)) };
   assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify(generic) }), /invalid or generic id/);
   const staleUnsigned = { ...unsignedSource, generatedAt: "2026-01-01T00:00:00.000Z" };
-  assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify({ ...staleUnsigned, digest: sha256(staleUnsigned) }) }), /projection is stale/);
+  assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify({ ...staleUnsigned, digest: sha256(sourceContent(staleUnsigned)) }) }), /projection is stale/);
   assert.doesNotThrow(() => generateDocumentation({ root, catalogueLiveSourceText: "network unavailable" }));
   const fallback = JSON.parse(readFileSync(join(root, "docs", "model-catalogue", "catalogue.json"), "utf8")) as Record<string, unknown>;
   assert.equal(fallback["offlineFallback"], true);
   assert.equal(readFileSync(join(root, "docs", "model-catalogue", "catalogue.json"), "utf8"), lastGood);
 });
 
+test("Cloud content digests are stable across generatedAt and unsupported row fields fail closed", () => {
+  const later = { ...source, generatedAt: "2026-08-24T00:00:00.000Z" };
+  assert.equal(later.digest, source.digest);
+  assert.doesNotThrow(() => parseCatalogue(JSON.stringify(later), Date.parse(later.generatedAt)));
+  const withHosting = { ...source, models: [{ ...source.models[0], hosting: "hosted" }] };
+  assert.throws(() => parseCatalogue(JSON.stringify(withHosting), Date.parse(source.generatedAt)), /unsupported fields: hosting/);
+});
+
 test("future timestamps and hostile public strings are rejected without leaking their values", () => {
   const root = fixtureRoot();
   const futureUnsigned = { ...unsignedSource, generatedAt: "2999-01-01T00:00:00.000Z" };
-  const future = { ...futureUnsigned, digest: sha256(futureUnsigned) };
+  const future = { ...futureUnsigned, digest: sha256(sourceContent(futureUnsigned)) };
   assert.throws(() => generateDocumentation({ root, catalogueSourceText: JSON.stringify(future) }), /materially in the future/);
   const hostile = [
     ["Bearer top.secret.value", /credential-shaped/],
@@ -128,7 +138,7 @@ test("future timestamps and hostile public strings are rejected without leaking 
   for (const [scopeNote, expected] of hostile) {
     let message = "";
     const hostileUnsigned = { ...unsignedSource, scopeNote };
-    try { generateDocumentation({ root, catalogueSourceText: JSON.stringify({ ...hostileUnsigned, digest: sha256(hostileUnsigned) }) }); }
+    try { generateDocumentation({ root, catalogueSourceText: JSON.stringify({ ...hostileUnsigned, digest: sha256(sourceContent(hostileUnsigned)) }) }); }
     catch (error) { message = error instanceof Error ? error.message : String(error); }
     assert.match(message, expected);
     assert.doesNotMatch(message, /top\.secret\.value|hunter2|plain-secret-value|abcdefghijklmnop|user:password|evil\.test/);
@@ -196,9 +206,9 @@ test("catalogue outputs are sanitized, deterministic, responsive, and useful wit
   assert.match(html, /role="search"/);
   assert.match(html, /aria-live="polite"/);
   assert.match(html, /<article class="card"/);
-  for (const id of ["provider", "modality", "tier", "hosting", "availability"]) assert.match(html, new RegExp(`id="${id}"`));
-  assert.match(html, /<option>local<\/option><option>hosted<\/option><option>unknown<\/option>/);
-  assert.match(html, /data-modality="unknown" data-tier="pro" data-hosting="hosted" data-availability="unknown"/);
+  for (const id of ["provider", "modality", "tier", "availability"]) assert.match(html, new RegExp(`id="${id}"`));
+  assert.doesNotMatch(html, /id="hosting"|data-hosting=|<dt>Hosting<\/dt>/);
+  assert.match(html, /data-modality="unknown" data-tier="pro" data-availability="unknown"/);
   assert.match(html, /No prices or spend caps are asserted/);
   assert.doesNotMatch(html, /AETHER_TOKEN|Bearer\s+[A-Za-z0-9._-]+|\/api\/internal/i);
   assert.doesNotMatch(html, /href="[^\"]*RELEASE_NOTES/);

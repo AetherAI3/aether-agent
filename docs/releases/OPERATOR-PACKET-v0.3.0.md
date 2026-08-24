@@ -14,8 +14,8 @@ to npm are founder-owned and are listed at the end, unrun.
 | Historical candidate | `fb96ee44b03f37a386954a32412728fa7e98a046` (PR-local evidence commit; historical only, not reachable from current `main`) |
 | Historical archive | `aether-agents-0.3.0.tgz` — 739,977 bytes packed / 3,022,168 unpacked / 575 entries |
 | Historical archive sha256 | `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` |
-| Current exact-head dry run | 618 entries / 3,669,584 unpacked bytes / 4 workflows |
-| Current dry-run predicted packed size | 831,195 bytes (inventory estimate; no archive was created) |
+| Current exact-head dry run | 618 entries / 3,676,942 unpacked bytes / 4 workflows |
+| Current dry-run predicted packed size | 833,661 bytes (inventory estimate; no archive was created) |
 | Current archive | **PENDING — no exact-head archive has been produced** |
 | Current archive sha256 | **PENDING — record only after producing that archive** |
 
@@ -136,8 +136,8 @@ at `fb96ee44b03f37a386954a32412728fa7e98a046`; they do not describe the current
 ### Current integration dry-run
 
 On the integration tree, `verify:production` exited 0 and reported 618 entries,
-3,669,584 unpacked bytes, and 4 workflows; the matching dry-run JSON predicted
-831,195 packed bytes. This was an
+3,676,942 unpacked bytes, and 4 workflows; the matching dry-run JSON predicted
+833,661 packed bytes. This was an
 `npm pack --dry-run` inventory. It did not produce `aether-agents-0.3.0.tgz`, so
 the current archive size and sha256 are pending rather than borrowed from an
 older candidate.
