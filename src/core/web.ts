@@ -287,46 +287,80 @@ function findRawTextCloseEnd(html: string, tagName: "script" | "style", start: n
  * adversarial near-matches remain linear in the input length.
  */
 function findScriptCloseEnd(html: string, start: number): number {
-  type ScriptDataState = "data" | "escaped" | "double-escaped";
+  type ScriptDataState =
+    | "data"
+    | "escaped"
+    | "escaped-dash"
+    | "escaped-dash-dash"
+    | "double-escaped"
+    | "double-escaped-dash"
+    | "double-escaped-dash-dash";
   let state: ScriptDataState = "data";
   let i = start;
 
   while (i < html.length) {
-    if (state !== "double-escaped" && html.startsWith("<!--", i)) {
-      state = "escaped";
+    if (state === "data" && html.startsWith("<!--", i)) {
+      // Script-data escape start consumes `<!--` and leaves the tokenizer in
+      // escaped-dash-dash, where a following `>` returns to script data.
+      state = "escaped-dash-dash";
       i += 4;
       continue;
     }
 
-    if (state !== "data" && html.startsWith("-->", i)) {
-      state = "data";
-      i += 3;
-      continue;
-    }
-
-    if (html[i] !== "<") {
+    if (state === "data") {
+      if (html[i] === "<" && html[i + 1] === "/" && hasTagNameAt(html, "script", i + 2)) {
+        return findTagEnd(html, i + 2 + "script".length);
+      }
       i += 1;
       continue;
     }
 
-    if (state === "escaped" && hasTagNameAt(html, "script", i + 1)) {
-      state = "double-escaped";
-      i += 1 + "script".length;
+    const doubleEscaped: boolean = state === "double-escaped"
+      || state === "double-escaped-dash"
+      || state === "double-escaped-dash-dash";
+
+    if (html[i] === "<") {
+      if (html[i + 1] === "/" && hasTagNameAt(html, "script", i + 2)) {
+        const nameEnd = i + 2 + "script".length;
+        if (doubleEscaped) {
+          // WHATWG script-data double-escape-end: reconsume the boundary in
+          // escaped state; this token does not close the script element.
+          state = "escaped";
+          i = nameEnd;
+          continue;
+        }
+        return findTagEnd(html, nameEnd);
+      }
+
+      if (!doubleEscaped && hasTagNameAt(html, "script", i + 1)) {
+        state = "double-escaped";
+        i += 1 + "script".length;
+        continue;
+      }
+
+      state = doubleEscaped ? "double-escaped" : "escaped";
+      i += 1;
       continue;
     }
 
-    if (html[i + 1] === "/" && hasTagNameAt(html, "script", i + 2)) {
-      const nameEnd = i + 2 + "script".length;
-      if (state === "double-escaped") {
-        // WHATWG script-data double-escape-end: reconsume the boundary in the
-        // escaped state; this token does not close the script element.
-        state = "escaped";
-        i = nameEnd;
-        continue;
-      }
-      return findTagEnd(html, nameEnd);
+    if (html[i] === "-") {
+      if (state === "escaped") state = "escaped-dash";
+      else if (state === "escaped-dash" || state === "escaped-dash-dash") state = "escaped-dash-dash";
+      else if (state === "double-escaped") state = "double-escaped-dash";
+      else state = "double-escaped-dash-dash";
+      i += 1;
+      continue;
     }
 
+    if (html[i] === ">"
+      && (state === "escaped-dash-dash" || state === "double-escaped-dash-dash")) {
+      state = "data";
+      i += 1;
+      continue;
+    }
+
+    if (state === "escaped-dash" || state === "escaped-dash-dash") state = "escaped";
+    else if (state === "double-escaped-dash" || state === "double-escaped-dash-dash") state = "double-escaped";
     i += 1;
   }
 
