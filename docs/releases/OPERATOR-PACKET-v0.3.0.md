@@ -22,7 +22,7 @@ to npm are founder-owned and are listed at the end, unrun.
 | Current local Linux/LF checkout measurement | 3,688,269 unpacked bytes / 835,678 predicted packed bytes |
 | Current archive | **PENDING — no exact-head archive has been produced** |
 | Current archive sha256 | **PENDING — record only after producing that archive** |
-| Cloud catalogue compatibility | PR #1327 final head `70e0645c96b16dedfefb90dd403daecb3c3d3b25`; landed as squash merge `fbb7b98a96682820b85a4bface002dcbf5bf9c37`, tree `9906df6f73b6cd8d8e57e1e552475976394d617f`; safe-field projection digest `sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712`. Deployment/response proof remains pending. |
+| Cloud catalogue compatibility | PR #1327 final head `70e0645c96b16dedfefb90dd403daecb3c3d3b25`; landed as squash merge `fbb7b98a96682820b85a4bface002dcbf5bf9c37`, tree `9906df6f73b6cd8d8e57e1e552475976394d617f`; safe-field projection digest `sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712` for the dated Agent offline compatibility fixture. Qualified production response was verified at `https://api.aethersystems.net/cloud/public/model-catalogue`: 51 safe-field rows, `listed-not-entitled`, live digest `sha256:4fa3196f26ff5a2be2b2520f4d4c4731ff12fdec4c3f19f9fca6df7722bff9b0`; `/cloud/healthz` reported deployed Cloud `b95c2aac0a96`. |
 
 ## 1. Semantic version decision
 
