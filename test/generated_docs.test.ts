@@ -26,8 +26,9 @@ const unsignedSource = {
 } as const;
 const sourceContent = ({ generatedAt: _generatedAt, ...content }: { generatedAt: string; [key: string]: unknown }) => content;
 const source = { ...unsignedSource, digest: sha256(sourceContent(unsignedSource)) } as const;
-const CLOUD_1327_HEAD = "ca90e65255e01567712ec6c6e3ac35b253b306de";
-const CLOUD_1327_TREE = "8bbe0751099a62d83bfd3a1e4eaa9dd85eef3901";
+const CLOUD_1327_HEAD = "70e0645c96b16dedfefb90dd403daecb3c3d3b25";
+const CLOUD_1327_MERGE = "fbb7b98a96682820b85a4bface002dcbf5bf9c37";
+const CLOUD_1327_TREE = "9906df6f73b6cd8d8e57e1e552475976394d617f";
 const CLOUD_1327_DIGEST = "sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712";
 
 function fixtureRoot(): string {
@@ -122,15 +123,15 @@ test("checked-in Cloud #1327 projection remains compatible with the Agent consum
   const catalogue = parseCatalogue(text, Date.parse(raw.generatedAt));
   const packet = readFileSync(join(process.cwd(), "docs", "releases", "OPERATOR-PACKET-v0.3.0.md"), "utf8");
   const evidence = packet.match(
-    /Cloud catalogue compatibility \| PR #1327 exact head `([a-f0-9]{40})`; exact tree `([a-f0-9]{40})`; safe-field projection digest `(sha256:[a-f0-9]{64})`/,
+    /Cloud catalogue compatibility \| PR #1327 final head `([a-f0-9]{40})`; landed as squash merge `([a-f0-9]{40})`, tree `([a-f0-9]{40})`; safe-field projection digest `(sha256:[a-f0-9]{64})`/,
   );
   assert.ok(evidence, "checked-in Cloud catalogue evidence must record the exact commit and tree identities");
   assert.deepEqual(
-    { head: evidence[1], tree: evidence[2], digest: evidence[3] },
-    { head: CLOUD_1327_HEAD, tree: CLOUD_1327_TREE, digest: CLOUD_1327_DIGEST },
-    "Cloud catalogue evidence must bind the declared head to its exact tree and projection digest",
+    { head: evidence[1], merge: evidence[2], tree: evidence[3], digest: evidence[4] },
+    { head: CLOUD_1327_HEAD, merge: CLOUD_1327_MERGE, tree: CLOUD_1327_TREE, digest: CLOUD_1327_DIGEST },
+    "Cloud catalogue evidence must bind the declared head, landed merge, tree, and projection digest",
   );
-  assert.equal(catalogue.digest, evidence[3], `Cloud #1327 ${CLOUD_1327_HEAD} fixture digest drifted`);
+  assert.equal(catalogue.digest, evidence[4], `Cloud #1327 ${CLOUD_1327_HEAD} fixture digest drifted`);
   assert.equal(catalogue.models.length, 51);
   const safeFields = ["availability", "id", "kind", "label", "modality", "provider", "tierMin"];
   for (const model of catalogue.models) assert.deepEqual(Object.keys(model).sort(), safeFields);

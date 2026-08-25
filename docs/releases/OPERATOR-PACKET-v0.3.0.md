@@ -22,7 +22,7 @@ to npm are founder-owned and are listed at the end, unrun.
 | Current local Linux/LF checkout measurement | 3,688,269 unpacked bytes / 835,678 predicted packed bytes |
 | Current archive | **PENDING — no exact-head archive has been produced** |
 | Current archive sha256 | **PENDING — record only after producing that archive** |
-| Cloud catalogue compatibility | PR #1327 exact head `ca90e65255e01567712ec6c6e3ac35b253b306de`; exact tree `8bbe0751099a62d83bfd3a1e4eaa9dd85eef3901`; safe-field projection digest `sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712` |
+| Cloud catalogue compatibility | PR #1327 final head `70e0645c96b16dedfefb90dd403daecb3c3d3b25`; landed as squash merge `fbb7b98a96682820b85a4bface002dcbf5bf9c37`, tree `9906df6f73b6cd8d8e57e1e552475976394d617f`; safe-field projection digest `sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712`. Deployment/response proof remains pending. |
 
 ## 1. Semantic version decision
 
