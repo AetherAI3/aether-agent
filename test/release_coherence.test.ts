@@ -55,7 +55,8 @@ const HOSTED_WINDOWS_LABEL = "Candidate expected GitHub-hosted Windows value";
 const LOCAL_WINDOWS_LABEL = "Current local Windows default-checkout measurement";
 const LOCAL_LINUX_LABEL = "Current local Linux/LF checkout measurement";
 const EXPECTED_UBUNTU_UNPACKED = 3_688_269;
-const EXPECTED_WINDOWS_UNPACKED = 3_690_014;
+const EXPECTED_HOSTED_WINDOWS_UNPACKED = 3_690_217;
+const EXPECTED_LOCAL_WINDOWS_UNPACKED = 3_690_014;
 const EXPECTED_LINUX_PACKED = 835_678;
 const EXPECTED_WINDOWS_PACKED = 835_950;
 
@@ -103,7 +104,7 @@ function assertPacketProvenance(packet: string): PacketRows {
   );
   assert.equal(
     onlyPacketRow(rows, HOSTED_WINDOWS_LABEL),
-    "3,690,014 unpacked bytes — pending exact-head hosted confirmation",
+    "3,690,217 unpacked bytes — pending exact-head hosted confirmation",
   );
   assert.equal(
     onlyPacketRow(rows, LOCAL_WINDOWS_LABEL),
@@ -117,13 +118,13 @@ function assertPacketProvenance(packet: string): PacketRows {
   const normalized = packet.replace(/\s+/g, " ");
   assert.ok(
     normalized.includes(
-      "Those are the expected hosted-runner values, not claims that exact-head hosted jobs have already run; the fresh exact-head hosted run must confirm both.",
+      "The 3,688,269 Linux/LF and 3,690,217 Windows values are preflight expectations, not claims that this newly committed head has already run; fresh hosted CI must confirm both.",
     ),
     "the operator packet must keep candidate host values explicitly pending fresh hosted confirmation",
   );
   assert.ok(
     normalized.includes(
-      "Their 3,688,269 and 3,690,014 unpacked-byte results are recorded as the expected hosted platform values pending exact-head CI;",
+      "Their 3,688,269 and 3,690,217 unpacked-byte results are recorded as the expected hosted platform values pending exact-head CI;",
     ),
     "the packaged-manifest prose must keep hosted values pending exact-head CI",
   );
@@ -225,7 +226,7 @@ test("the operator packet fails closed on contradictory release-evidence mutatio
     [
       "premature hosted-completion prose",
       packet.replace(
-        /Those\r?\nare the expected hosted-runner values, not claims that exact-head hosted jobs\r?\nhave already run; the fresh exact-head hosted run must confirm both\./,
+        /The 3,688,269 Linux\/LF and 3,690,217 Windows values are preflight expectations,\r?\nnot claims that this newly committed head has already run; fresh hosted CI must\r?\nconfirm both\./,
         "Those\nare completed exact-head GitHub-hosted measurements.",
       ),
     ],
@@ -261,7 +262,7 @@ test(
     assert.equal(manifestEntries, packed.entryCount, "the packet manifest entry count does not match npm pack");
     const githubHost = process.platform === "win32" ? HOSTED_WINDOWS_LABEL : HOSTED_UBUNTU_LABEL;
     const expectedHostedUnpacked = process.platform === "win32"
-      ? EXPECTED_WINDOWS_UNPACKED
+      ? EXPECTED_HOSTED_WINDOWS_UNPACKED
       : EXPECTED_UBUNTU_UNPACKED;
     assert.ok(onlyPacketRow(rows, githubHost).includes(expectedHostedUnpacked.toLocaleString("en-US")));
     if (process.env["GITHUB_ACTIONS"] === "true") {
@@ -272,7 +273,7 @@ test(
       );
     } else {
       const expectedLocalUnpacked = process.platform === "win32"
-        ? EXPECTED_WINDOWS_UNPACKED
+        ? EXPECTED_LOCAL_WINDOWS_UNPACKED
         : EXPECTED_UBUNTU_UNPACKED;
       const expectedLocalPacked = process.platform === "win32" ? EXPECTED_WINDOWS_PACKED : EXPECTED_LINUX_PACKED;
       assert.equal(packed.unpackedSize, expectedLocalUnpacked, "the named local unpacked-byte evidence is stale");

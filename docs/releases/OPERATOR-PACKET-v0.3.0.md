@@ -17,7 +17,7 @@ to npm are founder-owned and are listed at the end, unrun.
 | Historical archive sha256 | `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` |
 | Current exact-head dry run | 618 entries / 4 workflows |
 | Candidate expected GitHub-hosted Ubuntu value | 3,688,269 unpacked bytes — pending exact-head hosted confirmation |
-| Candidate expected GitHub-hosted Windows value | 3,690,014 unpacked bytes — pending exact-head hosted confirmation |
+| Candidate expected GitHub-hosted Windows value | 3,690,217 unpacked bytes — pending exact-head hosted confirmation |
 | Current local Windows default-checkout measurement | 3,690,014 unpacked bytes / 835,950 predicted packed bytes |
 | Current local Linux/LF checkout measurement | 3,688,269 unpacked bytes / 835,678 predicted packed bytes |
 | Current archive | **PENDING — no exact-head archive has been produced** |
@@ -142,9 +142,11 @@ at `fb96ee44b03f37a386954a32412728fa7e98a046`; they do not describe the current
 
 On the integration tree, `verify:production` exited 0 and reported 618 entries
 and 4 workflows. Fresh clean platform-shaped candidate checkouts measured
-3,688,269 unpacked bytes for Linux/LF and 3,690,014 for Windows/default. Those
-are the expected hosted-runner values, not claims that exact-head hosted jobs
-have already run; the fresh exact-head hosted run must confirm both. The local
+3,688,269 unpacked bytes for Linux/LF and 3,690,014 for Windows/default. A
+preceding exact-head Windows hosted CI run measured 3,690,217 unpacked bytes.
+The 3,688,269 Linux/LF and 3,690,217 Windows values are preflight expectations,
+not claims that this newly committed head has already run; fresh hosted CI must
+confirm both. The local
 Windows default checkout measured 3,690,014 unpacked / 835,950 predicted packed
 bytes; the clean LF checkout on that same Node 24.19.0/npm 11.17.0 toolchain
 measured 3,688,269 unpacked / 835,678 predicted packed
@@ -266,7 +268,7 @@ catch a dropped feature, because it does not know what the notes promised.
 ### Current dry-run packaged file manifest
 
 The exact-head candidate dry runs reported 618 entries on clean Linux/LF and
-Windows/default checkouts. Their 3,688,269 and 3,690,014 unpacked-byte results
+Windows/default checkouts. Their 3,688,269 and 3,690,217 unpacked-byte results
 are recorded as the expected hosted platform values pending exact-head CI;
 local default and LF checkouts measured 3,690,014 and 3,688,269 respectively
 because byte totals can move with checkout line
