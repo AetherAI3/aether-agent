@@ -272,12 +272,34 @@ test(
         `${githubHost} package bytes do not match that runner's exact-head npm pack report`,
       );
     } else {
-      const expectedLocalUnpacked = process.platform === "win32"
-        ? EXPECTED_LOCAL_WINDOWS_UNPACKED
-        : EXPECTED_UBUNTU_UNPACKED;
-      const expectedLocalPacked = process.platform === "win32" ? EXPECTED_WINDOWS_PACKED : EXPECTED_LINUX_PACKED;
-      assert.equal(packed.unpackedSize, expectedLocalUnpacked, "the named local unpacked-byte evidence is stale");
-      assert.equal(packed.size, expectedLocalPacked, "the named local packed-byte evidence is stale");
+      // A Windows control machine can deliberately use an LF checkout
+      // (`core.autocrlf=false`). Select the exact recorded package measurement,
+      // not the operating system, because npm packs bytes rather than host
+      // labels. A measurement outside this closed set still fails.
+      const localMeasurements = [
+        {
+          label: LOCAL_WINDOWS_LABEL,
+          unpacked: EXPECTED_LOCAL_WINDOWS_UNPACKED,
+          packed: EXPECTED_WINDOWS_PACKED,
+        },
+        {
+          label: LOCAL_LINUX_LABEL,
+          unpacked: EXPECTED_UBUNTU_UNPACKED,
+          packed: EXPECTED_LINUX_PACKED,
+        },
+      ];
+      const matches = localMeasurements.filter(
+        (measurement) => measurement.unpacked === packed.unpackedSize && measurement.packed === packed.size,
+      );
+      assert.equal(
+        matches.length,
+        1,
+        `the current local package measurement is not recorded: ${packed.unpackedSize} unpacked / ${packed.size} packed`,
+      );
+      const measurement = matches[0]!;
+      const row = onlyPacketRow(rows, measurement.label);
+      assert.ok(row.includes(measurement.unpacked.toLocaleString("en-US")));
+      assert.ok(row.includes(measurement.packed.toLocaleString("en-US")));
     }
 
     const paths = packed.files.map((file) => file.path.replaceAll("\\", "/"));
