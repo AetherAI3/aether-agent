@@ -377,12 +377,14 @@ to 3,022,168 unpacked bytes.
 Named as unproven rather than omitted:
 
 - **npm availability of 0.3.0.** Nothing here contacted the registry to publish.
-  Until step 11 completes, `npm i -g aether-agents` installs `0.1.0`.
+  Until step 11 completes, describe an unversioned install as following the
+  registry's live `latest` dist-tag; do not hard-code which version that tag
+  selects.
 - **The full `npm test` suite inside the candidate run.** The release-candidate
   run executes the release-owned test files only and reports `npm-test` as
-  `not-run`; `--full-tests` includes it. The suite *was* run separately on this
-  machine at integration commit `b23c8b1` — 1543 tests, 1540 pass, 0 fail,
-  3 skipped — and that reading is recorded in the PR body. It remains local
+  `not-run`; `--full-tests` includes it. The suite *was* run separately for the
+  final #112 candidate — 1615 tests, 1612 pass, 0 fail, 3 documented Windows
+  skips — and that reading is recorded in the PR evidence. It remains local
   evidence only; the final proposed head must repeat this proof in required CI.
 - **Anything about the deployed API.** Two claims in the release notes'
   Authentication section describe a *server*, not this package: that the API
@@ -495,11 +497,11 @@ the exact proposed head rather than inferred from an ancestor or a workstation:
    workflow artifact. Do not use the historical `70a48aca…` digest as the
    expected digest for the current tree.
 
-12. **Only after step 11 succeeds**, update the availability language in
-   `README.md` and `RELEASE_NOTES.md` to say 0.3.0 installs from npm. Until that
-   proof exists, the repository must keep saying `npm i -g` gives you `0.1.0` —
-   `test/release_coherence.test.ts` enforces that the claim cannot be added
-   without the registry actually serving it.
+12. **Only after step 11 succeeds**, add a dated release record stating that
+   0.3.0 was observed on npm. Keep the README's unversioned install wording
+   transition-safe: it follows the registry's live `latest` dist-tag and tells
+   readers how to inspect that tag. Do not replace it with a hard-coded version
+   that can become false during a publish transition.
 
 ## 7. Credentials
 
