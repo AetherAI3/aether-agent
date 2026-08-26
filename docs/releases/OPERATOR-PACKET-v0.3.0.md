@@ -16,10 +16,10 @@ to npm are founder-owned and are listed at the end, unrun.
 | Historical archive | `aether-agents-0.3.0.tgz` — 739,977 bytes packed / 3,022,168 unpacked / 575 entries |
 | Historical archive sha256 | `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` |
 | Current exact-head dry run | 618 entries / 4 workflows |
-| Candidate expected GitHub-hosted Ubuntu value | 3,688,269 unpacked bytes — pending exact-head hosted confirmation |
-| Candidate expected GitHub-hosted Windows value | 3,690,217 unpacked bytes — pending exact-head hosted confirmation |
-| Current local Windows default-checkout measurement | 3,690,014 unpacked bytes / 835,950 predicted packed bytes |
-| Current local Linux/LF checkout measurement | 3,688,269 unpacked bytes / 835,678 predicted packed bytes |
+| Candidate expected GitHub-hosted Ubuntu value | 3,688,489 unpacked bytes — pending exact-head hosted confirmation |
+| Candidate expected GitHub-hosted Windows value | 3,690,440 unpacked bytes — pending exact-head hosted confirmation |
+| Current local Windows default-checkout measurement | 3,690,440 unpacked bytes / 836,067 predicted packed bytes |
+| Current local Linux/LF checkout measurement | 3,688,489 unpacked bytes / 835,779 predicted packed bytes |
 | Current archive | **PENDING — no exact-head archive has been produced** |
 | Current archive sha256 | **PENDING — record only after producing that archive** |
 | Cloud catalogue compatibility | PR #1327 final head `70e0645c96b16dedfefb90dd403daecb3c3d3b25`; landed as squash merge `fbb7b98a96682820b85a4bface002dcbf5bf9c37`, tree `9906df6f73b6cd8d8e57e1e552475976394d617f`; safe-field projection digest `sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712` for the dated Agent offline compatibility fixture. Qualified production response was verified at `https://api.aethersystems.net/cloud/public/model-catalogue`: 51 safe-field rows, `listed-not-entitled`, live digest `sha256:4fa3196f26ff5a2be2b2520f4d4c4731ff12fdec4c3f19f9fca6df7722bff9b0`; `/cloud/healthz` reported deployed Cloud `b95c2aac0a96`. |
@@ -142,26 +142,28 @@ at `fb96ee44b03f37a386954a32412728fa7e98a046`; they do not describe the current
 
 On the integration tree, `verify:production` exited 0 and reported 618 entries
 and 4 workflows. Fresh clean platform-shaped candidate checkouts measured
-3,688,269 unpacked bytes for Linux/LF and 3,690,014 for Windows/default. A
-preceding exact-head Windows hosted CI run measured 3,690,217 unpacked bytes.
-The 3,688,269 Linux/LF and 3,690,217 Windows values are preflight expectations,
+3,688,489 unpacked bytes for Linux/LF and 3,690,440 for Windows/default.
+The 3,688,489 Linux/LF and 3,690,440 Windows values are preflight expectations,
 not claims that this newly committed head has already run; fresh hosted CI must
 confirm both. The local
-Windows default checkout measured 3,690,014 unpacked / 835,950 predicted packed
-bytes; the clean LF checkout on that same Node 24.19.0/npm 11.17.0 toolchain
-measured 3,688,269 unpacked / 835,678 predicted packed
+Windows default checkout measured 3,690,440 unpacked / 836,067 predicted packed
+bytes; the clean LF checkout measured 3,688,489 unpacked / 835,779 predicted packed
 bytes. The membership is identical; byte totals are checkout/toolchain
 observations and are not claimed to be cross-machine reproducible. These were
 `npm pack --dry-run` inventories. They did not produce
 `aether-agents-0.3.0.tgz`, so the current archive size and sha256 are pending
 rather than borrowed from an older candidate.
 
+Package and archive evidence attached to Agent head
+`e8ea19245a47de180332b5e34d93d5988b2df767` is historical after the #112
+transition-safe README change. It is not evidence for this candidate.
+
 The complete top-level npm dry-run reports for the two clean checkout shapes
 were:
 
 ```json
-{"host":"Linux/LF","id":"aether-agents@0.3.0","name":"aether-agents","version":"0.3.0","size":835678,"unpackedSize":3688269,"shasum":"74418d8fef555986fcd96cd11b1d9caf022b2edf","integrity":"sha512-epE1pZxPUjCOV/XeJHN0PXUn1/45mIbbgnscNSrJiVmsCh1ifrYyTr9gA+2pHmHZJajFE2hrWuQ1gnJsEcYnsA==","filename":"aether-agents-0.3.0.tgz","entryCount":618,"bundled":[]}
-{"host":"Windows/default","id":"aether-agents@0.3.0","name":"aether-agents","version":"0.3.0","size":835950,"unpackedSize":3690014,"shasum":"d83320a0ea575a2a9bc6245e8ade9b317fd1fdbb","integrity":"sha512-RpLSlme8Mlg7AmBHGpDyMNomiqRFvOhOy04Ykf+f6B4cHhe7lGnPFfvhyzt2ozX2T5j3IUeuPb9E25qQmU+DnQ==","filename":"aether-agents-0.3.0.tgz","entryCount":618,"bundled":[]}
+{"host":"Linux/LF","id":"aether-agents@0.3.0","name":"aether-agents","version":"0.3.0","size":835779,"unpackedSize":3688489,"shasum":"52a59976f97aeb5e76140bc5bb8387282e14c500","integrity":"sha512-5xnDfvBCsc45uLWFwhbM312GrUyRpofkiRAVnxROEkEhGMX9Kxrsur8itcyDeD6gei51g7zHJmsgPOxiySewQA==","filename":"aether-agents-0.3.0.tgz","entryCount":618,"bundled":[]}
+{"host":"Windows/default","id":"aether-agents@0.3.0","name":"aether-agents","version":"0.3.0","size":836067,"unpackedSize":3690440,"shasum":"8ca24eb9d4f77a8a87bfb101a2a7c3fac0283fd6","integrity":"sha512-dYolLft6Ho80MoezVWHux4Ulwp9ZmjcJCME2F3dTjUsYGrSEk/PJ8Xgnrav8UPmuqUKL9sk+9mB+RT+9wEbAxw==","filename":"aether-agents-0.3.0.tgz","entryCount":618,"bundled":[]}
 ```
 
 The npm-reported `shasum` and `integrity` values above are host-bound dry-run
@@ -268,9 +270,9 @@ catch a dropped feature, because it does not know what the notes promised.
 ### Current dry-run packaged file manifest
 
 The exact-head candidate dry runs reported 618 entries on clean Linux/LF and
-Windows/default checkouts. Their 3,688,269 and 3,690,217 unpacked-byte results
+Windows/default checkouts. Their 3,688,489 and 3,690,440 unpacked-byte results
 are recorded as the expected hosted platform values pending exact-head CI;
-local default and LF checkouts measured 3,690,014 and 3,688,269 respectively
+local default and LF checkouts measured 3,690,440 and 3,688,489 respectively
 because byte totals can move with checkout line
 endings and toolchain metadata. Five files are at the package root, four
 generated public documents are under `docs/`, and everything else is under

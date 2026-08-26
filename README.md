@@ -20,19 +20,22 @@ local host owns workspace tools, permissions, sessions, review, and verification
 
 ## Install the right version
 
-The 3.0 source release candidate is ahead of the package currently published to npm:
+Choose the install channel that matches the version you intend to run:
 
 | Install | Version | What you get |
 |---|---:|---|
-| npm `latest` | **0.1.0** | Published baseline: authentication, models, and chat. |
-| `main` source build | **0.3.0** | The 3.0 coding, Ollama, session, review, and ship workflows below. |
+| npm `latest` | **Registry-selected** | The release currently selected by npm's live `latest` dist-tag. |
+| `main` source build | **0.3.0** | The 0.3 coding, Ollama, session, review, and ship workflows below. |
 
-> npm `latest` still resolves to **0.1.0**. Do not use the npm command expecting
-> 3.0 features until `aether --version` reports a published **0.3.x** release. The
+> `npm install ...@latest` follows the registry's live dist-tag; this README
+> deliberately does not copy that changing value. Check it with
+> `npm view aether-agents version`, and verify the installed CLI with
+> `aether --version`. The 0.3 workflows below are available from npm when that
+> command reports **0.3.x**; before then, use the `main` source build. The
 > [release record](docs/releases/2026-08-22.md) and
-> [operator packet](docs/releases/OPERATOR-PACKET-v0.3.0.md) preserve the evidence.
+> [operator packet](docs/releases/OPERATOR-PACKET-v0.3.0.md) preserve the release evidence.
 
-To use the published baseline today:
+To install whichever release npm currently selects:
 
 ```bash
 npm install -g aether-agents@latest --ignore-scripts
@@ -43,7 +46,7 @@ aether chat "hello"
 
 <!-- SOURCE-0.3-WORKFLOWS:START -->
 
-> **Requires the 0.3.0 source build, or a future published 0.3.x release.**
+> **Requires the 0.3.0 source build or a published 0.3.x release.**
 
 Node.js 24 or newer is required:
 
@@ -142,7 +145,7 @@ identity, touched paths, and summarized highlights. It omits file contents, shel
 commands, absolute paths, and the full conversation. Review it before sharing:
 bounded does not mean secret-free.
 
-## In the 3.0 source candidate
+## In the 0.3 release line
 
 Coding runs, hosted and Ollama routing, verified completion, project sessions,
 portable handoffs, review and ship, skills and capability reporting, doctor and

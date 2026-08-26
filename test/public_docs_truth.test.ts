@@ -100,18 +100,17 @@ function shellAetherInvocations(markdown: string): Array<{ words: ShellWord[]; o
   return invocations;
 }
 
-test("README names the committed published and source versions without registry access", () => {
+test("README delegates npm latest to the registry while naming the source version", () => {
   const registryVersion = /registry served exactly one\s+version of\s+`[^`]+`[^`\n]*`([^`]+)`/i.exec(
     releaseTruth,
   )?.[1];
   const latestVersion = /dist-tags\.latest`? resolved to\s*\r?\n?`([^`]+)`/i.exec(releaseTruth)?.[1];
   assert.ok(registryVersion && latestVersion, "committed release truth has no parseable npm availability record");
   assert.equal(registryVersion, latestVersion, "committed registry version and latest dist-tag disagree");
-  const publishedVersion = latestVersion;
   const sourceVersion = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }).version;
-  assert.notEqual(sourceVersion, publishedVersion, "this guard is only needed while source is ahead of npm latest");
   const tick = String.fromCharCode(96);
-  assert.ok(readme.includes(`| npm ${tick}latest${tick} | **${publishedVersion}** |`));
+  assert.ok(readme.includes(`| npm ${tick}latest${tick} | **Registry-selected** |`));
+  assert.doesNotMatch(readme, /\|\s*npm\s+`latest`\s*\|\s*\*\*\d+\.\d+\.\d+\*\*/i);
   assert.ok(readme.includes(`| ${tick}main${tick} source build | **${sourceVersion}** |`));
 
   const sourceStart = readme.indexOf("<!-- SOURCE-0.3-WORKFLOWS:START -->");
@@ -119,7 +118,7 @@ test("README names the committed published and source versions without registry 
   assert.ok(sourceStart >= 0 && sourceEnd > sourceStart, "README source-only scope markers are missing");
   const sourceScope = readme.slice(sourceStart, sourceEnd);
   assert.match(sourceScope, new RegExp(`Requires the ${sourceVersion.replaceAll(".", "\\.")} source build`));
-  assert.match(sourceScope, /future published 0\.3\.x release/);
+  assert.match(sourceScope, /or a published 0\.3\.x release/);
 });
 
 test("README fenced shell examples use registered commands and flags", () => {

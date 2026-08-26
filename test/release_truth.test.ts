@@ -65,7 +65,7 @@ function validInput(): ReleaseTruthInput {
     capabilities: { state: "available", value: [] },
     generatedDocs: { state: "available", value: [] },
     catalogue: { state: "available", value: { catalogueDigest: "abc", renderedDigest: "abc", generatedAt: "2026-08-22T00:00:00Z", observedAt: "2026-08-23T00:00:00Z", maxAgeMs: 172_800_000 } },
-    registry: { state: "available", value: { sourceVersion: "0.3.0", publishedVersions: ["0.1.0"], latest: "0.1.0", publicClaim: { sourceAvailability: "unpublished", latest: "0.1.0" } } },
+    registry: { state: "available", value: { sourceVersion: "0.3.0", publishedVersions: ["0.1.0"], latest: "0.1.0", publicClaim: { latest: "Registry-selected" } } },
   };
 }
 
@@ -77,6 +77,29 @@ test("release-truth@1 emits a stable machine-readable passing result", () => {
   assert.deepEqual(result.summary, { total: 12, passed: 12, failed: 0, unavailable: 0, notApplicable: 0 });
   assert.match(JSON.stringify(result), /aether-agent\/release-truth@1/);
   assert.match(result.humanSummary[0]!, /^PASS/);
+});
+
+test("registry truth remains valid before and after publication", () => {
+  const beforePublish = validInput();
+  assert.equal(evaluateReleaseTruth(beforePublish).checks.find((item) => item.id === "registry.source-truth")?.status, "pass");
+
+  const afterPublish = validInput();
+  afterPublish.registry = {
+    state: "available",
+    value: { sourceVersion: "0.3.0", publishedVersions: ["0.1.0", "0.3.0"], latest: "0.3.0", publicClaim: { latest: "Registry-selected" } },
+  };
+  assert.equal(evaluateReleaseTruth(afterPublish).checks.find((item) => item.id === "registry.source-truth")?.status, "pass");
+});
+
+test("registry truth rejects a hard-coded README latest value", () => {
+  const input = validInput();
+  input.registry = {
+    state: "available",
+    value: { sourceVersion: "0.3.0", publishedVersions: ["0.1.0"], latest: "0.1.0", publicClaim: { latest: "0.1.0" } },
+  };
+  const finding = evaluateReleaseTruth(input).checks.find((item) => item.id === "registry.source-truth");
+  assert.equal(finding?.status, "fail");
+  assert.match(finding?.evidence.join("\n") ?? "", /delegate npm latest selection/);
 });
 
 test("version disagreement fails with exact evidence and remediation", () => {

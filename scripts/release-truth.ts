@@ -26,7 +26,7 @@ export interface CapabilityDisposition { id: string; shipped: boolean; documente
 export interface GeneratedDocDigest { id: string; manifestDigest: string; documentDigest: string }
 export interface CatalogueTruth { catalogueDigest: string; renderedDigest: string; generatedAt: string; observedAt: string; maxAgeMs: number }
 export interface PackedClaim { id: string; source: string; requiredPaths: readonly string[] }
-export interface RegistryTruth { sourceVersion: string; publishedVersions: readonly string[]; latest: string | null; publicClaim: { sourceAvailability: "published" | "unpublished"; latest: string | null } }
+export interface RegistryTruth { sourceVersion: string; publishedVersions: readonly string[]; latest: string | null; publicClaim: { latest: string | null } }
 export interface ReleaseTruthEvidence {
   capabilities?: Evidence<readonly CapabilityDisposition[]>;
   generatedDocs?: Evidence<readonly GeneratedDocDigest[]>;
@@ -287,7 +287,7 @@ export function evaluateReleaseTruth(input: ReleaseTruthInput): ReleaseTruthResu
     evidenceCheck("generated-docs.digest", input.generatedDocs, (items) => items.filter((item) => !item.manifestDigest || item.manifestDigest !== item.documentDigest).map((item) => `${item.id} generated digest differs from its manifest`), "generated command/model docs match manifests", "Regenerate documents from canonical manifests."),
     evidenceCheck("catalogue.digest-freshness", input.catalogue, (item) => { const failures: string[] = []; if (!item.catalogueDigest || item.catalogueDigest !== item.renderedDigest) failures.push("catalogue rendered digest differs from canonical digest"); const generated = Date.parse(item.generatedAt); const observed = Date.parse(item.observedAt); if (!Number.isFinite(generated) || !Number.isFinite(observed)) failures.push("catalogue timestamps are invalid"); else if (generated - observed > 5 * 60_000) failures.push("catalogue generatedAt is materially in the future"); else if (observed - generated > item.maxAgeMs) failures.push("catalogue snapshot is stale"); return failures; }, "catalogue digest and freshness are valid", "Refresh authoritative catalogue data and regenerate outputs."),
     check("package.claim-inventory", packageClaimsFromFiles(input.files).flatMap((claim) => claim.requiredPaths.filter((path) => !packed.has(path)).map((path) => `${claim.id} claims ${path} from ${claim.source}, but it is absent from the package`)), "packed contents satisfy independently derived package and public claims", "Package every manifest target and required public document, or correct its authoritative source."),
-    evidenceCheck("registry.source-truth", input.registry, (item) => { const failures: string[] = []; const published = item.publishedVersions.includes(item.sourceVersion); if (item.sourceVersion !== version) failures.push("registry evidence source version differs from package"); if ((item.publicClaim.sourceAvailability === "published") !== published) failures.push("public source availability differs from registry evidence"); if (item.publicClaim.latest !== item.latest) failures.push("public latest claim differs from registry dist-tag"); return failures; }, "source and registry claims match observed dist-tags", "Run the npm host probe; network failure must remain unavailable."),
+    evidenceCheck("registry.source-truth", input.registry, (item) => { const failures: string[] = []; if (item.sourceVersion !== version) failures.push("registry evidence source version differs from package"); if (item.publicClaim.latest !== "Registry-selected") failures.push("README must delegate npm latest selection to the live registry instead of hard-coding a version"); return failures; }, "source version matches and public latest wording is transition-safe", "Use the Registry-selected README contract and run the npm host probe; network failure must remain unavailable."),
   ];
   return resultFromChecks(version, checks);
 }
@@ -423,17 +423,13 @@ export async function observeNpmRegistry(root: string): Promise<Evidence<Registr
     const latest = typeof body["dist-tags"]?.["latest"] === "string" ? body["dist-tags"]["latest"] : null;
     const readme = readFileSync(join(root, "README.md"), "utf8");
     const publicLatest = /\|\s*npm\s+`latest`\s*\|\s*\*\*([^*]+)\*\*/i.exec(readme)?.[1]?.trim() ?? null;
-    const publicSource = /\|\s*`main`\s+source build\s*\|\s*\*\*([^*]+)\*\*/i.exec(readme)?.[1]?.trim() ?? "";
-    const sourceAvailability = publicSource === source && /future published/i.test(readme)
-      ? "unpublished"
-      : "published";
     return {
       state: "available",
       value: {
         sourceVersion: source,
         publishedVersions: versions,
         latest,
-        publicClaim: { sourceAvailability, latest: publicLatest },
+        publicClaim: { latest: publicLatest },
       },
     };
   } catch (error) {
