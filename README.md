@@ -20,25 +20,35 @@ local host owns workspace tools, permissions, sessions, review, and verification
 
 ## Install the right version
 
-Choose the install channel that matches the version you intend to run:
+Two surfaces exist at once: the package published to npm, and the `main` source
+build in this repository. Publishing is an owner-controlled operation, so source
+presence is not registry availability, and the two can hold different versions.
 
 | Install | Version | What you get |
 |---|---:|---|
-| npm `latest` | **Registry-selected** | The release currently selected by npm's live `latest` dist-tag. |
+| npm `latest` | [![npm latest](https://img.shields.io/npm/v/aether-agents?label=&color=14b8a6)](https://www.npmjs.com/package/aether-agents) | Whatever that badge resolves to right now — it tracks the live `latest` dist-tag. |
 | `main` source build | **0.3.0** | The 0.3 coding, Ollama, session, review, and ship workflows below. |
 
-> `npm install ...@latest` follows the registry's live dist-tag; this README
-> deliberately does not copy that changing value. Check it with
-> `npm view aether-agents version`, and verify the installed CLI with
-> `aether --version`. The 0.3 workflows below are available from npm when that
-> command reports **0.3.x**; before then, use the `main` source build. The
+> **Confirm your version before following a version-labelled section.** Run
+> `npm view aether-agents version` for the live `latest` dist-tag, and
+> `aether --version` for what you actually have installed. Sections marked
+> “source 0.3.0” require **0.3.0 or newer**; if your installed version is lower,
+> use the source build below. The
 > [release record](docs/releases/2026-08-22.md) and
-> [operator packet](docs/releases/OPERATOR-PACKET-v0.3.0.md) preserve the release evidence.
+> [operator packet](docs/releases/OPERATOR-PACKET-v0.3.0.md) preserve the evidence.
 
-To install whichever release npm currently selects:
+Install from npm:
 
 ```bash
 npm install -g aether-agents@latest --ignore-scripts
+aether --version
+```
+
+If that reports **0.3.0 or newer**, every section below applies. If it reports an
+earlier version, npm has not caught up with `main` yet — sign in, inspect models,
+and use chat, then build from source for the rest:
+
+```bash
 aether auth login
 aether models
 aether chat "hello"
@@ -46,7 +56,7 @@ aether chat "hello"
 
 <!-- SOURCE-0.3-WORKFLOWS:START -->
 
-> **Requires the 0.3.0 source build or a published 0.3.x release.**
+> **Requires 0.3.0 or newer**, from npm or from the source build below.
 
 Node.js 24 or newer is required:
 
@@ -145,7 +155,7 @@ identity, touched paths, and summarized highlights. It omits file contents, shel
 commands, absolute paths, and the full conversation. Review it before sharing:
 bounded does not mean secret-free.
 
-## In the 0.3 release line
+## In the 0.3 source line
 
 Coding runs, hosted and Ollama routing, verified completion, project sessions,
 portable handoffs, review and ship, skills and capability reporting, doctor and

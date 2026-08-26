@@ -100,25 +100,35 @@ function shellAetherInvocations(markdown: string): Array<{ words: ShellWord[]; o
   return invocations;
 }
 
-test("README delegates npm latest to the registry while naming the source version", () => {
+test("the committed release record keeps a self-consistent npm availability entry", () => {
   const registryVersion = /registry served exactly one\s+version of\s+`[^`]+`[^`\n]*`([^`]+)`/i.exec(
     releaseTruth,
   )?.[1];
   const latestVersion = /dist-tags\.latest`? resolved to\s*\r?\n?`([^`]+)`/i.exec(releaseTruth)?.[1];
   assert.ok(registryVersion && latestVersion, "committed release truth has no parseable npm availability record");
   assert.equal(registryVersion, latestVersion, "committed registry version and latest dist-tag disagree");
+});
+
+test("README states npm and source versions in a way publishing cannot falsify", () => {
+  // README.md ships inside the tarball and becomes the npmjs.com landing page, so any literal
+  // dist-tag version it prints is true only until the next publish. The npm cell must therefore
+  // resolve its value when the page is read, not when the commit was written.
   const sourceVersion = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }).version;
   const tick = String.fromCharCode(96);
-  assert.ok(readme.includes(`| npm ${tick}latest${tick} | **Registry-selected** |`));
-  assert.doesNotMatch(readme, /\|\s*npm\s+`latest`\s*\|\s*\*\*\d+\.\d+\.\d+\*\*/i);
+
+  const npmCell = new RegExp(`^\\| npm ${tick}latest${tick} \\|([^|]*)\\|`, "m").exec(readme)?.[1];
+  assert.ok(npmCell, "README has no npm `latest` install row");
+  assert.doesNotMatch(npmCell, /\d+\.\d+\.\d+/, "the npm `latest` cell pins a version that publishing invalidates");
+  assert.match(npmCell, /img\.shields\.io\/npm\/v\/aether-agents/, "the npm `latest` cell must resolve the live dist-tag");
+  assert.doesNotMatch(readme, /future published/i, "README asserts an unpublished state that publishing invalidates");
+
   assert.ok(readme.includes(`| ${tick}main${tick} source build | **${sourceVersion}** |`));
 
   const sourceStart = readme.indexOf("<!-- SOURCE-0.3-WORKFLOWS:START -->");
   const sourceEnd = readme.indexOf("<!-- SOURCE-0.3-WORKFLOWS:END -->");
   assert.ok(sourceStart >= 0 && sourceEnd > sourceStart, "README source-only scope markers are missing");
   const sourceScope = readme.slice(sourceStart, sourceEnd);
-  assert.match(sourceScope, new RegExp(`Requires the ${sourceVersion.replaceAll(".", "\\.")} source build`));
-  assert.match(sourceScope, /or a published 0\.3\.x release/);
+  assert.match(sourceScope, new RegExp(`Requires ${sourceVersion.replaceAll(".", "\\.")} or newer`));
 });
 
 test("README fenced shell examples use registered commands and flags", () => {

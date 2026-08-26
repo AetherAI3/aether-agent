@@ -54,11 +54,11 @@ const HOSTED_UBUNTU_LABEL = "Candidate expected GitHub-hosted Ubuntu value";
 const HOSTED_WINDOWS_LABEL = "Candidate expected GitHub-hosted Windows value";
 const LOCAL_WINDOWS_LABEL = "Current local Windows default-checkout measurement";
 const LOCAL_LINUX_LABEL = "Current local Linux/LF checkout measurement";
-const EXPECTED_UBUNTU_UNPACKED = 3_688_489;
-const EXPECTED_HOSTED_WINDOWS_UNPACKED = 3_690_440;
-const EXPECTED_LOCAL_WINDOWS_UNPACKED = 3_690_440;
-const EXPECTED_LINUX_PACKED = 835_779;
-const EXPECTED_WINDOWS_PACKED = 836_067;
+const EXPECTED_UBUNTU_UNPACKED = 3_688_966;
+const EXPECTED_HOSTED_WINDOWS_UNPACKED = 3_690_927;
+const EXPECTED_LOCAL_WINDOWS_UNPACKED = 3_690_927;
+const EXPECTED_LINUX_PACKED = 835_957;
+const EXPECTED_WINDOWS_PACKED = 836_234;
 
 function parsePacketRows(packet: string): PacketRows {
   const rows: PacketRows = new Map();
@@ -100,31 +100,31 @@ function assertPacketProvenance(packet: string): PacketRows {
   );
   assert.equal(
     onlyPacketRow(rows, HOSTED_UBUNTU_LABEL),
-    "3,688,489 unpacked bytes — pending exact-head hosted confirmation",
+    "3,688,966 unpacked bytes — pending exact-head hosted confirmation",
   );
   assert.equal(
     onlyPacketRow(rows, HOSTED_WINDOWS_LABEL),
-    "3,690,440 unpacked bytes — pending exact-head hosted confirmation",
+    "3,690,927 unpacked bytes — pending exact-head hosted confirmation",
   );
   assert.equal(
     onlyPacketRow(rows, LOCAL_WINDOWS_LABEL),
-    "3,690,440 unpacked bytes / 836,067 predicted packed bytes",
+    "3,690,927 unpacked bytes / 836,234 predicted packed bytes",
   );
   assert.equal(
     onlyPacketRow(rows, LOCAL_LINUX_LABEL),
-    "3,688,489 unpacked bytes / 835,779 predicted packed bytes",
+    "3,688,966 unpacked bytes / 835,957 predicted packed bytes",
   );
 
   const normalized = packet.replace(/\s+/g, " ");
   assert.ok(
     normalized.includes(
-      "The 3,688,489 Linux/LF and 3,690,440 Windows values are preflight expectations, not claims that this newly committed head has already run; fresh hosted CI must confirm both.",
+      "The 3,688,966 Linux/LF and 3,690,927 Windows values are preflight expectations, not claims that this newly committed head has already run; fresh hosted CI must confirm both.",
     ),
     "the operator packet must keep candidate host values explicitly pending fresh hosted confirmation",
   );
   assert.ok(
     normalized.includes(
-      "Their 3,688,489 and 3,690,440 unpacked-byte results are recorded as the expected hosted platform values pending exact-head CI;",
+      "Their 3,688,966 and 3,690,927 unpacked-byte results are recorded as the expected hosted platform values pending exact-head CI;",
     ),
     "the packaged-manifest prose must keep hosted values pending exact-head CI",
   );
@@ -211,22 +211,22 @@ test("the operator packet fails closed on contradictory release-evidence mutatio
     [
       "duplicate hosted expectation",
       packet.replace(
-        `| ${HOSTED_UBUNTU_LABEL} | 3,688,489 unpacked bytes — pending exact-head hosted confirmation |`,
-        `| ${HOSTED_UBUNTU_LABEL} | 1 unpacked byte — pending exact-head hosted confirmation |\n| ${HOSTED_UBUNTU_LABEL} | 3,688,489 unpacked bytes — pending exact-head hosted confirmation |`,
+        `| ${HOSTED_UBUNTU_LABEL} | 3,688,966 unpacked bytes — pending exact-head hosted confirmation |`,
+        `| ${HOSTED_UBUNTU_LABEL} | 1 unpacked byte — pending exact-head hosted confirmation |\n| ${HOSTED_UBUNTU_LABEL} | 3,688,966 unpacked bytes — pending exact-head hosted confirmation |`,
       ),
     ],
     [
       "stale local packed size",
-      packet.replace("3,688,489 unpacked bytes / 835,779 predicted packed bytes", "3,688,489 unpacked bytes / 835,778 predicted packed bytes"),
+      packet.replace("3,688,966 unpacked bytes / 835,957 predicted packed bytes", "3,688,966 unpacked bytes / 835,956 predicted packed bytes"),
     ],
     [
       "stale local unpacked size",
-      packet.replace("3,688,489 unpacked bytes / 835,779 predicted packed bytes", "3,688,488 unpacked bytes / 835,779 predicted packed bytes"),
+      packet.replace("3,688,966 unpacked bytes / 835,957 predicted packed bytes", "3,688,965 unpacked bytes / 835,957 predicted packed bytes"),
     ],
     [
       "premature hosted-completion prose",
       packet.replace(
-        /The 3,688,489 Linux\/LF and 3,690,440 Windows values are preflight expectations,\r?\nnot claims that this newly committed head has already run; fresh hosted CI must\r?\nconfirm both\./,
+        /The 3,688,966 Linux\/LF and 3,690,927 Windows values are preflight expectations,\r?\nnot claims that this newly committed head has already run; fresh hosted CI must\r?\nconfirm both\./,
         "Those\nare completed exact-head GitHub-hosted measurements.",
       ),
     ],

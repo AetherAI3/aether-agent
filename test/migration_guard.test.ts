@@ -22,7 +22,9 @@ function sourceFiles(dir: string): string[] {
 
 test("TypeScript 7 toolchain and Node 24 contract stay pinned", () => {
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as PackageManifest;
-  assert.match(pkg.devDependencies?.["typescript"] ?? "", /^\^7\./);
+  // Major 7 is the contract. An exact version satisfies it more strictly than a
+  // caret does, so accept either, but reject anything looser than a caret.
+  assert.match(pkg.devDependencies?.["typescript"] ?? "", /^\^?7\.\d+\.\d+$/);
   assert.match(pkg.devDependencies?.["@types/node"] ?? "", /^\^24\./);
   assert.equal(pkg.engines?.["node"], ">=24");
   assert.equal(pkg.scripts?.["typecheck"], "tsc -p tsconfig.json --noEmit");

@@ -1,14 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   RELEASE_TRUTH_SCHEMA,
   documentedCommands,
   documentedSlashCommands,
   evaluateReleaseTruth,
   releaseTruthFailure,
+  derivePublicRegistryClaim,
   runReleaseTruth,
   scanRepositoryTexts,
   type ReleaseTruthInput,
@@ -42,7 +44,7 @@ function validInput(): ReleaseTruthInput {
   ].join("\n");
   const files = {
     "package.json": JSON.stringify({
-      name: "aether-agents", version: "0.3.0", main: "dist/src/main.js", types: "dist/src/main.d.ts",
+      name: "aether-agents", version: "0.3.0", main: "dist/src/main.js", types: "dist/src/index.d.ts",
       bin: { aether: "dist/src/main.js" },
     }),
     "package-lock.json": JSON.stringify({
@@ -59,13 +61,13 @@ function validInput(): ReleaseTruthInput {
   return {
     files,
     scannedTexts: { ...files, "src/example.ts": "export const safe = true;\n" },
-    packedFiles: ["package.json", "README.md", "COMMANDS.md", "dist/src/main.js", "dist/src/main.d.ts"],
+    packedFiles: ["package.json", "README.md", "COMMANDS.md", "dist/src/main.js", "dist/src/index.d.ts"],
     commands,
     slashCommands,
     capabilities: { state: "available", value: [] },
     generatedDocs: { state: "available", value: [] },
     catalogue: { state: "available", value: { catalogueDigest: "abc", renderedDigest: "abc", generatedAt: "2026-08-22T00:00:00Z", observedAt: "2026-08-23T00:00:00Z", maxAgeMs: 172_800_000 } },
-    registry: { state: "available", value: { sourceVersion: "0.3.0", publishedVersions: ["0.1.0"], latest: "0.1.0", publicClaim: { latest: "Registry-selected" } } },
+    registry: { state: "available", value: { sourceVersion: "0.3.0", publishedVersions: ["0.1.0"], latest: "0.1.0", publicClaim: { sourceVersion: "0.3.0", pinnedRegistryClaims: [] } } },
   };
 }
 
@@ -77,29 +79,6 @@ test("release-truth@1 emits a stable machine-readable passing result", () => {
   assert.deepEqual(result.summary, { total: 12, passed: 12, failed: 0, unavailable: 0, notApplicable: 0 });
   assert.match(JSON.stringify(result), /aether-agent\/release-truth@1/);
   assert.match(result.humanSummary[0]!, /^PASS/);
-});
-
-test("registry truth remains valid before and after publication", () => {
-  const beforePublish = validInput();
-  assert.equal(evaluateReleaseTruth(beforePublish).checks.find((item) => item.id === "registry.source-truth")?.status, "pass");
-
-  const afterPublish = validInput();
-  afterPublish.registry = {
-    state: "available",
-    value: { sourceVersion: "0.3.0", publishedVersions: ["0.1.0", "0.3.0"], latest: "0.3.0", publicClaim: { latest: "Registry-selected" } },
-  };
-  assert.equal(evaluateReleaseTruth(afterPublish).checks.find((item) => item.id === "registry.source-truth")?.status, "pass");
-});
-
-test("registry truth rejects a hard-coded README latest value", () => {
-  const input = validInput();
-  input.registry = {
-    state: "available",
-    value: { sourceVersion: "0.3.0", publishedVersions: ["0.1.0"], latest: "0.1.0", publicClaim: { latest: "0.1.0" } },
-  };
-  const finding = evaluateReleaseTruth(input).checks.find((item) => item.id === "registry.source-truth");
-  assert.equal(finding?.status, "fail");
-  assert.match(finding?.evidence.join("\n") ?? "", /delegate npm latest selection/);
 });
 
 test("version disagreement fails with exact evidence and remediation", () => {
@@ -258,10 +237,10 @@ test("a required capability missing from independent evidence fails closed", () 
 
 test("missing package manifest targets fail the independently derived claim inventory", () => {
   const input = validInput();
-  input.packedFiles = input.packedFiles.filter((path) => path !== "dist/src/main.d.ts");
+  input.packedFiles = input.packedFiles.filter((path) => path !== "dist/src/index.d.ts");
   const finding = evaluateReleaseTruth(input).checks.find((item) => item.id === "package.claim-inventory");
   assert.equal(finding?.status, "fail");
-  assert.match(finding?.evidence.join("\n") ?? "", /package\.json#types claims dist\/src\/main\.d\.ts/);
+  assert.match(finding?.evidence.join("\n") ?? "", /package\.json#types claims dist\/src\/index\.d\.ts/);
 });
 
 test("catalogue evidence rejects a materially future generatedAt", () => {
@@ -283,7 +262,7 @@ test("generated public documents are required independently by package files and
   input.files = {
     ...input.files,
     "package.json": JSON.stringify({
-      name: "aether-agents", version: "0.3.0", main: "dist/src/main.js", types: "dist/src/main.d.ts",
+      name: "aether-agents", version: "0.3.0", main: "dist/src/main.js", types: "dist/src/index.d.ts",
       bin: { aether: "dist/src/main.js" }, files: ["dist/src", ...generated],
     }),
     "README.md": "[HTML](docs/model-catalogue/index.html) [JSON](docs/model-catalogue/catalogue.json) [Markdown](docs/generated/model-catalogue.md)",
@@ -303,4 +282,80 @@ test("not_applicable cannot hide a required evidence lane without its explicit c
   const finding = evaluateReleaseTruth(input).checks.find((item) => item.id === "generated-docs.digest");
   assert.equal(finding?.status, "fail");
   assert.match(finding?.evidence.join("\n") ?? "", /expected release-truth\/v0\.3\.0\/no-generated-docs/);
+});
+
+test("packed public docs that pin registry state fail registry source truth", () => {
+  const input = validInput();
+  input.registry = {
+    state: "available",
+    value: {
+      sourceVersion: "0.3.0", publishedVersions: ["0.1.0"], latest: "0.1.0",
+      publicClaim: { sourceVersion: "0.3.0", pinnedRegistryClaims: ["README.md: npm-latest table cell names a fixed version"] },
+    },
+  };
+  const finding = evaluateReleaseTruth(input).checks.find((item) => item.id === "registry.source-truth");
+  assert.equal(finding?.status, "fail");
+  assert.match(finding?.evidence.join("\n") ?? "", /pin registry state that publishing invalidates: README\.md/);
+  assert.match(finding?.remediation ?? "", /never hard-code a dist-tag version/);
+});
+
+test("registry source truth still catches a drifting source claim and an unpublished dist-tag", () => {
+  const drifted = validInput();
+  drifted.registry = {
+    state: "available",
+    value: { sourceVersion: "0.3.0", publishedVersions: ["0.1.0"], latest: "0.1.0", publicClaim: { sourceVersion: "0.2.0", pinnedRegistryClaims: [] } },
+  };
+  const driftFinding = evaluateReleaseTruth(drifted).checks.find((item) => item.id === "registry.source-truth");
+  assert.equal(driftFinding?.status, "fail");
+  assert.match(driftFinding?.evidence.join("\n") ?? "", /public source-build claim 0\.2\.0 differs from the package version 0\.3\.0/);
+
+  const ghost = validInput();
+  ghost.registry = {
+    state: "available",
+    value: { sourceVersion: "0.3.0", publishedVersions: ["0.1.0"], latest: "9.9.9", publicClaim: { sourceVersion: "0.3.0", pinnedRegistryClaims: [] } },
+  };
+  const ghostFinding = evaluateReleaseTruth(ghost).checks.find((item) => item.id === "registry.source-truth");
+  assert.equal(ghostFinding?.status, "fail");
+  assert.match(ghostFinding?.evidence.join("\n") ?? "", /observed latest dist-tag 9\.9\.9 is not among published versions/);
+});
+
+test("public registry claims are derived from packed docs and reject pre-publish-only wording", () => {
+  const pinned = derivePublicRegistryClaim({
+    "README.md": [
+      "| Install | Version | What you get |",
+      "|---|---:|---|",
+      "| npm `latest` | **0.1.0** | Published baseline. |",
+      "| `main` source build | **0.3.0** | Everything below. |",
+      "",
+      "> npm `latest` still resolves to **0.1.0**. Wait for a future published 0.3.x release.",
+    ].join("\n"),
+  });
+  assert.equal(pinned.sourceVersion, "0.3.0");
+  assert.deepEqual(pinned.pinnedRegistryClaims, [
+    "README.md: npm-latest table cell names a fixed version",
+    "README.md: prose asserts the source version is unpublished",
+    "README.md: prose pins the npm latest dist-tag to a fixed version",
+  ]);
+
+  const live = derivePublicRegistryClaim({
+    "README.md": [
+      "| Install | Version | What you get |",
+      "|---|---:|---|",
+      "| npm `latest` | [![npm latest](https://img.shields.io/npm/v/aether-agents?label=&color=14b8a6)](https://www.npmjs.com/package/aether-agents) | The live `latest` dist-tag. |",
+      "| `main` source build | **0.3.0** | Everything below. |",
+      "",
+      "> Run `npm view aether-agents version` for the live `latest` dist-tag, and `aether --version` for what you installed. Sections marked \u201csource 0.3.0\u201d require **0.3.0 or newer**.",
+    ].join("\n"),
+  });
+  assert.equal(live.sourceVersion, "0.3.0");
+  assert.deepEqual(live.pinnedRegistryClaims, []);
+});
+
+test("the shipped README states npm status in a way publishing cannot falsify", () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const readme = readFileSync(join(root, "README.md"), "utf8");
+  const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string };
+  const claim = derivePublicRegistryClaim({ "README.md": readme });
+  assert.deepEqual(claim.pinnedRegistryClaims, []);
+  assert.equal(claim.sourceVersion, manifest.version);
 });

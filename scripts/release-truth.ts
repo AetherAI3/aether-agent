@@ -26,7 +26,8 @@ export interface CapabilityDisposition { id: string; shipped: boolean; documente
 export interface GeneratedDocDigest { id: string; manifestDigest: string; documentDigest: string }
 export interface CatalogueTruth { catalogueDigest: string; renderedDigest: string; generatedAt: string; observedAt: string; maxAgeMs: number }
 export interface PackedClaim { id: string; source: string; requiredPaths: readonly string[] }
-export interface RegistryTruth { sourceVersion: string; publishedVersions: readonly string[]; latest: string | null; publicClaim: { latest: string | null } }
+export interface PublicRegistryClaim { sourceVersion: string | null; pinnedRegistryClaims: readonly string[] }
+export interface RegistryTruth { sourceVersion: string; publishedVersions: readonly string[]; latest: string | null; publicClaim: PublicRegistryClaim }
 export interface ReleaseTruthEvidence {
   capabilities?: Evidence<readonly CapabilityDisposition[]>;
   generatedDocs?: Evidence<readonly GeneratedDocDigest[]>;
@@ -287,7 +288,14 @@ export function evaluateReleaseTruth(input: ReleaseTruthInput): ReleaseTruthResu
     evidenceCheck("generated-docs.digest", input.generatedDocs, (items) => items.filter((item) => !item.manifestDigest || item.manifestDigest !== item.documentDigest).map((item) => `${item.id} generated digest differs from its manifest`), "generated command/model docs match manifests", "Regenerate documents from canonical manifests."),
     evidenceCheck("catalogue.digest-freshness", input.catalogue, (item) => { const failures: string[] = []; if (!item.catalogueDigest || item.catalogueDigest !== item.renderedDigest) failures.push("catalogue rendered digest differs from canonical digest"); const generated = Date.parse(item.generatedAt); const observed = Date.parse(item.observedAt); if (!Number.isFinite(generated) || !Number.isFinite(observed)) failures.push("catalogue timestamps are invalid"); else if (generated - observed > 5 * 60_000) failures.push("catalogue generatedAt is materially in the future"); else if (observed - generated > item.maxAgeMs) failures.push("catalogue snapshot is stale"); return failures; }, "catalogue digest and freshness are valid", "Refresh authoritative catalogue data and regenerate outputs."),
     check("package.claim-inventory", packageClaimsFromFiles(input.files).flatMap((claim) => claim.requiredPaths.filter((path) => !packed.has(path)).map((path) => `${claim.id} claims ${path} from ${claim.source}, but it is absent from the package`)), "packed contents satisfy independently derived package and public claims", "Package every manifest target and required public document, or correct its authoritative source."),
-    evidenceCheck("registry.source-truth", input.registry, (item) => { const failures: string[] = []; if (item.sourceVersion !== version) failures.push("registry evidence source version differs from package"); if (item.publicClaim.latest !== "Registry-selected") failures.push("README must delegate npm latest selection to the live registry instead of hard-coding a version"); return failures; }, "source version matches and public latest wording is transition-safe", "Use the Registry-selected README contract and run the npm host probe; network failure must remain unavailable."),
+    evidenceCheck("registry.source-truth", input.registry, (item) => {
+      const failures: string[] = [];
+      if (item.sourceVersion !== version) failures.push("registry evidence source version differs from package");
+      if (item.publicClaim.sourceVersion !== null && item.publicClaim.sourceVersion !== item.sourceVersion) failures.push(`public source-build claim ${item.publicClaim.sourceVersion} differs from the package version ${item.sourceVersion}`);
+      for (const claim of item.publicClaim.pinnedRegistryClaims) failures.push(`packed public docs pin registry state that publishing invalidates: ${claim}`);
+      if (item.latest !== null && !item.publishedVersions.includes(item.latest)) failures.push(`observed latest dist-tag ${item.latest} is not among published versions`);
+      return failures;
+    }, "packed public docs track registry state instead of pinning it", "Report npm state with the live npm badge and `npm view aether-agents version`; never hard-code a dist-tag version in packed documentation."),
   ];
   return resultFromChecks(version, checks);
 }
@@ -409,6 +417,29 @@ export function deterministicRepositoryEvidence(root: string = process.cwd()): R
   return evidence;
 }
 
+const PACKED_PUBLIC_DOCS = ["README.md", "COMMANDS.md", "NOTICE.md", "docs/generated/commands.md", "docs/generated/model-catalogue.md"] as const;
+
+/**
+ * Registry state is owner-controlled and flips the moment a release is published, so packed
+ * documentation must describe it with a live source (the npm badge, `npm view`) rather than a
+ * literal version. Anything that pins a dist-tag version, or asserts that the source version is
+ * still unpublished, is a publish-order landmine even while it is momentarily accurate.
+ */
+const PINNED_REGISTRY_CLAIM_PATTERNS: readonly { id: string; pattern: RegExp }[] = [
+  { id: "npm-latest table cell names a fixed version", pattern: /\|\s*npm\s+`latest`\s*\|[^|\n]*?\bv?\d+\.\d+\.\d+/i },
+  { id: "prose pins the npm latest dist-tag to a fixed version", pattern: /npm\s+`?latest`?[^.\n|]{0,40}?(?:resolves to|remains|is still|is)\s+\*{0,2}v?\d+\.\d+\.\d+/i },
+  { id: "prose asserts the source version is unpublished", pattern: /\b(?:future published|not yet published|once (?:it is |we |this )?published?)\b/i },
+];
+
+export function derivePublicRegistryClaim(docs: Record<string, string>): PublicRegistryClaim {
+  const readme = docs["README.md"] ?? "";
+  const sourceVersion = /\|\s*`main`\s+source build\s*\|\s*\*\*([^*]+)\*\*/i.exec(readme)?.[1]?.trim() ?? null;
+  const pinnedRegistryClaims = Object.entries(docs)
+    .flatMap(([path, text]) => PINNED_REGISTRY_CLAIM_PATTERNS.filter((candidate) => candidate.pattern.test(text)).map((candidate) => `${path}: ${candidate.id}`))
+    .sort();
+  return { sourceVersion, pinnedRegistryClaims };
+}
+
 export async function observeNpmRegistry(root: string): Promise<Evidence<RegistryTruth>> {
   try {
     const manifest = parseJson(readFileSync(join(root, "package.json"), "utf8"));
@@ -421,15 +452,17 @@ export async function observeNpmRegistry(root: string): Promise<Evidence<Registr
     const body = await response.json() as { versions?: Record<string, unknown>; "dist-tags"?: Record<string, unknown> };
     const versions = Object.keys(body.versions ?? {}).sort();
     const latest = typeof body["dist-tags"]?.["latest"] === "string" ? body["dist-tags"]["latest"] : null;
-    const readme = readFileSync(join(root, "README.md"), "utf8");
-    const publicLatest = /\|\s*npm\s+`latest`\s*\|\s*\*\*([^*]+)\*\*/i.exec(readme)?.[1]?.trim() ?? null;
+    const packedDocs: Record<string, string> = {};
+    for (const path of PACKED_PUBLIC_DOCS) {
+      try { packedDocs[path] = readFileSync(join(root, path), "utf8"); } catch { /* absent docs are caught by package.public-docs */ }
+    }
     return {
       state: "available",
       value: {
         sourceVersion: source,
         publishedVersions: versions,
         latest,
-        publicClaim: { latest: publicLatest },
+        publicClaim: derivePublicRegistryClaim(packedDocs),
       },
     };
   } catch (error) {

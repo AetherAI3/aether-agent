@@ -16,10 +16,10 @@ to npm are founder-owned and are listed at the end, unrun.
 | Historical archive | `aether-agents-0.3.0.tgz` — 739,977 bytes packed / 3,022,168 unpacked / 575 entries |
 | Historical archive sha256 | `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` |
 | Current exact-head dry run | 618 entries / 4 workflows |
-| Candidate expected GitHub-hosted Ubuntu value | 3,688,489 unpacked bytes — pending exact-head hosted confirmation |
-| Candidate expected GitHub-hosted Windows value | 3,690,440 unpacked bytes — pending exact-head hosted confirmation |
-| Current local Windows default-checkout measurement | 3,690,440 unpacked bytes / 836,067 predicted packed bytes |
-| Current local Linux/LF checkout measurement | 3,688,489 unpacked bytes / 835,779 predicted packed bytes |
+| Candidate expected GitHub-hosted Ubuntu value | 3,688,966 unpacked bytes — pending exact-head hosted confirmation |
+| Candidate expected GitHub-hosted Windows value | 3,690,927 unpacked bytes — pending exact-head hosted confirmation |
+| Current local Windows default-checkout measurement | 3,690,927 unpacked bytes / 836,234 predicted packed bytes |
+| Current local Linux/LF checkout measurement | 3,688,966 unpacked bytes / 835,957 predicted packed bytes |
 | Current archive | **PENDING — no exact-head archive has been produced** |
 | Current archive sha256 | **PENDING — record only after producing that archive** |
 | Cloud catalogue compatibility | PR #1327 final head `70e0645c96b16dedfefb90dd403daecb3c3d3b25`; landed as squash merge `fbb7b98a96682820b85a4bface002dcbf5bf9c37`, tree `9906df6f73b6cd8d8e57e1e552475976394d617f`; safe-field projection digest `sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712` for the dated Agent offline compatibility fixture. Qualified production response was verified at `https://api.aethersystems.net/cloud/public/model-catalogue`: 51 safe-field rows, `listed-not-entitled`, live digest `sha256:4fa3196f26ff5a2be2b2520f4d4c4731ff12fdec4c3f19f9fca6df7722bff9b0`; `/cloud/healthz` reported deployed Cloud `b95c2aac0a96`. |
@@ -142,12 +142,13 @@ at `fb96ee44b03f37a386954a32412728fa7e98a046`; they do not describe the current
 
 On the integration tree, `verify:production` exited 0 and reported 618 entries
 and 4 workflows. Fresh clean platform-shaped candidate checkouts measured
-3,688,489 unpacked bytes for Linux/LF and 3,690,440 for Windows/default.
-The 3,688,489 Linux/LF and 3,690,440 Windows values are preflight expectations,
+3,688,966 unpacked bytes for Linux/LF and 3,690,927 for Windows/default.
+The 3,688,966 Linux/LF and 3,690,927 Windows values are preflight expectations,
 not claims that this newly committed head has already run; fresh hosted CI must
 confirm both. The local
-Windows default checkout measured 3,690,440 unpacked / 836,067 predicted packed
-bytes; the clean LF checkout measured 3,688,489 unpacked / 835,779 predicted packed
+Windows default checkout measured 3,690,927 unpacked / 836,234 predicted packed
+bytes; the clean LF checkout on that same Node 24.18.0/npm 11.16.0 toolchain
+measured 3,688,966 unpacked / 835,957 predicted packed
 bytes. The membership is identical; byte totals are checkout/toolchain
 observations and are not claimed to be cross-machine reproducible. These were
 `npm pack --dry-run` inventories. They did not produce
@@ -162,8 +163,8 @@ The complete top-level npm dry-run reports for the two clean checkout shapes
 were:
 
 ```json
-{"host":"Linux/LF","id":"aether-agents@0.3.0","name":"aether-agents","version":"0.3.0","size":835779,"unpackedSize":3688489,"shasum":"52a59976f97aeb5e76140bc5bb8387282e14c500","integrity":"sha512-5xnDfvBCsc45uLWFwhbM312GrUyRpofkiRAVnxROEkEhGMX9Kxrsur8itcyDeD6gei51g7zHJmsgPOxiySewQA==","filename":"aether-agents-0.3.0.tgz","entryCount":618,"bundled":[]}
-{"host":"Windows/default","id":"aether-agents@0.3.0","name":"aether-agents","version":"0.3.0","size":836067,"unpackedSize":3690440,"shasum":"8ca24eb9d4f77a8a87bfb101a2a7c3fac0283fd6","integrity":"sha512-dYolLft6Ho80MoezVWHux4Ulwp9ZmjcJCME2F3dTjUsYGrSEk/PJ8Xgnrav8UPmuqUKL9sk+9mB+RT+9wEbAxw==","filename":"aether-agents-0.3.0.tgz","entryCount":618,"bundled":[]}
+{"host":"Linux/LF","id":"aether-agents@0.3.0","name":"aether-agents","version":"0.3.0","size":835957,"unpackedSize":3688966,"shasum":"66021f08d961ddd7b9236ce56afc356a48a45997","integrity":"sha512-wkguCmwwWX0ZhY1ZISnYTqhAppwMNawBhXRZxPFErjW8kS4ltMcwd5L5KpNE+vpeOlLnQyuD+/v6+H1AKE3TnA==","filename":"aether-agents-0.3.0.tgz","entryCount":618,"bundled":[]}
+{"host":"Windows/default","id":"aether-agents@0.3.0","name":"aether-agents","version":"0.3.0","size":836234,"unpackedSize":3690927,"shasum":"ee9a89bc55c749f238707dc51a9c2b07c1a72631","integrity":"sha512-tUPTKa0MZhSgUFSR368iXAMsdmQHHuKEeYWg3F88BVbXIPbj19snaDBdXpmFAQf3n1RwIhz+vAIP8TL+tmwIEw==","filename":"aether-agents-0.3.0.tgz","entryCount":618,"bundled":[]}
 ```
 
 The npm-reported `shasum` and `integrity` values above are host-bound dry-run
@@ -270,9 +271,9 @@ catch a dropped feature, because it does not know what the notes promised.
 ### Current dry-run packaged file manifest
 
 The exact-head candidate dry runs reported 618 entries on clean Linux/LF and
-Windows/default checkouts. Their 3,688,489 and 3,690,440 unpacked-byte results
+Windows/default checkouts. Their 3,688,966 and 3,690,927 unpacked-byte results
 are recorded as the expected hosted platform values pending exact-head CI;
-local default and LF checkouts measured 3,690,440 and 3,688,489 respectively
+local default and LF checkouts measured 3,690,927 and 3,688,966 respectively
 because byte totals can move with checkout line
 endings and toolchain metadata. Five files are at the package root, four
 generated public documents are under `docs/`, and everything else is under
@@ -383,8 +384,8 @@ Named as unproven rather than omitted:
 - **The full `npm test` suite inside the candidate run.** The release-candidate
   run executes the release-owned test files only and reports `npm-test` as
   `not-run`; `--full-tests` includes it. The suite *was* run separately for the
-  final #112 candidate — 1615 tests, 1612 pass, 0 fail, 3 documented Windows
-  skips — and that reading is recorded in the PR evidence. It remains local
+  final #112 candidate — 1618 tests, 1615 pass, 0 fail, 3 documented skips —
+  and that reading is recorded in the PR evidence. It remains local
   evidence only; the final proposed head must repeat this proof in required CI.
 - **Anything about the deployed API.** Two claims in the release notes'
   Authentication section describe a *server*, not this package: that the API

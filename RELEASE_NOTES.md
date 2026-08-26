@@ -266,13 +266,15 @@ repository cannot test:
 
 ## Availability — read this before upgrading
 
-**0.3.0 is not on npm.** At the time these notes were written the registry served
-exactly one version of `aether-agents`, `0.1.0`, and `latest` resolved to `0.1.0`.
-Neither 0.2.0 nor 0.3.0 has ever been published, and no GitHub release exists for
-either. So `npm i -g aether-agents --ignore-scripts` installs **0.1.0**, and none
-of the above is in it.
+**0.3.0 ships from source until the release workflow publishes it.** At the time
+these notes were written the registry served exactly one version of
+`aether-agents`, `0.1.0`, and `latest` resolved to `0.1.0`; that is a dated
+observation, not a standing claim about today. Read the current state with
+`npm view aether-agents version`, and read your own install with
+`aether --version`. If that reports a version below 0.3.0, none of the above is
+in it.
 
-Until a `v0.3.0` release is published, build from source:
+Until `aether --version` reports 0.3.0 or newer, build from source:
 
 ```bash
 git clone https://github.com/AetherAI3/aether-agent
