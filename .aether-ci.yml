@@ -1,0 +1,12 @@
+version: 1
+gates:
+  commit: true
+  push: true
+  agent: true
+checks:
+  - name: Release metadata integrity
+    type: test
+    run: node scripts/vps-ci-release-check.mjs
+  - name: NPM manifest dry run
+    type: build
+    run: npm pack --dry-run --ignore-scripts
