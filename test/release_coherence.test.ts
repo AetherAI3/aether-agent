@@ -50,8 +50,8 @@ const ORIGINAL_BASE_LABEL = "Original PR branch base";
 const ORIGINAL_BASE_VALUE = "`85a75645e8b94e8542bcf6ee0f384037a2915a5e` (`origin/main`, after #106; historical)";
 const RECONCILED_BASE_LABEL = "Reconciled base/current main";
 const RECONCILED_BASE_VALUE = "`88b7498457afce482fa69363d908b0e8b3bd4ae9` (`origin/main`, after #111)";
-const HOSTED_UBUNTU_LABEL = "Candidate expected GitHub-hosted Ubuntu value";
-const HOSTED_WINDOWS_LABEL = "Candidate expected GitHub-hosted Windows value";
+const HOSTED_UBUNTU_LABEL = "GitHub-hosted Ubuntu value";
+const HOSTED_WINDOWS_LABEL = "GitHub-hosted Windows value";
 const LOCAL_WINDOWS_LABEL = "Current local Windows default-checkout measurement";
 const LOCAL_LINUX_LABEL = "Current local Linux/LF checkout measurement";
 const EXPECTED_UBUNTU_UNPACKED = 3_688_966;
@@ -96,15 +96,15 @@ function assertPacketProvenance(packet: string): PacketRows {
   assert.deepEqual(
     measurementLabels,
     [HOSTED_UBUNTU_LABEL, HOSTED_WINDOWS_LABEL, LOCAL_WINDOWS_LABEL, LOCAL_LINUX_LABEL].sort(),
-    "the operator packet must contain exactly two pending hosted expectations and two local measurements",
+    "the operator packet must contain exactly two hosted measurements and two local measurements",
   );
   assert.equal(
     onlyPacketRow(rows, HOSTED_UBUNTU_LABEL),
-    "3,688,966 unpacked bytes — pending exact-head hosted confirmation",
+    "3,688,966 unpacked bytes — exact-head CI run `32967113102` passed",
   );
   assert.equal(
     onlyPacketRow(rows, HOSTED_WINDOWS_LABEL),
-    "3,690,927 unpacked bytes — pending exact-head hosted confirmation",
+    "3,690,927 unpacked bytes — exact-head CI run `32967113102` passed",
   );
   assert.equal(
     onlyPacketRow(rows, LOCAL_WINDOWS_LABEL),
@@ -118,15 +118,15 @@ function assertPacketProvenance(packet: string): PacketRows {
   const normalized = packet.replace(/\s+/g, " ");
   assert.ok(
     normalized.includes(
-      "The 3,688,966 Linux/LF and 3,690,927 Windows values are preflight expectations, not claims that this newly committed head has already run; fresh hosted CI must confirm both.",
+      "Exact-head CI run `32967113102` confirmed both hosted platform values at `3cf44bb3f2fc2ae22cc40678209383de8a9f66ad`.",
     ),
-    "the operator packet must keep candidate host values explicitly pending fresh hosted confirmation",
+    "the operator packet must bind hosted package values to exact-head CI",
   );
   assert.ok(
     normalized.includes(
-      "Their 3,688,966 and 3,690,927 unpacked-byte results are recorded as the expected hosted platform values pending exact-head CI;",
+      "Exact-head CI confirmed their 3,688,966 and 3,690,927 unpacked-byte results on the corresponding hosted platforms;",
     ),
-    "the packaged-manifest prose must keep hosted values pending exact-head CI",
+    "the packaged-manifest prose must bind hosted values to exact-head CI",
   );
   return rows;
 }
@@ -185,14 +185,14 @@ test("the dated release log has an entry for this version, and the index links i
   }
 });
 
-test("the operator packet separates current dry-run evidence from the historical archive", () => {
+test("the operator packet separates the qualified pre-merge archive from historical evidence", () => {
   const path = join(root, "docs", "releases", `OPERATOR-PACKET-v${VERSION}.md`);
   assert.ok(existsSync(path), `no docs/releases/OPERATOR-PACKET-v${VERSION}.md`);
   const packet = readFileSync(path, "utf8");
   assert.ok(packet.includes(`v${VERSION}`), "the operator packet does not name the proposed tag");
   assertPacketProvenance(packet);
-  assert.match(packet, /\| Current archive \| \*\*PENDING — no exact-head archive has been produced\*\* \|/);
-  assert.match(packet, /\| Current archive sha256 \| \*\*PENDING — record only after producing that archive\*\* \|/);
+  assert.match(packet, /\| Qualified pre-merge archive \| `aether-agents-0\.3\.0\.tgz` — 835,957 bytes packed \/ 3,688,966 unpacked \/ 618 entries at `3cf44bb\.\.\.`;/);
+  assert.match(packet, /\| Qualified pre-merge archive sha256 \| `6176172deb15eea57519408d93f23b3fac8ab5e2b2e541adddc34b4e5fb4c33d` — regenerate on every new head/);
   assert.match(packet, /\| Historical archive \| `aether-agents-0\.3\.0\.tgz` — 739,977 bytes packed \/ 3,022,168 unpacked \/ 575 entries \|/);
   assert.match(packet, /\| Historical archive sha256 \| `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` \|/);
   assert.doesNotMatch(packet, /fb96ee44[^\n]*(?:ancestor of #96|ancestor of current `main`)/);
@@ -209,10 +209,10 @@ test("the operator packet fails closed on contradictory release-evidence mutatio
       ),
     ],
     [
-      "duplicate hosted expectation",
+      "duplicate hosted measurement",
       packet.replace(
-        `| ${HOSTED_UBUNTU_LABEL} | 3,688,966 unpacked bytes — pending exact-head hosted confirmation |`,
-        `| ${HOSTED_UBUNTU_LABEL} | 1 unpacked byte — pending exact-head hosted confirmation |\n| ${HOSTED_UBUNTU_LABEL} | 3,688,966 unpacked bytes — pending exact-head hosted confirmation |`,
+        `| ${HOSTED_UBUNTU_LABEL} | 3,688,966 unpacked bytes — exact-head CI run \`32967113102\` passed |`,
+        `| ${HOSTED_UBUNTU_LABEL} | 1 unpacked byte — contradictory |\n| ${HOSTED_UBUNTU_LABEL} | 3,688,966 unpacked bytes — exact-head CI run \`32967113102\` passed |`,
       ),
     ],
     [
@@ -224,10 +224,10 @@ test("the operator packet fails closed on contradictory release-evidence mutatio
       packet.replace("3,688,966 unpacked bytes / 835,957 predicted packed bytes", "3,688,965 unpacked bytes / 835,957 predicted packed bytes"),
     ],
     [
-      "premature hosted-completion prose",
+      "stale hosted-provenance prose",
       packet.replace(
-        /The 3,688,966 Linux\/LF and 3,690,927 Windows values are preflight expectations,\r?\nnot claims that this newly committed head has already run; fresh hosted CI must\r?\nconfirm both\./,
-        "Those\nare completed exact-head GitHub-hosted measurements.",
+        /Exact-head CI run `32967113102` confirmed both hosted platform values at\r?\n`3cf44bb3f2fc2ae22cc40678209383de8a9f66ad`\./,
+        "Hosted values were confirmed without an exact head.",
       ),
     ],
   ] as const;
@@ -255,8 +255,8 @@ test(
 
     // npm's packed and unpacked byte totals move with checkout line endings;
     // the packet records each observed local exact-head result plus the values
-    // hosted runners are required to confirm. It does not claim the hosted run
-    // already happened. Entry membership remains portable, and a new
+    // hosted runners confirmed on the exact candidate head. Entry membership
+    // remains portable, and a new
     // unrecorded byte result fails closed until its evidence is adjudicated.
     assert.equal(headerEntries, packed.entryCount, "the packet header entry count does not match npm pack");
     assert.equal(manifestEntries, packed.entryCount, "the packet manifest entry count does not match npm pack");

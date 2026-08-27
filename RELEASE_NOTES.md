@@ -1,6 +1,6 @@
-# Aether Agent v0.3.0 — the work reaches a pull request
+# Aether Agent v0.3.0 — durable work, verified delivery
 
-**August 22, 2026**
+**Release candidate finalized August 27, 2026**
 
 0.2.0 was never published. It was written up on August 19, and then `main` kept
 moving: a skills runtime, a capability contract, a redacted support bundle, a
@@ -10,9 +10,10 @@ top of the version that was already spoken for. Rather than quietly widen 0.2.0
 to mean two different things, this release takes the next number and describes
 everything actually on `main`.
 
-Covers `477f0fc..a845479` — every commit merged after the v0.2.0 notes were
-written, and everything the v0.2.0 notes described, which was never shipped
-either.
+Covers every unpublished change after `v0.1.0`, including the work described
+by the never-published v0.2.0 notes and the final PR #107 product spine. The tag
+is cut only from the verified merge commit on `main`; historical candidate
+ranges below remain provenance for the work they actually measured.
 
 <!-- Capability dispositions are checked independently from COMMANDS.md and the command manifest. -->
 <!-- CAPABILITY-RELEASE:START -->
@@ -25,6 +26,13 @@ either.
 - `aether.local-preview` — `announced`: the managed preview supervisor accepts declared commands and loopback URLs only.
 - `ollama.local` — `announced`: local setup and Ollama management are explicit command surfaces.
 <!-- CAPABILITY-RELEASE:END -->
+
+## Compatibility
+
+- **Node.js 24 or newer is required.** Aether Agent 0.1.0 accepted Node 20,
+  but the 0.3 test runner and runtime contract use Node 24 behavior. Upgrade
+  Node before installing 0.3.0; the package manifest and both installers refuse
+  an older runtime instead of leaving a partially working CLI.
 
 ## New
 
@@ -160,8 +168,11 @@ either.
   output, carrying the status, the server's own sanitized detail, the
   consequence in plain words, and what to do about it; `--json` carries it
   structurally as `kind:"routing_drift"` (#105). The current production doctor
-  probe is still unproven: its required non-billable `max_uvt: 0` session is
-  rejected with HTTP 422, so this release does not claim hosted coding works.
+  probe is still unproven: on August 27 the required non-billable
+  `purpose:"doctor", max_uvt:0` session was rejected with HTTP 403 because
+  production Agent DevSessions are disabled. No session was created, no UVT was
+  spent, and no orphan was left, so this release does not claim hosted coding
+  works.
 - **`aether auth login` opens the approval page on Windows.** The win32 launcher
   used `explorer.exe` for URLs as well as file paths, which opens a File Explorer
   window rather than the default browser — so the device-approval page never

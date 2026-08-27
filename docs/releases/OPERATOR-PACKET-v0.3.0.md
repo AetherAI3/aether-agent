@@ -1,9 +1,9 @@
 # Operator packet — Aether Agent v0.3.0
 
 Everything a founder needs to publish this release, and everything that was
-proven before asking. Nothing in this packet was executed against the registry
-or against a git ref: creating the tag, publishing the release, and publishing
-to npm are founder-owned and are listed at the end, unrun.
+proven before asking. Read-only registry and production probes are recorded
+below. No tag, GitHub release, npm publication, or production configuration was
+created or changed by those probes.
 
 | | |
 |---|---|
@@ -11,18 +11,19 @@ to npm are founder-owned and are listed at the end, unrun.
 | Proposed tag | `v0.3.0` |
 | Original PR branch base | `85a75645e8b94e8542bcf6ee0f384037a2915a5e` (`origin/main`, after #106; historical) |
 | Reconciled base/current main | `88b7498457afce482fa69363d908b0e8b3bd4ae9` (`origin/main`, after #111) |
+| Pre-merge candidate head | `3cf44bb3f2fc2ae22cc40678209383de8a9f66ad` (PR #107 exact head; regenerate after merge) |
 | Release commit | the merge commit of this integration PR into `main` — **re-run the candidate on it before tagging** (§6.6) |
 | Historical candidate | `fb96ee44b03f37a386954a32412728fa7e98a046` (PR-local evidence commit; historical only, not reachable from current `main`) |
 | Historical archive | `aether-agents-0.3.0.tgz` — 739,977 bytes packed / 3,022,168 unpacked / 575 entries |
 | Historical archive sha256 | `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` |
 | Current exact-head dry run | 618 entries / 4 workflows |
-| Candidate expected GitHub-hosted Ubuntu value | 3,688,966 unpacked bytes — pending exact-head hosted confirmation |
-| Candidate expected GitHub-hosted Windows value | 3,690,927 unpacked bytes — pending exact-head hosted confirmation |
+| GitHub-hosted Ubuntu value | 3,688,966 unpacked bytes — exact-head CI run `32967113102` passed |
+| GitHub-hosted Windows value | 3,690,927 unpacked bytes — exact-head CI run `32967113102` passed |
 | Current local Windows default-checkout measurement | 3,690,927 unpacked bytes / 836,234 predicted packed bytes |
 | Current local Linux/LF checkout measurement | 3,688,966 unpacked bytes / 835,957 predicted packed bytes |
-| Current archive | **PENDING — no exact-head archive has been produced** |
-| Current archive sha256 | **PENDING — record only after producing that archive** |
-| Cloud catalogue compatibility | PR #1327 final head `70e0645c96b16dedfefb90dd403daecb3c3d3b25`; landed as squash merge `fbb7b98a96682820b85a4bface002dcbf5bf9c37`, tree `9906df6f73b6cd8d8e57e1e552475976394d617f`; safe-field projection digest `sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712` for the dated Agent offline compatibility fixture. Qualified production response was verified at `https://api.aethersystems.net/cloud/public/model-catalogue`: 51 safe-field rows, `listed-not-entitled`, live digest `sha256:4fa3196f26ff5a2be2b2520f4d4c4731ff12fdec4c3f19f9fca6df7722bff9b0`; `/cloud/healthz` reported deployed Cloud `b95c2aac0a96`. |
+| Qualified pre-merge archive | `aether-agents-0.3.0.tgz` — 835,957 bytes packed / 3,688,966 unpacked / 618 entries at `3cf44bb...`; commit-bound candidate passed install, version, help, skills, capabilities, and handoff proof |
+| Qualified pre-merge archive sha256 | `6176172deb15eea57519408d93f23b3fac8ab5e2b2e541adddc34b4e5fb4c33d` — regenerate on every new head and replace from the merge commit before tagging |
+| Cloud catalogue compatibility | PR #1327 final head `70e0645c96b16dedfefb90dd403daecb3c3d3b25`; landed as squash merge `fbb7b98a96682820b85a4bface002dcbf5bf9c37`, tree `9906df6f73b6cd8d8e57e1e552475976394d617f`; safe-field projection digest `sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712`. The package carries all 51 safe rows. On 2026-08-27 production `/cloud/healthz` reported deployed Cloud `c694c8805139`, and the live catalogue returned 51 rows, 48 available to the authenticated tier. |
 
 ## 1. Semantic version decision
 
@@ -45,11 +46,14 @@ artifacts answer to one name — the identity defect this release exists to clos
 
 ## 2. What the release covers
 
-Feature range `477f0fc..a845479` — 28 commits, 2026-08-19 08:39 EDT through
-2026-08-22 21:48 EDT — plus everything the unpublished v0.2.0 notes described.
-PR #96 then landed the release-owned notes, coherence gate and candidate tooling
-as `84d8767`; PR #106 reconciled the package manifest as `85a75645`. Neither
-commit added feature implementation to that range.
+The historical feature range `477f0fc..a845479` contains 28 commits from
+2026-08-19 through 2026-08-22 plus everything the unpublished v0.2.0 notes
+described. PR #96 then landed the release-owned notes, coherence gate and
+candidate tooling as `84d8767`; PR #106 reconciled the package manifest as
+`85a75645`. PR #107 adds the final product spine: generated command/model truth,
+bounded local Ollama setup, versioned headless execution, managed preview, and
+release-candidate hardening. The actual release range is `v0.1.0` through the
+verified PR #107 merge commit, not the historical 28-commit slice alone.
 
 - 4 feature waves: #72 (skills runtime and its three commands), #98
   (command-registration seam), #93/#94/#95/#97/#101/#102 (the review → commit →
@@ -71,7 +75,8 @@ directory when writing the token, and reports a planted token link as "no
 token" rather than throwing. An operator upgrading a scripted install should
 read that section before this one.
 
-Per-PR detail: [`2026-08-22.md`](2026-08-22.md).
+Historical per-PR detail: [`2026-08-22.md`](2026-08-22.md). The publish-ready
+user-facing body is [`RELEASE-BODY-v0.3.0.md`](RELEASE-BODY-v0.3.0.md).
 
 **This range moved twice after the candidate was first cut, and that is the
 normal case.** #98 was squash-merged to `main` while PR #96 was open; then the
@@ -83,7 +88,7 @@ survived beside its 575-entry header. The current product-spine integration
 worktree includes later release-truth, command-manifest, and bounded local/Ollama
 lanes on top of that historical range. Those commits are not silently folded
 into the old 28-commit count: review the actual merge-base-to-HEAD range. The
-current tree has a 618-entry dry-run inventory, but no matching archive. Any lane that lands before
+current tree has a 618-entry commit-bound pre-merge archive. Any lane that lands before
 the tag is created moves the evidence again — which is why step 6 of §6 re-runs
 the candidate on the merge commit rather than trusting a historical digest.
 `test/release_coherence.test.ts` fails the build if a
@@ -92,7 +97,7 @@ named exemption (§4), so the next lane to land cannot repeat this silently.
 
 ## 3. State of the world when this packet was written
 
-Read live, 2026-08-22:
+Registry state re-read live on 2026-08-27:
 
 ```
 $ npm view aether-agents versions --json
@@ -143,9 +148,8 @@ at `fb96ee44b03f37a386954a32412728fa7e98a046`; they do not describe the current
 On the integration tree, `verify:production` exited 0 and reported 618 entries
 and 4 workflows. Fresh clean platform-shaped candidate checkouts measured
 3,688,966 unpacked bytes for Linux/LF and 3,690,927 for Windows/default.
-The 3,688,966 Linux/LF and 3,690,927 Windows values are preflight expectations,
-not claims that this newly committed head has already run; fresh hosted CI must
-confirm both. The local
+Exact-head CI run `32967113102` confirmed both hosted platform values at
+`3cf44bb3f2fc2ae22cc40678209383de8a9f66ad`. The local
 Windows default checkout measured 3,690,927 unpacked / 836,234 predicted packed
 bytes; the clean LF checkout on that same Node 24.18.0/npm 11.16.0 toolchain
 measured 3,688,966 unpacked / 835,957 predicted packed
@@ -271,8 +275,8 @@ catch a dropped feature, because it does not know what the notes promised.
 ### Current dry-run packaged file manifest
 
 The exact-head candidate dry runs reported 618 entries on clean Linux/LF and
-Windows/default checkouts. Their 3,688,966 and 3,690,927 unpacked-byte results
-are recorded as the expected hosted platform values pending exact-head CI;
+Windows/default checkouts. Exact-head CI confirmed their 3,688,966 and
+3,690,927 unpacked-byte results on the corresponding hosted platforms;
 local default and LF checkouts measured 3,690,927 and 3,688,966 respectively
 because byte totals can move with checkout line
 endings and toolchain metadata. Five files are at the package root, four
@@ -382,44 +386,40 @@ Named as unproven rather than omitted:
   registry's live `latest` dist-tag; do not hard-code which version that tag
   selects.
 - **The full `npm test` suite inside the candidate run.** The release-candidate
-  run executes the release-owned test files only and reports `npm-test` as
-  `not-run`; `--full-tests` includes it. The suite *was* run separately for the
-  final #112 candidate — 1618 tests, 1615 pass, 0 fail, 3 documented skips —
-  and that reading is recorded in the PR evidence. It remains local
-  evidence only; the final proposed head must repeat this proof in required CI.
-- **Anything about the deployed API.** Two claims in the release notes'
-  Authentication section describe a *server*, not this package: that the API
-  accepts long-lived `aek_` tokens, and that `/auth/logout` actually ends the
-  session. This repository has no live credential in CI and no test asserts
-  either. They are marked in the notes as operator-verified, and they should be
-  re-checked against production before the release is announced. What this lane
-  can say is narrower: `npm run smoke` on this machine reached
-  `https://api.aethersystems.net/cloud` and got an authenticated cloud turn
-  back, which is consistent with the first claim and proves nothing about the
-  second.
+  harness intentionally reports `npm-test` as `not-run` unless `--full-tests`
+  is supplied. The exact PR #107 head was therefore qualified separately:
+  1,618 tests, 1,615 pass, 0 fail, 3 documented Windows skips locally, with the
+  same head passing the required Ubuntu and Windows CI jobs. The merge commit
+  must repeat this proof before tagging.
+- **Logout semantics on the deployed API.** The authenticated exact-head smoke
+  reached `https://api.aethersystems.net/cloud` and received a cloud turn, and
+  `/cloud/healthz` reported `c694c8805139`. The release can therefore claim
+  authenticated reachability, not that `/auth/logout` was independently
+  exercised during this release.
 - **That `aether agent` works against production today.** #105 exists because
   it does not: `AETHER_AGENT_DEV_ENABLED` is unset on `api.aethersystems.net`,
-  so a dev session is refused and — as of this release — the run now **exits 3**
+  and the 2026-08-27 doctor canary returned HTTP 403. No session was created,
+  UVT and cents stayed at zero, and no orphan remained. A coding run is refused
+  and — as of this release — the run now **exits 3**
   instead of silently becoming a chat. That is the correct behaviour and it is
   still a broken end-to-end path. It is a server configuration gap, not
   something this tag fixes.
-- **A complete general-purpose headless agent driver.** `aether exec` is a safe
-  `aether.exec/1` foundation with cancellation, receipts, authoritative
-  verification, and a confined tool set. Resume, pause, steer, reusable agent
-  definitions, and controller-mediated dogfood remain explicit follow-on work;
-  unsupported controls fail closed rather than pretending to succeed.
-- **The authoritative live public model fleet.** The generated catalogue is a
-  sanitized, deterministic six-model preview sourced from public release notes.
-  It labels unknown provider, modality, and availability values honestly; an
-  additive public projection of the authoritative `/models` registry is still
-  required before calling the live catalogue complete.
-- **The Aether Online or Aether Code handoff.** The local preview lifecycle is
-  implemented, but no durable owner/project/purpose-bound redemption nonce,
-  hidden web intake, or deployed cross-worker store is present in this package.
-  No client-only substitute may be treated as the Online bridge.
-- **A current exact-head archive or digest.** The current evidence is a dry-run
-  inventory only. The `70a48aca…` digest belongs to the historical 575-entry
-  candidate and must not be compared as though it described the 618-entry tree.
+- **A production-hosted headless driver.** `aether exec` ships the local
+  `aether.exec/1` and `/2` foundations with checkpoints, acknowledged controls,
+  confined definitions, receipts, and authoritative verification. The Cloud
+  driver remains unavailable while production DevSessions are disabled;
+  unsupported hosted control stays closed.
+- **A live catalogue guarantee.** The package carries a sanitized 51-row dated
+  projection with explicit availability semantics. Production also returned 51
+  safe rows during qualification, but the packaged snapshot is not a promise
+  that provider availability cannot change after publication.
+- **The Aether Online or Aether Code handoff.** Cloud PR #1329 landed a
+  default-off owner-bound redemption contract, but this package exposes no
+  supported public handoff command and no activated production intake was
+  qualified. No client-only substitute is treated as the Online bridge.
+- **A merge-commit archive or digest.** The current 618-entry archive is bound
+  to pre-merge PR head `3cf44bb...`; it proves the candidate, not the future
+  merge commit. The release workflow must regenerate it after merge.
 - **Reproducibility of an archive digest across machines.** Once the exact-head
   archive exists, its digest is a machine reading to compare with CI, not a
   promise that another machine must produce byte-identical gzip bytes.
@@ -458,7 +458,7 @@ the exact proposed head rather than inferred from an ancestor or a workstation:
 
    ```bash
    git fetch origin main && git checkout <merge-sha>
-   npm ci --ignore-scripts && npm run release:candidate -- --out rc-final.json
+   npm ci --ignore-scripts && npm run release:candidate -- --out rc-final.json --full-tests
    ```
 
    Confirm `"ok": true` and `"commitBound": true`.
@@ -471,8 +471,9 @@ the exact proposed head rather than inferred from an ancestor or a workstation:
    ```
 
 8. **Publish a GitHub release for `v0.3.0`**, body taken from
-   [`2026-08-22.md`](2026-08-22.md). Publication — not tag creation — is what
-   triggers `release.yml`.
+   [`RELEASE-BODY-v0.3.0.md`](RELEASE-BODY-v0.3.0.md). Publication — not tag
+   creation — is what triggers `release.yml`. Do not use the historical
+   2026-08-22 candidate record as the public release body.
 
 9. **Confirm the prerequisites `release.yml` needs before publishing the
    release**, because a missing one fails the run after the release is already
@@ -482,6 +483,11 @@ the exact proposed head rather than inferred from an ancestor or a workstation:
      before it publishes);
    - the workflow's `id-token: write` / `attestations: write` permissions are
      not restricted by an organisation policy.
+
+   Live check on 2026-08-27: `npm-production` exists and requires owner review,
+   but no `NPM_TOKEN` repository or environment secret is visible and local npm
+   is unauthenticated. Publishing the GitHub release before that credential is
+   installed would expose the release and then fail npm publication.
 
 10. **Watch the `Release npm package` workflow.** It re-runs the whole sequence on
    the tag, attests provenance, uploads the tarball plus a CycloneDX SBOM as a

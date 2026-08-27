@@ -139,7 +139,7 @@ if ! command -v aether >/dev/null 2>&1; then
   info "npm global prefix: $(npm config get prefix)"
   info "Add $(npm config get prefix)/bin to your PATH, or reinstall Node."
   echo ""
-  info "For nvm users: nvm use --delete-prefix v22 --silent"
+  info "For nvm users: nvm use --delete-prefix v24 --silent"
   exit 1
 fi
 
