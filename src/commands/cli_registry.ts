@@ -114,6 +114,17 @@ export const SHELL_RUNTIME_HANDLERS: Array<Pick<DispatchedCommand, "name" | "loa
     },
   },
   {
+    // Lane SC-DEVICE-01. Hidden (dev-only, default-off) but a real dispatch-table
+    // entry so `aether device …` runs the command group instead of billing a
+    // chat turn. It owns no flags — subcommands are positionals and it reads only
+    // the global --json / --yes off ctx.flags.
+    name: "device",
+    load: async () => {
+      const { cmdDevice } = await import("./device.js");
+      return (ctx, argv, flags) => cmdDevice(ctx, argv, flags);
+    },
+  },
+  {
     name: "doctor",
     // doctor parses its own argv (parseDoctorArgs). It never saw these flags:
     // main.ts's parse is strict:false, so an undeclared `--live` was captured
