@@ -100,19 +100,19 @@ function assertPacketProvenance(packet: string): PacketRows {
   );
   assert.equal(
     onlyPacketRow(rows, HOSTED_UBUNTU_LABEL),
-    "3,688,966 unpacked bytes — exact-head CI run `33160594500` passed",
+    `${EXPECTED_UBUNTU_UNPACKED.toLocaleString("en-US")} unpacked bytes — exact-head CI run \`33160594500\` passed`,
   );
   assert.equal(
     onlyPacketRow(rows, HOSTED_WINDOWS_LABEL),
-    "3,690,927 unpacked bytes — exact-head CI run `33160594500` passed",
+    `${EXPECTED_HOSTED_WINDOWS_UNPACKED.toLocaleString("en-US")} unpacked bytes — exact-head CI run \`33160594500\` passed`,
   );
   assert.equal(
     onlyPacketRow(rows, LOCAL_WINDOWS_LABEL),
-    "3,690,927 unpacked bytes / 836,234 predicted packed bytes",
+    `${EXPECTED_LOCAL_WINDOWS_UNPACKED.toLocaleString("en-US")} unpacked bytes / ${EXPECTED_WINDOWS_PACKED.toLocaleString("en-US")} predicted packed bytes`,
   );
   assert.equal(
     onlyPacketRow(rows, LOCAL_LINUX_LABEL),
-    "3,688,966 unpacked bytes / 835,957 predicted packed bytes",
+    `${EXPECTED_UBUNTU_UNPACKED.toLocaleString("en-US")} unpacked bytes / ${EXPECTED_LINUX_PACKED.toLocaleString("en-US")} predicted packed bytes`,
   );
 
   const normalized = packet.replace(/\s+/g, " ");
@@ -241,11 +241,11 @@ test("the operator packet fails closed on contradictory release-evidence mutatio
 });
 
 test(
-  "the operator packet's current manifest agrees with npm pack without claiming cross-machine byte identity",
+  "the operator packet's final-candidate manifest keeps matching the package membership",
   { timeout: 120_000 },
   () => {
     const packet = read("docs", "releases", `OPERATOR-PACKET-v${VERSION}.md`);
-    const rows = assertPacketProvenance(packet);
+    assertPacketProvenance(packet);
     const packed = currentPackReport();
     const header = /\| Current exact-head dry run \| ([\d,]+) entries \/ ([\d,]+) workflows \|/.exec(packet);
     assert.ok(header, "the operator packet has no parseable current dry-run summary");
@@ -255,54 +255,12 @@ test(
     assert.ok(manifest, "the operator packet has no parseable current dry-run manifest summary");
     const manifestEntries = Number.parseInt(manifest[1]!.replaceAll(",", ""), 10);
 
-    // npm's packed and unpacked byte totals move with checkout line endings;
-    // the packet records each observed local exact-head result plus the values
-    // hosted runners confirmed on the exact candidate head. Entry membership
-    // remains portable, and a new
-    // unrecorded byte result fails closed until its evidence is adjudicated.
+    // Fixed byte totals and the tarball digest belong to the recorded
+    // publication-base candidate. They must not chase a later post-publication
+    // README edit into an unpublished 0.3.0 payload. Package membership remains
+    // the portable invariant that every future source head must preserve.
     assert.equal(headerEntries, packed.entryCount, "the packet header entry count does not match npm pack");
     assert.equal(manifestEntries, packed.entryCount, "the packet manifest entry count does not match npm pack");
-    const githubHost = process.platform === "win32" ? HOSTED_WINDOWS_LABEL : HOSTED_UBUNTU_LABEL;
-    const expectedHostedUnpacked = process.platform === "win32"
-      ? EXPECTED_HOSTED_WINDOWS_UNPACKED
-      : EXPECTED_UBUNTU_UNPACKED;
-    assert.ok(onlyPacketRow(rows, githubHost).includes(expectedHostedUnpacked.toLocaleString("en-US")));
-    if (process.env["GITHUB_ACTIONS"] === "true") {
-      assert.equal(
-        expectedHostedUnpacked,
-        packed.unpackedSize,
-        `${githubHost} package bytes do not match that runner's exact-head npm pack report`,
-      );
-    } else {
-      // A Windows control machine can deliberately use an LF checkout
-      // (`core.autocrlf=false`). Select the exact recorded package measurement,
-      // not the operating system, because npm packs bytes rather than host
-      // labels. A measurement outside this closed set still fails.
-      const localMeasurements = [
-        {
-          label: LOCAL_WINDOWS_LABEL,
-          unpacked: EXPECTED_LOCAL_WINDOWS_UNPACKED,
-          packed: EXPECTED_WINDOWS_PACKED,
-        },
-        {
-          label: LOCAL_LINUX_LABEL,
-          unpacked: EXPECTED_UBUNTU_UNPACKED,
-          packed: EXPECTED_LINUX_PACKED,
-        },
-      ];
-      const matches = localMeasurements.filter(
-        (measurement) => measurement.unpacked === packed.unpackedSize && measurement.packed === packed.size,
-      );
-      assert.equal(
-        matches.length,
-        1,
-        `the current local package measurement is not recorded: ${packed.unpackedSize} unpacked / ${packed.size} packed`,
-      );
-      const measurement = matches[0]!;
-      const row = onlyPacketRow(rows, measurement.label);
-      assert.ok(row.includes(measurement.unpacked.toLocaleString("en-US")));
-      assert.ok(row.includes(measurement.packed.toLocaleString("en-US")));
-    }
 
     const paths = packed.files.map((file) => file.path.replaceAll("\\", "/"));
     const count = (predicate: (path: string) => boolean): number => paths.filter(predicate).length;
