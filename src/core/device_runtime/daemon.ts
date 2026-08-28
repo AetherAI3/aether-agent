@@ -23,6 +23,7 @@ import {
   defaultTelemetryInputs,
   serializeObservation,
   type ObservationMeta,
+  type TelemetryInputs,
 } from "./telemetry.js";
 import { Publisher } from "./publisher.js";
 import { DeviceNet } from "./net.js";
@@ -57,6 +58,10 @@ export interface DaemonRunOptions {
   workspaceRoot?: string;
   /** Injected so a test drives repo metadata without a checkout. */
   repoProbe?: () => { name: string; revision: string } | null;
+  /** Injected so a test drives the machine curves without touching the OS. */
+  telemetryInputs?: TelemetryInputs;
+  /** Injected boot-time probe result, so a test never shells out for it. */
+  bootTimeMs?: number | null;
 }
 
 /** Reason the daemon could not start, or null when it may run. */
@@ -296,7 +301,9 @@ export async function runDeviceDaemon(options: DaemonRunOptions = {}): Promise<n
   const now = options.now ?? Date.now;
   const cfg = loadConfig();
   const enrollment = options.enrollment ?? loadEnrollment();
-  if (!options.enrollment && !deviceRuntimeEnabled(cfg)) {
+  // The default-off gate is unconditional: an injected enrollment is a test
+  // seam for identity, never a way past the operator's opt-in.
+  if (!deviceRuntimeEnabled(cfg)) {
     process.stderr.write("device runtime is disabled; refusing to start\n");
     return 3;
   }
@@ -305,10 +312,13 @@ export async function runDeviceDaemon(options: DaemonRunOptions = {}): Promise<n
     return 4;
   }
   mkdirSync(deviceRuntimeDir(), { recursive: true, mode: 0o700 });
-  const boot = resolveBootIdentity(readSystemBootTimeMs(), now);
+  const boot = resolveBootIdentity(
+    options.bootTimeMs !== undefined ? options.bootTimeMs : readSystemBootTimeMs(),
+    now,
+  );
   const net = options.net ?? new DeviceNet(enrollment.base_url, enrollment.device_token);
   const workspaceRoot = options.workspaceRoot ?? process.cwd();
-  const sampler = new TelemetrySampler(defaultTelemetryInputs(workspaceRoot, now));
+  const sampler = new TelemetrySampler(options.telemetryInputs ?? defaultTelemetryInputs(workspaceRoot, now));
   const publisher = new Publisher();
   const repoProbe = options.repoProbe ?? makeRepoProbe(workspaceRoot, now);
   const daemon = new Daemon(enrollment, net, sampler, publisher, boot.boot_id, now, repoProbe);

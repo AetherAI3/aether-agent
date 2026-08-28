@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { hostname } from "node:os";
 import {
   TelemetrySampler,
   composeObservation,
@@ -114,6 +115,56 @@ test("serializeObservation rebuilds only allowlisted fields", () => {
   assert.equal(clean.device_id, "dev-1");
   assert.equal(clean.lanes_reserved, 2);
   assert.deepEqual(Object.keys(clean).sort(), Object.keys(obs).sort());
+});
+
+test("the hostname is DISPLAY metadata only, never identity", () => {
+  const sampler = new TelemetrySampler(inputs());
+  const obs = serializeObservation(
+    composeObservation({ ...META, device_id: "dev-canonical", display_name: hostname() }, sampler.sample()),
+  );
+  // The enrolled device id is what identifies the machine on the wire.
+  assert.equal(obs.device_id, "dev-canonical");
+  // The hostname appears in exactly one field, and it is not an identity field.
+  const carriers = Object.entries(obs).filter(([, v]) => v === hostname()).map(([k]) => k);
+  assert.deepEqual(carriers, ["display_name"]);
+  // Changing the hostname cannot change who the device is.
+  const renamed = serializeObservation(
+    composeObservation({ ...META, device_id: "dev-canonical", display_name: "a-totally-different-name" }, sampler.sample()),
+  );
+  assert.equal(renamed.device_id, obs.device_id);
+});
+
+test("the published payload carries no prompt, argv, env, token, transcript or process listing", () => {
+  const sampler = new TelemetrySampler(inputs());
+  const obs = serializeObservation(composeObservation(META, sampler.sample()));
+  // 1. Every key is one of the contract's, so there is no field to hide data in.
+  const allowed = new Set([
+    "schema", "device_id", "boot_id", "seq", "sampled_at", "cpu_logical", "cpu_util_pct",
+    "mem_total_mb", "mem_avail_mb", "mem_used_pct", "swap_total_mb", "swap_used_mb",
+    "oom_pressure_pct", "disk_workspace_total_gb", "disk_workspace_free_gb", "lanes_active",
+    "lanes_reserved", "workload_count", "capabilities", "runtime_labels", "repo",
+    "agent_version", "display_name", "cpu_util_pct_max_120s", "mem_used_pct_max_120s",
+  ]);
+  for (const key of Object.keys(obs)) assert.ok(allowed.has(key), `unexpected field ${key} on the wire`);
+  // 2. None of the forbidden names can be introduced, even nested.
+  for (const forbidden of [
+    "prompt", "prompts", "argv", "args", "arguments", "env", "environment", "token",
+    "secret", "transcript", "messages", "file_body", "contents", "processes", "process_list",
+    "cmdline", "command_line", "cwd", "path", "paths", "home",
+  ]) {
+    assert.throws(
+      () => serializeObservation({ ...obs, [forbidden]: "sensitive" }),
+      /allowlist/,
+      `${forbidden} must be refused`,
+    );
+  }
+  // 3. And the serialized bytes contain no environment value from this process.
+  const serialized = JSON.stringify(obs);
+  for (const value of Object.values(process.env)) {
+    if (typeof value === "string" && value.length >= 12) {
+      assert.equal(serialized.includes(value), false, "an environment value reached the payload");
+    }
+  }
 });
 
 test("serializeObservation rejects a non-integer metric", () => {
