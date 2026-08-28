@@ -292,9 +292,11 @@ git clone https://github.com/AetherAI3/aether-agent
 cd aether-agent && npm ci && npm run build && npm link
 ```
 
-Publishing is founder-owned: it needs a `v0.3.0` tag on the release commit, a published
-GitHub release, the `npm-production` environment and an `NPM_TOKEN`. The exact
-sequence, with the packed tarball's digest and manifest, is in
+Publishing is founder-owned: it needs a `v0.3.0` tag on the release commit, a
+published GitHub release, the protected `npm-production` environment, and the
+exact npm trusted-publisher binding for `AetherAI3/aether-agent` workflow
+`release.yml`. No long-lived npm token is used. The exact sequence, with the
+packed tarball's digest and manifest, is in
 [`docs/releases/OPERATOR-PACKET-v0.3.0.md`](docs/releases/OPERATOR-PACKET-v0.3.0.md).
 
 When 0.3.0 is published it upgrades in place: no configuration changes, no

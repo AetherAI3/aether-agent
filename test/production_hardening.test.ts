@@ -24,6 +24,7 @@ const manifest = {
     "docs/model-catalogue/catalogue.json", "docs/model-catalogue/index.html",
   ],
   engines: { node: ">=24" },
+  repository: { type: "git", url: "https://github.com/AetherAI3/aether-agent" },
   scripts: { prepack: "npm run build" },
 };
 
@@ -54,6 +55,10 @@ test("release manifest binds the tag and preserves the zero-runtime-dependency c
   assert.deepEqual(validateManifest(manifest, "v1.2.3"), []);
   assert.match(validateManifest({ ...manifest, dependencies: { unsafe: "1.0.0" } }, "v1.2.4").join("\n"), /runtime dependencies/);
   assert.match(validateManifest(manifest, "v1.2.4").join("\n"), /does not match/);
+  assert.match(
+    validateManifest({ ...manifest, repository: { url: "https://github.com/example/fork" } }, "v1.2.3").join("\n"),
+    /trusted publisher repository/,
+  );
 });
 
 test("package allowlist rejects compiled tests and environment files", () => {
@@ -103,6 +108,26 @@ test("workflow policy rejects indirect package publication", () => {
     /publish|provenance|attestation/i,
     "release policy must not be bypassed by hiding npm publish behind a wrapper",
   );
+});
+
+test("publishing workflow requires tokenless npm trusted publishing", () => {
+  const valid = `on:\n  release:\n    types: [published]\npermissions:\n  contents: read\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    environment: npm-production\n    permissions:\n      id-token: write\n      attestations: write\n    steps:\n      - uses: actions/setup-node@0123456789abcdef0123456789abcdef01234567\n        with:\n          node-version: '>=24.6.0 <25'\n          package-manager-cache: false\n      - run: git merge-base --is-ancestor HEAD origin/main\n      - run: npm install --global --prefix /tmp/aether package.tgz --ignore-scripts\n      - run: npm publish package.tgz --access public --provenance\n`;
+  assert.deepEqual(validateWorkflowText("release.yml", valid), []);
+
+  const tokenized = valid.replace(
+    "      - run: npm publish",
+    "      - env:\n          NODE_AUTH_TOKEN: legacy-token\n        run: npm publish",
+  );
+  assert.match(validateWorkflowText("release.yml", tokenized).join("\n"), /short-lived OIDC/);
+
+  const cached = valid.replace("          package-manager-cache: false", "          cache: npm");
+  assert.match(validateWorkflowText("release.yml", cached).join("\n"), /disable package-manager caching/);
+
+  const oldNode = valid.replace("'>=24.6.0 <25'", "'24'");
+  assert.match(validateWorkflowText("release.yml", oldNode).join("\n"), /npm 11\.5\.1/);
+
+  const selfHosted = valid.replace("runs-on: ubuntu-latest", "runs-on: [self-hosted, linux]");
+  assert.match(validateWorkflowText("release.yml", selfHosted).join("\n"), /GitHub-hosted/);
 });
 
 test("publishing workflow must be event-gated, main-derived, and install-smoked", () => {
