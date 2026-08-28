@@ -1,7 +1,8 @@
 <div align="center">
 
+
 # Aether Agent
-[aether-code-3.html](https://github.com/user-attachments/files/31556546/aether-code-3.html)
+<img width="2400" height="1600" alt="aether-code-3 (2)" src="https://github.com/user-attachments/assets/c8723619-77a5-4211-a586-e42ba63c2fc0" />
 
 **A terminal coding agent built around verifiable results and portable work.**
 
