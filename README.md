@@ -2,7 +2,6 @@
 
 
 # Aether Agent
-<img width="424" height="209" alt="image" src="https://github.com/user-attachments/assets/68c3356d-fe6a-4034-9d18-253a50bb473c" />
 
 
 **A terminal coding agent built around verifiable results and portable work.**
