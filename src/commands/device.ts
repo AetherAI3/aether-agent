@@ -14,6 +14,7 @@ import type { AppContext } from "../core/context.js";
 import type { AetherConfig } from "../types.js";
 import type { CommandFlags } from "../core/command_dispatch.js";
 import { saveConfig } from "../core/config.js";
+import { VERSION } from "../version.js";
 import { renderHealthReport } from "../core/health.js";
 import { isCredentialSafeUrl } from "../core/transport.js";
 import { DEVICE_ENROLL_PATH } from "../core/device_runtime/contract.js";
@@ -350,7 +351,7 @@ async function health(ctx: AppContext): Promise<number> {
         device_id: enrolled?.device_id ?? "unenrolled",
         boot_id: "local",
         seq: 0,
-        agent_version: "",
+        agent_version: VERSION,
         display_name: enrolled?.display_name ?? hostname(),
         capabilities: [],
         runtime_labels: [process.platform],

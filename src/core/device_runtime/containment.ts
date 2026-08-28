@@ -47,6 +47,11 @@ export interface SpawnedTask {
 export interface LaunchSpec {
   /** Controller-minted group id (contract: process_group_id). */
   process_group_id?: string;
+  /** The enrolled device this group belongs to. Empty when the launcher is not
+   *  enrolled — the Cloud still knows the device from the bearer, but a local
+   *  registry entry that names its device is what makes `aether device groups`
+   *  readable after a re-enrollment. */
+  device_id?: string;
   owner: string;
   project: string;
   workspace_id: string;
@@ -187,7 +192,7 @@ export class ContainmentManager {
     const reg: ProcessGroupRegistration = {
       schema: PROCESS_GROUP_SCHEMA,
       process_group_id: groupId,
-      device_id: "",
+      device_id: spec.device_id ?? "",
       owner: spec.owner,
       project: spec.project,
       workspace_id: spec.workspace_id,
