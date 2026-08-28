@@ -449,14 +449,19 @@ not publication gates to reopen.
    exact-head Linux, Windows, supply-chain, CodeQL, and release-truth checks.
 
 2. **Verify publication authentication before creating public state.** The
-   `npm-production` environment must exist, allow the `v*` tag policy, expose
-   `NPM_TOKEN`, and permit the workflow's OIDC/attestation permissions.
+   `npm-production` environment must exist, require owner review, allow the
+   `v*` tag policy, and permit the workflow's OIDC/attestation permissions. The
+   npm package must trust GitHub owner `AetherAI3`, repository `aether-agent`,
+   workflow filename `release.yml`, and environment `npm-production`, with
+   direct `npm publish` allowed and staged publishing disabled.
 
-   Live check on 2026-08-28: `npm-production` exists, requires owner review, and
-   has the expected `v*` tag policy. No environment or repository `NPM_TOKEN`
-   is visible, the local environment has no npm token, and `npm whoami` reports
-   `ENEEDAUTH`. Do not create the tag or publish the GitHub release until that
-   credential is installed; publishing the release triggers the npm workflow.
+   Live check on 2026-08-28: the GitHub environment and tag policy match, and
+   the operator configured that exact npm trusted-publisher connection. The
+   connection is intentionally tokenless: `npm whoami` does not exercise OIDC,
+   and npm validates the saved identity only during the publish operation. The
+   exact GitHub-hosted release run is therefore the definitive authentication
+   proof; it must fail closed without creating a second package version if the
+   npm-side connection does not match.
 
 3. **Create and push immutable tag `v0.3.0`** at the qualified final `main` SHA.
    Never move or retarget it.
@@ -483,6 +488,7 @@ not publication gates to reopen.
 ## 7. Credentials
 
 No Aether credential, npm token or GitHub token was used, read, or written by
-the release-candidate run. `release.yml` reaches `NPM_TOKEN` only inside the
-`npm-production` environment, and the checkout step sets
-`persist-credentials: false` so no token is left in the runner's git config.
+the release-candidate run. `release.yml` never references `NPM_TOKEN` or
+`NODE_AUTH_TOKEN`; its GitHub-hosted publish job requests a short-lived npm OIDC
+identity only inside the protected `npm-production` environment. The checkout
+step sets `persist-credentials: false` so no token is left in git configuration.

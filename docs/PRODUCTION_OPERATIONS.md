@@ -11,7 +11,7 @@ operations and incident response.
 |---|---|---|---|
 | Source | `AetherAI3/aether-agent` on GitHub | Maintainer and pull-request controls | Git history, workflow definitions, release tags |
 | Verification | GitHub-hosted Linux and Windows runners | Ephemeral CI identities with explicit permissions | Test logs, CodeQL results, 90-day SBOM artifacts |
-| Release | Protected `npm-production` GitHub environment | Required reviewer plus release-scoped npm credential | Attested npm tarball, CycloneDX SBOM, provenance |
+| Release | Protected `npm-production` GitHub environment | Required reviewer plus short-lived GitHub OIDC identity trusted by npm | Attested npm tarball, CycloneDX SBOM, provenance |
 | Distribution | npm package `aether-agents` | Public npm registry | Immutable published versions and dist-tags |
 | Runtime | End-user Node 24+ process | User workstation and workspace boundary | User-owned config, token, sessions, logs, and worktrees |
 
@@ -29,8 +29,10 @@ must also configure these controls in GitHub:
 1. Create the `npm-production` environment.
 2. Require at least one maintainer approval and restrict deployments to release
    tags created from `main`.
-3. Add `NPM_TOKEN` as an environment secret. Scope it only to publish
-   `aether-agents`; never use a personal all-packages token.
+3. Configure the npm trusted publisher for package `aether-agents` with GitHub
+   owner `AetherAI3`, repository `aether-agent`, workflow filename
+   `release.yml`, and environment `npm-production`. Allow direct `npm publish`
+   only; do not enable staged publishing or add a long-lived npm token.
 4. Protect `main`: require pull requests, the Linux and Windows CI jobs, the
    supply-chain job, and CodeQL; dismiss stale approvals after new commits.
 5. Enable Dependabot alerts/security updates and secret scanning. The checked-in
@@ -59,10 +61,14 @@ publish.
 The release job packs once, attests that tarball, uploads the same tarball as
 evidence, and publishes that file. It does not publish a second rebuild.
 
-## Secrets and least privilege
+## Publishing identity and least privilege
 
-- `NPM_TOKEN` exists only in `npm-production`; it is not a repository secret,
-  command-line argument, artifact, log, or local env file.
+- The release workflow contains no `NPM_TOKEN` or `NODE_AUTH_TOKEN`. npm accepts
+  only the short-lived OIDC identity minted for the exact GitHub-hosted
+  `release.yml` job in the protected `npm-production` environment.
+- `npm whoami` does not test trusted publishing. npm performs the OIDC exchange
+  only for the publish operation, so the exact release run is the definitive
+  authentication proof.
 - CI has read-only repository contents permission. CodeQL alone receives
   `security-events: write`. The release job alone receives OIDC and attestation
   permissions.
@@ -88,14 +94,14 @@ evidence, and publishes that file. It does not publish a second rebuild.
 npm releases are immutable. Never overwrite or silently rebuild a published
 version.
 
-1. Stop further releases and revoke the publishing credential if compromise is
-   possible.
+1. Stop further releases and disable the npm trusted-publisher connection if
+   compromise or configuration drift is possible.
 2. Deprecate the affected npm version with a clear install warning and move any
    affected dist-tag to the last known-good version.
 3. Publish a fixed version through the normal protected workflow; do not reuse
    the compromised version number.
 4. Compare the retained tarball, SBOM, GitHub attestation, npm provenance, and
-   source tag. Preserve logs before changing credentials or tags.
+   source tag. Preserve logs before changing publisher trust or tags.
 5. Follow `SECURITY.md` for coordinated disclosure and document the incident in
    release notes.
 

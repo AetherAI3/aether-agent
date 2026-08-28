@@ -14,6 +14,7 @@ interface PackageManifest {
   bin?: unknown;
   files?: unknown;
   engines?: unknown;
+  repository?: unknown;
   dependencies?: unknown;
   scripts?: unknown;
 }
@@ -69,6 +70,11 @@ export function validateManifest(manifest: PackageManifest, expectedTag?: string
 
   const engines = record(manifest.engines);
   if (engines?.["node"] !== ">=24") errors.push("engines.node must be >=24");
+
+  const repository = record(manifest.repository);
+  if (repository?.["url"] !== "https://github.com/AetherAI3/aether-agent") {
+    errors.push("package repository.url must match the trusted publisher repository");
+  }
 
   const dependencies = record(manifest.dependencies);
   if (dependencies && Object.keys(dependencies).length > 0) {
@@ -160,11 +166,23 @@ export function validateWorkflowText(name: string, text: string): string[] {
   if (/npm publish/.test(text)) {
     if (/^\s*workflow_dispatch\s*:/m.test(text)) errors.push(`${name}: publishing cannot be manually dispatched`);
     if (!/npm publish[^\n]*--provenance/.test(text)) errors.push(`${name}: npm publish must emit provenance`);
+    if (!/^\s+runs-on:\s*ubuntu-latest\s*$/m.test(text)) {
+      errors.push(`${name}: npm trusted publishing must use a GitHub-hosted ubuntu-latest runner`);
+    }
     if (!/^\s+environment:\s*npm-production\s*$/m.test(text)) {
       errors.push(`${name}: publishing must use the npm-production environment`);
     }
     if (!/^\s+id-token:\s*write\s*$/m.test(text)) errors.push(`${name}: publishing needs id-token write`);
     if (!/^\s+attestations:\s*write\s*$/m.test(text)) errors.push(`${name}: publishing needs attestations write`);
+    if (/\b(?:NPM_TOKEN|NODE_AUTH_TOKEN)\b/.test(text)) {
+      errors.push(`${name}: npm trusted publishing must use short-lived OIDC, not a long-lived npm token`);
+    }
+    if (!/^\s+node-version:\s*['"]>=24\.6\.0 <25['"]\s*$/m.test(text)) {
+      errors.push(`${name}: trusted publishing requires the audited Node 24/npm 11.5.1+ release range`);
+    }
+    if (!/^\s+package-manager-cache:\s*false\s*$/m.test(text) || /^\s+cache:\s*/m.test(text)) {
+      errors.push(`${name}: release publishing must disable package-manager caching`);
+    }
     if (!/git merge-base --is-ancestor HEAD origin\/main/.test(text)) {
       errors.push(`${name}: release commit ancestry to main must be verified`);
     }

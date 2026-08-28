@@ -40,8 +40,8 @@ jobs:
       - name: Set up Node.js and npm registry
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
-          cache: 'npm'
+          node-version: '>=24.6.0 <25'
+          package-manager-cache: false
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies without lifecycle scripts
@@ -92,12 +92,5 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: Require npm publishing credential
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: test -n "$NODE_AUTH_TOKEN"
-
       - name: Publish verified tarball
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish "${{ steps.pack.outputs.tarball }}" --access public --provenance
