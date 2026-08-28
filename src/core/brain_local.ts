@@ -19,6 +19,7 @@ import {
   type HostCommand,
 } from "./brain_protocol.js";
 import type { ToolResult } from "./tool_executor.js";
+import { terminateProcessTree } from "./process_tree_kill.js";
 
 /**
  * How the brain subprocess is started. Injected so the local path is testable
@@ -42,6 +43,8 @@ export interface LocalBrainOptions {
   module?: string;
   /** Extra env for the child (e.g. AETHER_MODEL, OLLAMA_HOST). */
   env?: Record<string, string>;
+  /** Override child stderr handling. The default preserves the human CLI. */
+  diagnostic?: (text: string) => void;
 }
 
 export class LocalBrain implements Brain {
@@ -62,7 +65,10 @@ export class LocalBrain implements Brain {
     const start: BrainSpawner =
       this.opts.spawn ??
       ((command, args, options) =>
-        spawn(command, [...args], { ...options, stdio: ["pipe", "pipe", "pipe"] }) as ChildProcessWithoutNullStreams);
+        spawn(command, [...args], {
+          ...options, detached: process.platform !== "win32", windowsHide: true,
+          stdio: ["pipe", "pipe", "pipe"],
+        }) as ChildProcessWithoutNullStreams);
     const child = start(python, ["-m", mod], {
       cwd: task.cwd,
       // PYTHONUTF8 belt-and-suspenders alongside the ASCII-escaped wire: the
@@ -90,7 +96,9 @@ export class LocalBrain implements Brain {
     // The child's stderr is its own diagnostics (tracebacks); forward dimmed so
     // a brain crash is visible rather than a silent hang.
     child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (d: string) => process.stderr.write(sanitizeTerm(d)));
+    child.stderr.on("data", (d: string) =>
+      (this.opts.diagnostic ?? ((text) => process.stderr.write(text)))(sanitizeTerm(d)),
+    );
 
     child.on("error", (err) => {
       this.queue.push({ type: "error", msg: `cannot start local brain (${python}): ${err.message}` });
@@ -112,7 +120,7 @@ export class LocalBrain implements Brain {
   }
 
   close(): void {
-    if (this.child && !this.child.killed) this.child.kill();
+    terminateProcessTree(this.child);
     this.child = null;
     this.queue.end();
   }

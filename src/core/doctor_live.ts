@@ -16,16 +16,15 @@
 
 import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { AppContext } from "./context.js";
-import type { CatalogItem } from "../types.js";
+import type { CatalogItem, CatalogResponse } from "../types.js";
 import {
   DEV_SESSIONS_PATH,
   MODELS_PATH,
-  devSessionControlPath,
   devSessionPath,
   devSessionStreamPath,
   devSessionToolResultsPath,
@@ -171,12 +170,9 @@ export interface AgentProofState {
   /** Frame sequence numbers in the order they arrived. */
   seqs: number[];
   sawSessionFrame: boolean;
-  pauseAcked: boolean;
-  resumeAcked: boolean;
-  steerAcked: boolean;
-  toolResultAcked: boolean;
+  answeredTools: string[];
+  toolResultAcks: string[];
   closed: boolean;
-  nonce: string;
 }
 
 /** Strictly increasing, which is what the resume-from-lastSeq contract needs. */
@@ -199,22 +195,25 @@ const DOCTOR_SESSION_CONTRACT =
   'the server must accept a non-billable doctor session (request purpose:"doctor", max_uvt:0; ' +
   'response echoing purpose:"doctor", billable:false) before the agent loop can be proven without spending';
 
+const DOCTOR_CONTROL_NA =
+  'purpose="doctor" deliberately rejects pause, resume, and steer; coding-session control is not part of the zero-spend probe';
+
 export function agentUnproven(reason: string): HealthCheck[] {
-  return Object.values(AGENT_PROBES).map((probe) =>
-    check(probe, {
+  return Object.values(AGENT_PROBES).map((probe) => {
+    if (probe.id === AGENT_PROBES.control.id) return controlCheck();
+    return check(probe, {
       configured: axis("yes"),
       reachable: notChecked(reason),
       verified: notChecked(reason),
       severity: "warning",
       remediation: DOCTOR_SESSION_CONTRACT,
-    }),
-  );
+    });
+  });
 }
 
 /**
- * Exercise create -> frames -> pause -> resume -> steer -> tool round trip ->
- * close, in that order. The sequence is deliberately serial: a parallel
- * version could not tell a missing pause acknowledgement from a racing one.
+ * Exercise create -> frames -> Cloud's fixed write/read tool round trip ->
+ * close. Doctor sessions intentionally have no coding-control authority.
  */
 async function agentProbes(
   ctx: AppContext,
@@ -266,12 +265,9 @@ async function agentProbes(
     sessionId: created.session_id,
     seqs: [],
     sawSessionFrame: false,
-    pauseAcked: false,
-    resumeAcked: false,
-    steerAcked: false,
-    toolResultAcked: false,
+    answeredTools: [],
+    toolResultAcks: [],
     closed: false,
-    nonce,
   };
 
   const checks: HealthCheck[] = [
@@ -290,12 +286,12 @@ async function agentProbes(
 
   try {
     await drive(ctx, state, ledger, { ...options, timeoutMs }, sandbox);
-    checks.push(framesCheck(state), controlCheck(state), toolCheck(state));
+    checks.push(framesCheck(state), controlCheck(), toolCheck(state));
   } catch (err) {
     const reason = `agent loop aborted: ${message(err)}`;
     checks.push(
       check(AGENT_PROBES.frames, { verified: axis("no", { evidence: reason }), severity: "error" }),
-      check(AGENT_PROBES.control, { verified: notChecked(reason), severity: "warning" }),
+      controlCheck(),
       check(AGENT_PROBES.tool, { verified: notChecked(reason), severity: "warning" }),
     );
   } finally {
@@ -330,36 +326,36 @@ export function framesCheck(state: AgentProofState): HealthCheck {
   });
 }
 
-export function controlCheck(state: AgentProofState): HealthCheck {
-  const ok = state.pauseAcked && state.resumeAcked && state.steerAcked;
+export function controlCheck(): HealthCheck {
   return check(AGENT_PROBES.control, {
+    configured: notApplicable(DOCTOR_CONTROL_NA),
+    reachable: notApplicable(DOCTOR_CONTROL_NA),
+    verified: notApplicable(DOCTOR_CONTROL_NA),
+    severity: "info",
+  });
+}
+
+export function toolCheck(state: AgentProofState): HealthCheck {
+  const exactTools =
+    state.answeredTools.length === 2 &&
+    state.answeredTools[0] === "write_file" &&
+    state.answeredTools[1] === "read_file";
+  const exactAcks = state.toolResultAcks.length === 2;
+  const ok = exactTools && exactAcks;
+  return check(AGENT_PROBES.tool, {
     verified: axis(ok ? "yes" : "no", {
       checkedAt: new Date().toISOString(),
-      evidence: [
-        `pause ${state.pauseAcked ? "acked" : "unacked"}`,
-        `resume ${state.resumeAcked ? "acked" : "unacked"}`,
-        `steer ${state.steerAcked ? "acked" : "unacked"}`,
-      ].join(", "),
+      evidence: ok
+        ? "Cloud doctor write_file/read_file arguments executed in the private sandbox; both results acknowledged"
+        : `expected write_file/read_file with two acknowledgements; answered ${state.answeredTools.join(", ") || "none"}, acknowledgements ${state.toolResultAcks.length}`,
     }),
     severity: ok ? "info" : "error",
   });
 }
 
-export function toolCheck(state: AgentProofState): HealthCheck {
-  return check(AGENT_PROBES.tool, {
-    verified: axis(state.toolResultAcked ? "yes" : "no", {
-      checkedAt: new Date().toISOString(),
-      evidence: state.toolResultAcked
-        ? "sandbox write/read/compare/delete completed and the result was acknowledged"
-        : "the tool result was not acknowledged by the session protocol",
-    }),
-    severity: state.toolResultAcked ? "info" : "error",
-  });
-}
-
 /**
- * Read the frame stream, issuing control actions at known points and
- * answering any tool_call inside a doctor-owned temp directory.
+ * Read the frame stream and answer Cloud's fixed doctor tool calls inside a
+ * doctor-owned temp directory. Coding controls are invalid for this purpose.
  */
 async function drive(
   ctx: AppContext,
@@ -379,25 +375,17 @@ async function drive(
       signal: net.signal,
     });
 
-    let controlIssued = false;
     for await (const frame of decodeSse(stream)) {
       ledger.observe(frame);
       if (typeof frame.seq === "number") state.seqs.push(frame.seq);
       if (frame.type === "session") state.sawSessionFrame = true;
 
       if (frame.type === "tool_call") {
-        await answerToolCall(ctx, id, frame, sandbox, timeoutMs);
+        if (await answerToolCall(ctx, id, frame, sandbox, timeoutMs)) {
+          state.answeredTools.push(frame.name);
+        }
       }
-      if (frame.type === "tool_result_ack") state.toolResultAcked = true;
-
-      // Issue the control sequence once the session is live. Ordering matters:
-      // a resume before a pause proves nothing.
-      if (!controlIssued) {
-        controlIssued = true;
-        state.pauseAcked = await control(ctx, id, "pause", null, timeoutMs);
-        state.resumeAcked = await control(ctx, id, "resume", null, timeoutMs);
-        state.steerAcked = await control(ctx, id, "steer", `doctor-${state.nonce}`, timeoutMs);
-      }
+      if (frame.type === "tool_result_ack") state.toolResultAcks.push(frame.toolCallId);
 
       if (frame.type === "done" || frame.type === "error") break;
     }
@@ -407,25 +395,10 @@ async function drive(
   }
 }
 
-async function control(
-  ctx: AppContext,
-  id: string,
-  action: "pause" | "resume" | "steer",
-  note: string | null,
-  timeoutMs: number,
-): Promise<boolean> {
-  try {
-    await bounded(ctx.api.postJson(devSessionControlPath(id), { action, note }), timeoutMs);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
- * Answer a tool_call entirely inside the doctor sandbox: write a random value,
- * read it back, compare, delete. Nothing outside `sandbox` is ever touched,
- * whatever the server asked for.
+ * Execute Cloud's purpose-bound doctor tools with their exact arguments. The
+ * server supplies a relative path; it is resolved beneath the fresh private
+ * sandbox and rejected if it could escape that boundary.
  */
 async function answerToolCall(
   ctx: AppContext,
@@ -433,28 +406,56 @@ async function answerToolCall(
   frame: Extract<StreamFrame, { type: "tool_call" }>,
   sandbox: string,
   timeoutMs: number,
-): Promise<void> {
-  const probeFile = join(sandbox, `roundtrip-${frame.toolCallId.replace(/[^\w-]/g, "_")}.txt`);
-  const secret = randomUUID();
-  let ok = false;
+): Promise<boolean> {
+  let status = "ok";
+  let exitCode = 0;
+  let output = "";
   try {
-    writeFileSync(probeFile, secret, { encoding: "utf8", mode: 0o600 });
-    ok = readFileSync(probeFile, "utf8") === secret;
-  } finally {
-    rmSync(probeFile, { force: true });
+    const path = doctorSandboxPath(sandbox, frame.args["path"]);
+    if (frame.name === "write_file") {
+      const content = frame.args["content"];
+      if (typeof content !== "string") throw new Error("write_file content must be a string");
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, content, { encoding: "utf8", mode: 0o600 });
+      output = readFileSync(path, "utf8");
+    } else if (frame.name === "read_file") {
+      output = readFileSync(path, "utf8");
+    } else {
+      throw new Error(`unsupported doctor tool ${frame.name}`);
+    }
+  } catch (err) {
+    status = "error";
+    exitCode = 1;
+    output = message(err);
   }
   try {
     await bounded(
       ctx.api.postJson(devSessionToolResultsPath(id), {
         tool_call_id: frame.toolCallId,
-        ok,
-        output: ok ? "doctor sandbox round trip verified" : "doctor sandbox round trip failed",
+        status,
+        exit_code: exitCode,
+        output,
       }),
       timeoutMs,
     );
+    return status === "ok";
   } catch {
     // A refused result surfaces as the missing tool_result_ack, not here.
+    return false;
   }
+}
+
+function doctorSandboxPath(sandbox: string, requested: unknown): string {
+  if (typeof requested !== "string" || !requested) {
+    throw new Error("doctor tool path must be a non-empty string");
+  }
+  const root = resolve(sandbox);
+  const target = resolve(root, requested);
+  const fromRoot = relative(root, target);
+  if (fromRoot === ".." || fromRoot.startsWith(`..${sep}`) || isAbsolute(fromRoot)) {
+    throw new Error("doctor tool path escaped the private sandbox");
+  }
+  return target;
 }
 
 async function closeSession(
@@ -484,17 +485,30 @@ async function catalogProbe(ctx: AppContext, timeoutMs: number): Promise<HealthC
   };
   const started = Date.now();
   try {
-    const items = await bounded(ctx.api.getJson<CatalogItem[]>(MODELS_PATH), timeoutMs);
-    const list = Array.isArray(items) ? items : [];
-    const wellFormed = list.every(
+    const payload = await bounded(
+      ctx.api.getJson<CatalogResponse | CatalogItem[]>(MODELS_PATH),
+      timeoutMs,
+    );
+    // Production returns CatalogResponse. Retain the old bare-array shape as a
+    // bounded compatibility read so doctor can diagnose older deployments
+    // without turning a healthy current response into an empty catalogue.
+    const list = Array.isArray(payload)
+      ? payload
+      : payload && typeof payload === "object" && Array.isArray(payload.models)
+        ? payload.models
+        : null;
+    const wellFormed = list !== null && list.every(
       (item) => typeof item?.id === "string" && typeof item?.kind === "string",
     );
-    const ok = wellFormed && list.length > 0;
+    const ok = list !== null && wellFormed && list.length > 0;
+    const evidence = list === null
+      ? "invalid /models response shape; expected {models:[...]}"
+      : `${list.length} catalog item(s), ${list.filter((i) => i?.available).length} available to this tier`;
     return check(probe, {
       reachable: axis("yes", { checkedAt: new Date().toISOString(), latencyMs: since(started) }),
       verified: axis(ok ? "yes" : "no", {
         checkedAt: new Date().toISOString(),
-        evidence: `${list.length} catalog item(s), ${list.filter((i) => i?.available).length} available to this tier`,
+        evidence,
       }),
       severity: ok ? "info" : "error",
     });

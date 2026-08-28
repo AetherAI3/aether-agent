@@ -20,7 +20,7 @@
 // authority (`aether agent`, or an explicit --model) refuses to take it at all
 // rather than hand the user a transcript that changed nothing on disk.
 
-import type { Brain, TaskCommand } from "./brain.js";
+import type { Brain, BrainControlResult, TaskCommand } from "./brain.js";
 import { EventQueue } from "./brain.js";
 import type { BrainEvent, RoutingDriftFrame } from "./brain_protocol.js";
 import { TOOLS } from "./brain_protocol.js";
@@ -191,12 +191,17 @@ export interface CloudBrainOptions {
    * embedders) keep the old fail-soft behavior.
    */
   requireLocalAuthority?: boolean;
+  /** Advertise only tools the local host is prepared to authorize. */
+  localToolCapabilities?: readonly string[];
+  /** Per-session hosted spend ceiling. Required by the headless cloud driver. */
+  maxUvt?: number;
 }
 
 export class CloudBrain implements Brain {
   private aborted = false;
   private net: AbortController | null = null;
   private sessionId: string | null = null;
+  private controlState: BrainControlResult["state"] = "closed";
   private lastSeq = 0;
   /** Serializes upstream result POSTs so they arrive in execution order. */
   private upstream: Promise<void> = Promise.resolve();
@@ -234,7 +239,8 @@ export class CloudBrain implements Brain {
             task: task.text,
             model: task.model,
             effort: task.effort,
-            capabilities: TOOLS,
+            capabilities: this.opts.localToolCapabilities ?? TOOLS,
+            maxUvt: this.opts.maxUvt,
             protocolVersion: DEV_PROTOCOL_VERSION,
           }),
         );
@@ -274,11 +280,18 @@ export class CloudBrain implements Brain {
       const refusal = checkDevSession(created, this.speaks);
       if (refusal) throw new Error(refusal);
       this.sessionId = created.session_id;
+      if (task.model && created.model !== task.model) {
+        try { await this.api.deleteJson(devSessionPath(created.session_id)); } catch { /* refusal remains authoritative */ }
+        this.sessionId = null;
+        throw new Error("cloud dev session did not preserve the explicitly requested model");
+      }
+      this.controlState = "running";
       queue.push({ type: "stage", name: "execute", face: "⟨◉⟩" }); // uplink face
       await this.devPump(queue);
     } catch (err) {
       queue.push({ type: "error", msg: withHint(err) });
     } finally {
+      this.controlState = "closed";
       queue.end();
     }
   }
@@ -301,12 +314,27 @@ export class CloudBrain implements Brain {
         });
         for await (const frame of decodeSse(stream)) {
           if (this.aborted) break;
+          if (frame.type === "notice" && frame.notice === "replay_truncated") {
+            failed = "cloud dev session replay was truncated; refusing to execute across a sequence gap";
+            break;
+          }
           // Duplicate delivery is safe by contract: a replayed frame keeps its
-          // seq, so anything at or below the high-water mark is skipped and a
-          // mutating tool_call can never execute twice.
-          if (typeof frame.seq === "number") {
-            if (frame.seq <= this.lastSeq) continue;
-            this.lastSeq = frame.seq;
+          // seq, so anything at or below the high-water mark is skipped. Every
+          // non-liveness frame must otherwise be the next positive safe integer;
+          // malformed or missing sequence data must never reach the host tool
+          // executor.
+          if (frame.type !== "open" && frame.type !== "ping") {
+            if (!Number.isSafeInteger(frame.seq) || (frame.seq as number) <= 0) {
+              failed = "cloud dev session returned a frame with an invalid sequence";
+              break;
+            }
+            const seq = frame.seq as number;
+            if (seq <= this.lastSeq) continue;
+            if (seq !== this.lastSeq + 1) {
+              failed = `cloud dev session sequence gap: expected ${this.lastSeq + 1}, received ${seq}`;
+              break;
+            }
+            this.lastSeq = seq;
             progressed = true;
             reconnects = 0;
           }
@@ -434,16 +462,40 @@ export class CloudBrain implements Brain {
     });
   }
 
-  control(action: "pause" | "resume" | "steer", note?: string): void {
+  async control(action: "pause" | "resume" | "steer", note?: string): Promise<BrainControlResult> {
     const sessionId = this.sessionId;
-    if (!sessionId) return; // legacy path: no server session to control
-    void this.api
-      .postJson(devSessionControlPath(sessionId), { action, note: note ?? null })
-      .catch(() => {}); // fire-and-forget; a lost steer is re-typeable
+    if (!sessionId || this.controlState === "closed") {
+      return { accepted: false, state: "closed", error: "cloud dev session is not running" };
+    }
+    try {
+      const response = await this.api.postJson<{ ok?: unknown; state?: unknown }>(
+        devSessionControlPath(sessionId),
+        { action, note: note ?? null },
+      );
+      const state = response.state;
+      const validState = state === "running" || state === "paused";
+      const expectedState = action === "pause" ? "paused" : action === "resume" ? "running" : this.controlState;
+      if (response.ok !== true || !validState || state !== expectedState) {
+        return {
+          accepted: false,
+          state: this.controlState,
+          error: "cloud dev session returned an invalid control acknowledgement",
+        };
+      }
+      this.controlState = state;
+      return { accepted: true, state };
+    } catch (error) {
+      return {
+        accepted: false,
+        state: this.controlState,
+        error: sanitizeServerText(withHint(error)),
+      };
+    }
   }
 
   close(): void {
     this.aborted = true;
+    this.controlState = "closed";
     this.net?.abort();
     const sessionId = this.sessionId;
     if (sessionId) {

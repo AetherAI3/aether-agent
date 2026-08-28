@@ -5,6 +5,9 @@
 
 import { parseArgs } from "node:util";
 import { createInterface } from "node:readline";
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "./core/config.js";
 import { tokenStoreFromEnv } from "./core/auth.js";
 import { ApiClient } from "./core/transport.js";
@@ -24,9 +27,14 @@ import { cmdVault } from "./commands/vault.js";
 import { cmdWorkflow } from "./commands/workflow.js";
 import { cmdImage, cmdVideo } from "./commands/media.js";
 import { cmdOutput } from "./commands/output.js";
-import { ALL_CLI_COMMANDS, CLI_PARSE_OPTIONS, findDispatchedCliCommand, renderCliHelp } from "./commands/cli_registry.js";
+import { findDispatchedCliCommand } from "./commands/cli_registry.js";
+import {
+  COMMAND_PARSE_OPTIONS,
+  manifestCommandNames,
+  renderManifestHelp,
+  suggestManifestCommand,
+} from "./commands/command_manifest.js";
 import { commandFlags } from "./core/command_dispatch.js";
-import { commandNames, suggestRegisteredCommand } from "./core/command_registry.js";
 
 /** Coerce a parsed flag value to string | undefined. */
 const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
@@ -35,7 +43,7 @@ const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : unde
 // registry and the dispatch table (cli_registry.ts) — the same registries the
 // dispatch is cross-checked against — so this can never drift from the actual
 // dispatched subcommands.
-const TOP_LEVEL_COMMAND_NAMES = commandNames(ALL_CLI_COMMANDS);
+const TOP_LEVEL_COMMAND_NAMES = manifestCommandNames("shell");
 
 /**
  * Suggestion for a lone bare token at the top level (`aether auht`). Exact
@@ -46,17 +54,17 @@ const TOP_LEVEL_COMMAND_NAMES = commandNames(ALL_CLI_COMMANDS);
 function suggestTopLevel(token: string): string | null {
   if (TOP_LEVEL_COMMAND_NAMES.includes(token)) return null;
   const max = token.length <= 5 ? 1 : 2;
-  return suggestRegisteredCommand(token, TOP_LEVEL_COMMAND_NAMES, max);
+  return suggestManifestCommand("shell", token, max);
 }
 
-async function main(argv: string[]): Promise<number> {
+export async function main(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
     strict: false,
     // Globals plus every dispatch-table command's flags — one flat namespace,
     // validated for collisions at registry load (cli_registry.ts).
-    options: CLI_PARSE_OPTIONS,
+    options: COMMAND_PARSE_OPTIONS,
   });
 
   if (values["version"]) {
@@ -66,7 +74,7 @@ async function main(argv: string[]): Promise<number> {
   const cmd = positionals[0];
   if (values["help"] || cmd === "help") {
     const target = cmd === "help" ? positionals[1] : cmd;
-    process.stdout.write(renderCliHelp(target));
+    process.stdout.write(renderManifestHelp("shell", target));
     return 0;
   }
 
@@ -77,6 +85,7 @@ async function main(argv: string[]): Promise<number> {
   const api = new ApiClient(cfg.baseUrl, tokens);
   const flags: GlobalFlags = {
     model: typeof values["model"] === "string" ? values["model"] : undefined,
+    effort: sf(values["effort"]),
     agent: typeof values["agent"] === "string" ? values["agent"] : undefined,
     json: Boolean(values["json"]),
     audit: Boolean(values["audit"]),
@@ -88,6 +97,7 @@ async function main(argv: string[]): Promise<number> {
     // flags accessor only answers for what the command declared, so a global
     // reaches a dispatch-table entry through the context or not at all.
     testCmd: sf(values["test-cmd"]),
+    resume: sf(values["resume"]),
     ...(typeof values["out"] === "string" ? { out: values["out"] as string } : {}),
     cwd: typeof values["cwd"] === "string" ? (values["cwd"] as string) : process.cwd(),
   };
@@ -237,7 +247,7 @@ async function main(argv: string[]): Promise<number> {
       // bare command-shaped token a Damerau edit away from a real subcommand —
       // `aether auht` should not become a paid chat call about "auht". Multi-
       // word prompts and non-matching words flow to chat exactly as before.
-      if (rest.length === 0 && typeof cmd === "string" && /^[a-z][a-z-]*$/.test(cmd)) {
+      if (rest.length === 0 && typeof cmd === "string" && /^[A-Za-z][A-Za-z-]*$/.test(cmd)) {
         const near = suggestTopLevel(cmd);
         if (near) {
           process.stderr.write(
@@ -264,9 +274,33 @@ function finish(code: number): void {
   setTimeout(() => process.exit(code), 2000).unref();
 }
 
-main(process.argv.slice(2))
-  .then(finish)
-  .catch((err) => {
-    process.stderr.write(`\n${errTheme.red("✗")} ${err instanceof Error ? err.message : String(err)}\n`);
-    finish(1);
-  });
+/**
+ * npm installs the POSIX `aether` bin as a symlink. Node preserves that shim
+ * path in argv[1] while import.meta.url identifies the resolved target, so a
+ * lexical comparison makes the installed CLI silently skip main(). Compare
+ * canonical paths when possible, retaining the lexical fallback for unusual
+ * filesystems where realpath cannot resolve either side.
+ */
+export function isMainInvocation(
+  argv1: string | undefined,
+  moduleUrl: string = import.meta.url,
+  realpath: (path: string) => string = realpathSync,
+): boolean {
+  if (!argv1) return false;
+  const invokedPath = resolve(argv1);
+  const modulePath = resolve(fileURLToPath(moduleUrl));
+  try {
+    return realpath(invokedPath) === realpath(modulePath);
+  } catch {
+    return invokedPath === modulePath;
+  }
+}
+
+if (isMainInvocation(process.argv[1])) {
+  main(process.argv.slice(2))
+    .then(finish)
+    .catch((err) => {
+      process.stderr.write(`\n${errTheme.red("✗")} ${err instanceof Error ? err.message : String(err)}\n`);
+      finish(1);
+    });
+}

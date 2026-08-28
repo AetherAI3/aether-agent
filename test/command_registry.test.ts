@@ -23,6 +23,7 @@ test("generic registry resolves aliases, completion, and suggestions", () => {
   assert.equal(completeCommand("BET", commandNames(commands)).completed, "beta ");
   assert.equal(completeCommand("al", commandNames(commands)).completed, "alp");
   assert.equal(suggestRegisteredCommand("btea", commandNames(commands)), "beta");
+  assert.equal(suggestRegisteredCommand("btea", commandNames(commands), 1), "beta");
 });
 
 test("generic registry rejects duplicates and unknown sections", () => {

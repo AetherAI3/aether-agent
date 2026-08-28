@@ -1,9 +1,17 @@
-# AETHER AGENT — API CURRENT STATE (Phase A recon)
+# Historical snapshot: Aether Agent API state on 2026-08-12
+
+> **Historical record — not current product documentation.** This reconnaissance
+> captured two repositories at the exact baselines below for a superseded hardening
+> plan. Line numbers, open pull requests, gaps, and defect statuses were observations
+> on 2026-08-12 and must not be used as present-tense implementation truth. Consult
+> the current source, tests, [README](../../README.md), and [command reference](../../COMMANDS.md)
+> for the supported surface.
 
 **Date:** 2026-08-12
 **Agent baseline:** `AetherAI3/aether-agent` @ `eae6e28cdb6bdb9a1f8ab2d677285f5ce759f568` (main)
 **Backend baseline:** `AetherAI3/AETHER-CLOUD` @ `e96ad64c` (origin/main)
-**Purpose:** Phase A deliverable for the API Coding IDE Hardening Spec (§121). Maps what exists today, confirms the parity gap, and records the constraints Phase B–L must respect.
+**Original purpose:** Phase A deliverable for the API Coding IDE Hardening Spec (§121).
+The content below is preserved verbatim apart from this historical framing and title.
 
 ---
 

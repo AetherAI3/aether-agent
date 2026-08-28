@@ -166,6 +166,59 @@ test("dev session: a replayed frame (seq <= high-water mark) is skipped — a mu
   });
 });
 
+for (const scenario of [
+  {
+    name: "a replay_truncated notice followed by a sequence gap",
+    frames: [
+      frame({ type: "delta", seq: 1, text: "retained" }),
+      frame({ type: "notice", notice: "replay_truncated", oldest_seq: 4 }),
+      frame({ type: "tool_call", seq: 4, tool_call_id: "tc_gap", name: "write_file", args: { path: "a", content: "b" }, risk: "write" }),
+      frame({ type: "done", seq: 5, ok: true, uvt: 1, cents: 0 }),
+    ],
+  },
+  {
+    name: "a mutating tool_call with no sequence",
+    frames: [
+      frame({ type: "tool_call", tool_call_id: "tc_missing", name: "write_file", args: { path: "a", content: "b" }, risk: "write" }),
+      frame({ type: "done", seq: 1, ok: true, uvt: 1, cents: 0 }),
+    ],
+  },
+  {
+    name: "a mutating tool_call with a fractional sequence",
+    frames: [
+      frame({ type: "tool_call", seq: 0.5, tool_call_id: "tc_fractional", name: "write_file", args: { path: "a", content: "b" }, risk: "write" }),
+      frame({ type: "done", seq: 1, ok: true, uvt: 1, cents: 0 }),
+    ],
+  },
+  {
+    name: "a mutating tool_call after an unannounced sequence gap",
+    frames: [
+      frame({ type: "delta", seq: 1, text: "before gap" }),
+      frame({ type: "tool_call", seq: 3, tool_call_id: "tc_unannounced_gap", name: "write_file", args: { path: "a", content: "b" }, risk: "write" }),
+      frame({ type: "done", seq: 4, ok: true, uvt: 1, cents: 0 }),
+    ],
+  },
+] as const) {
+  test(`dev session fails closed before ${scenario.name}`, async () => {
+    const { fetchImpl } = devServer([[...scenario.frames]]);
+    await withFetch(fetchImpl, async () => {
+      const brain = new CloudBrain(new ApiClient("https://stub.test", tokens));
+      const out: BrainEvent[] = [];
+      for await (const ev of brain.run(TASK)) out.push(ev);
+
+      assert.deepEqual(
+        out.filter((event) => event.type === "tool_call"),
+        [],
+        "an untrusted sequence must never reach the host tool executor",
+      );
+      assert.ok(
+        out.some((event) => event.type === "error" || (event.type === "done" && !event.ok)),
+        "the sequence violation must make the run observably fail closed",
+      );
+    });
+  });
+}
+
 test("dev session: a dropped stream reconnects from last_seq and finishes", async () => {
   const { fetchImpl, calls } = devServer([
     [
@@ -223,7 +276,7 @@ test("dev session: done ok:false from the server stays ok:false", async () => {
   });
 });
 
-test("dev session: control() posts pause/steer to the control route", async () => {
+test("dev session: control() fails closed after the server session has ended", async () => {
   const { fetchImpl, calls } = devServer([
     [frame({ type: "done", seq: 1, ok: true, uvt: 1, cents: 0 })],
   ]);
@@ -231,13 +284,12 @@ test("dev session: control() posts pause/steer to the control route", async () =
     const brain = new CloudBrain(new ApiClient("https://stub.test", tokens));
     const out: BrainEvent[] = [];
     for await (const ev of brain.run(TASK)) out.push(ev);
-    brain.control("steer", "skip the billing code");
-    await new Promise((r) => setTimeout(r, 20));
-    const ctl = calls.find((c) => c.url.includes("/control"));
-    assert.ok(ctl, "control was never POSTed");
-    const body = ctl.body as Record<string, unknown>;
-    assert.equal(body["action"], "steer");
-    assert.equal(body["note"], "skip the billing code");
+    assert.deepEqual(await brain.control("steer", "skip the billing code"), {
+      accepted: false,
+      state: "closed",
+      error: "cloud dev session is not running",
+    });
+    assert.ok(!calls.some((c) => c.url.includes("/control")));
   });
 });
 
@@ -326,7 +378,7 @@ test("legacy fallback: a 404 on session create degrades to the one-way chat stre
     assert.ok(done && done.type === "done" && done.ok === true);
     // legacy path: no server session, so tool results/control are no-ops
     brain.sendToolResult("tc_x", { output: "x", exitCode: 0 });
-    brain.control("pause");
+    assert.equal((await brain.control("pause")).accepted, false);
     await new Promise((r) => setTimeout(r, 20));
     assert.ok(!calls.some((c) => c.url.includes("/tool-results")));
     assert.ok(!calls.some((c) => c.url.includes("/control")));

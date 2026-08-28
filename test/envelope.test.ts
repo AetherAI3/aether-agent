@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildChatRequest } from "../src/core/envelope.js";
+import { buildChatRequest, buildDevSessionRequest } from "../src/core/envelope.js";
 
 test("buildChatRequest nulls empty model/agent and defaults to auto", () => {
   assert.deepEqual(buildChatRequest({ prompt: "hi", manualModel: false }), {
@@ -25,4 +25,17 @@ test("agent passes through; manual without a model stays auto", () => {
     agent_name: "neo",
     model_pick_source: "auto",
   });
+});
+
+test("hosted request builders reject the Ollama namespace", () => {
+  assert.throws(
+    () => buildChatRequest({ prompt: "hi", model: "ollama:gemma3:4b", manualModel: true }),
+    /local-only/,
+  );
+  assert.throws(
+    () => buildDevSessionRequest({
+      task: "fix it", model: "ollama:gemma3:4b", capabilities: [], protocolVersion: 1,
+    }),
+    /local-only/,
+  );
 });

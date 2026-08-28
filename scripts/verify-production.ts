@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync }
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { NOT_APPLICABLE_CONTRACTS, deterministicRepositoryEvidence, releaseTruthFromRepository } from "./release-truth.js";
+import { validateHeadlessFrames } from "../src/core/headless_protocol.js";
 
 interface PackageManifest {
   name?: unknown;
@@ -39,6 +41,14 @@ const REQUIRED_ROOT_FILES = new Set([
   "package.json",
 ]);
 
+export const REQUIRED_GENERATED_DOCS = [
+  "docs/generated/commands.md",
+  "docs/generated/model-catalogue.md",
+  "docs/model-catalogue/catalogue.json",
+  "docs/model-catalogue/index.html",
+] as const;
+const ALLOWED_GENERATED_DOCS = new Set<string>(REQUIRED_GENERATED_DOCS);
+
 const MAX_UNPACKED_BYTES = 5_000_000;
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -67,6 +77,7 @@ export function validateManifest(manifest: PackageManifest, expectedTag?: string
 
   const files = Array.isArray(manifest.files) ? manifest.files : [];
   if (!files.includes("dist/src")) errors.push("package files must include dist/src");
+  for (const path of REQUIRED_GENERATED_DOCS) if (!files.includes(path)) errors.push(`package files must include generated public document ${path}`);
   if (files.includes("dist") || files.some((value) => typeof value === "string" && value.includes("test"))) {
     errors.push("package files must not include compiled tests");
   }
@@ -84,6 +95,9 @@ export function validatePack(report: PackReport, manifest: PackageManifest): str
   for (const required of REQUIRED_ROOT_FILES) {
     if (!paths.has(required)) errors.push(`package is missing required file ${required}`);
   }
+  for (const required of REQUIRED_GENERATED_DOCS) {
+    if (!paths.has(required)) errors.push(`package is missing generated public document ${required}`);
+  }
   for (const required of [manifest.main, manifest.types]) {
     if (typeof required === "string" && !paths.has(required.replace(/^\.\//, ""))) {
       errors.push(`package is missing entrypoint ${required}`);
@@ -97,7 +111,7 @@ export function validatePack(report: PackReport, manifest: PackageManifest): str
   }
 
   for (const path of paths) {
-    const allowed = REQUIRED_ROOT_FILES.has(path) || path.startsWith("dist/src/");
+    const allowed = REQUIRED_ROOT_FILES.has(path) || ALLOWED_GENERATED_DOCS.has(path) || path.startsWith("dist/src/");
     if (!allowed) errors.push(`unexpected package content: ${path}`);
     if (/(^|\/)(test|tests|_loopstate)(\/|$)/i.test(path) || /(^|\/)\.env(?:\.|$)/i.test(path)) {
       errors.push(`sensitive or non-runtime package content: ${path}`);
@@ -113,6 +127,9 @@ export function validateWorkflowText(name: string, text: string): string[] {
   const errors: string[] = [];
   if (/^\s*pull_request_target\s*:/m.test(text)) errors.push(`${name}: pull_request_target is forbidden`);
   if (!/^permissions:\s*$/m.test(text)) errors.push(`${name}: explicit workflow permissions are required`);
+  if (/^\s*permissions:\s*write-all\s*(?:#.*)?$/mi.test(text)) {
+    errors.push(`${name}: permissions write-all is forbidden at workflow and job scope`);
+  }
 
   const uses = [...text.matchAll(/^\s*(?:-\s*)?uses:\s+([^\s#]+)(?:\s+#.*)?$/gm)].map((match) => match[1]!);
   for (const action of uses) {
@@ -129,6 +146,14 @@ export function validateWorkflowText(name: string, text: string): string[] {
   for (const line of text.split(/\r?\n/)) {
     if (/\bnpm ci(?:\s|$)/.test(line) && !line.trimStart().startsWith("#") && !line.includes("--ignore-scripts")) {
       errors.push(`${name}: npm ci must use --ignore-scripts`);
+    }
+    const command = line.trimStart();
+    const localPublishWrapper = !command.startsWith("#") && (
+      /\bnpm\s+run\s+[^\s#]*publish(?:[-_.:]|\b)/i.test(command)
+      || /\b(?:node|npx|bash|sh|pwsh|powershell)\b[^#\n]*[/\\_.-]publish(?:[-_.]|\b)/i.test(command)
+    );
+    if (localPublishWrapper) {
+      errors.push(`${name}: indirect publish wrappers are forbidden; use an audited direct npm publish --provenance step`);
     }
   }
 
@@ -233,6 +258,25 @@ function smokeInstallPackage(root: string, expectedVersion: string): string[] {
     const version = execFileSync(launch, [...launchArgs, "--version"], options).trim();
     if (version !== expectedVersion) errors.push(`installed CLI reported ${version}, expected ${expectedVersion}`);
     execFileSync(launch, [...launchArgs, "--help"], options);
+    const verifyCommand = `${JSON.stringify(process.execPath)} -e "process.exit(0)"`;
+    const output = execFileSync(launch, [
+      ...launchArgs, "exec", "--cwd", temp, "--exec-driver", "selftest",
+      "--permission", "read-only", "--test-cmd", verifyCommand,
+      "verify the installed headless child protocol",
+    ], options);
+    const lines = output.trim().split(/\r?\n/);
+    const protocolErrors = validateHeadlessFrames(lines);
+    if (protocolErrors.length) errors.push(`installed exec protocol invalid: ${protocolErrors.join("; ")}`);
+    const frames = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    const session = frames[0];
+    const terminal = frames.at(-1);
+    if (session?.["backend"] !== "bundled-selftest-child") errors.push("installed exec did not use the bundled child selftest driver");
+    if ((session?.["tools"] as unknown[] | undefined)?.some((tool) => ["run_shell", "run_tests", "git_commit", "web_search", "web_fetch"].includes(String(tool)))) {
+      errors.push("installed exec advertised a shell, git, or network tool");
+    }
+    if (terminal?.["type"] !== "terminal" || terminal["exit_code"] !== 0 || terminal["ok"] !== true) {
+      errors.push("installed exec did not finish with one verified successful terminal frame");
+    }
   } catch (error) {
     errors.push(`install smoke failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
@@ -254,6 +298,18 @@ export function verifyProduction(root: string, expectedTag?: string): {
     ...validateManifest(manifest, expectedTag),
     ...validatePack(pack, manifest),
   ];
+  const truthEvidence = deterministicRepositoryEvidence(root);
+  truthEvidence.registry = {
+    state: "not_applicable",
+    contract: NOT_APPLICABLE_CONTRACTS["registry.source-truth"],
+    reason: "deterministic package verification does not use the network; release:truth performs the live npm host probe",
+  };
+  const releaseTruth = releaseTruthFromRepository(root, pack.files.map((file) => file.path), truthEvidence);
+  if (!releaseTruth.ok) {
+    for (const item of releaseTruth.checks.filter((check) => check.status === "fail" || check.status === "unavailable")) {
+      errors.push(`release truth ${item.id}: ${item.summary}; ${item.remediation}`);
+    }
+  }
 
   const workflowDir = join(root, ".github", "workflows");
   const workflowNames = readdirSync(workflowDir).filter((name) => /\.ya?ml$/i.test(name));

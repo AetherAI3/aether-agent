@@ -12,11 +12,12 @@ import { isSafeUrl, webFetch, webSearch } from "./web.js";
 import { OllamaBrain } from "./brain_ollama.js";
 import { CloudBrain } from "./brain_cloud.js";
 import { ToolExecutor, type ToolResult } from "./tool_executor.js";
-import { DEFAULT_OLLAMA_HOST, DEFAULT_OLLAMA_MODEL, normalizeOllamaHost } from "./ollama.js";
+import { DEFAULT_OLLAMA_HOST, normalizeOllamaHost } from "./ollama.js";
 import { defaultTokenStore, type TokenStore } from "./auth.js";
 import { loadConfig } from "./config.js";
 import { ApiClient } from "./transport.js";
 import type { Brain, TaskCommand } from "./brain.js";
+import { resolveLocalModel } from "./local_ollama.js";
 
 export type Status = "PASS" | "FAIL" | "SKIP";
 export interface Check {
@@ -209,7 +210,7 @@ export function runChecks(
 export async function smokeMain(): Promise<number> {
   const cfg = loadConfig();
   const baseUrl = cfg.baseUrl || "https://api.aethersystems.net/cloud";
-  const model = cfg.defaultModel || DEFAULT_OLLAMA_MODEL;
+  const model = resolveLocalModel(undefined, cfg.localModel ?? "");
   // Normalize here so a scheme-less OLLAMA_HOST (Ollama's own convention) is
   // diagnosed as a bad value instead of being reported as "Ollama is down".
   const rawHost = process.env["OLLAMA_HOST"] || DEFAULT_OLLAMA_HOST;

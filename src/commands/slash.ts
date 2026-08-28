@@ -26,7 +26,7 @@ import type { CatalogItem, CatalogResponse } from "../types.js";
 import { MODELS_PATH } from "../core/transport.js";
 import { fetchTrail } from "../core/audit.js";
 import { theme } from "../ui/theme.js";
-import { suggestCommand } from "./slash_registry.js";
+import { suggestManifestCommand } from "./command_manifest.js";
 import { printSlashHelp } from "./slash_help.js";
 import { EFFORT_TIERS, normalizeEffort, renderEffortSlider, renderCodeProArt } from "../ui/effort.js";
 import { saveConfig } from "../core/config.js";
@@ -217,6 +217,12 @@ export async function handleSlash(
       await cmdDoctor(ctx, arg.trim() ? arg.trim().split(/\s+/) : [], { out });
       break;
     }
+    case "preview": {
+      const { cmdPreview } = await import("./preview.js");
+      const args = arg.trim() ? arg.trim().split(/\s+/) : ["status"];
+      await cmdPreview(ctx, args, { out, err: out });
+      break;
+    }
     case "mcp": {
       const args = arg.trim() ? arg.trim().split(/\s+/) : [];
       if (args.length > 0) {
@@ -369,7 +375,7 @@ export async function handleSlash(
       await hudSlash(ctx, out, arg);
       break;
     default: {
-      const near = suggestCommand(cmd);
+      const near = suggestManifestCommand("slash", cmd);
       const hint = near ? `did you mean ${theme.cyan("/" + near)}?  ` : "";
       out.write(`unknown command: /${cmd}  ${hint}${theme.dim("(/help, or Tab to complete)")}\n`);
     }

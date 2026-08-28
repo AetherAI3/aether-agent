@@ -1,6 +1,6 @@
-# Aether Agent v0.3.0 — the work reaches a pull request
+# Aether Agent v0.3.0 — durable work, verified delivery
 
-**August 22, 2026**
+**Release candidate finalized August 27, 2026**
 
 0.2.0 was never published. It was written up on August 19, and then `main` kept
 moving: a skills runtime, a capability contract, a redacted support bundle, a
@@ -10,12 +10,71 @@ top of the version that was already spoken for. Rather than quietly widen 0.2.0
 to mean two different things, this release takes the next number and describes
 everything actually on `main`.
 
-Covers `477f0fc..a845479` — every commit merged after the v0.2.0 notes were
-written, and everything the v0.2.0 notes described, which was never shipped
-either.
+Covers every unpublished change after `v0.1.0`, including the work described
+by the never-published v0.2.0 notes and the final PR #107 product spine. The tag
+is cut only from the verified merge commit on `main`; historical candidate
+ranges below remain provenance for the work they actually measured.
+
+<!-- Capability dispositions are checked independently from COMMANDS.md and the command manifest. -->
+<!-- CAPABILITY-RELEASE:START -->
+- `aether.catalogue` — `exempt`: an existing runtime requirement, unchanged in this release.
+- `aether.hosted` — `exempt`: an existing runtime requirement, unchanged in this release.
+- `aether.hosted-or-local` — `exempt`: an existing runtime requirement, unchanged in this release.
+- `aether.local-child` — `announced`: the new headless driver is deliberately limited to a local brain child process.
+- `aether.headless.v1` — `announced`: versioned JSONL events, controls, permission decisions, receipts, and authoritative verification.
+- `aether.headless.v2` — `announced`: repository-bound checkpoints, confined reusable agent definitions, bounded acknowledged controls, and commit-bound verification.
+- `aether.local-preview` — `announced`: the managed preview supervisor accepts declared commands and loopback URLs only.
+- `ollama.local` — `announced`: local setup and Ollama management are explicit command surfaces.
+<!-- CAPABILITY-RELEASE:END -->
+
+## Compatibility
+
+- **Node.js 24 or newer is required.** Aether Agent 0.1.0 accepted Node 20,
+  but the 0.3 test runner and runtime contract use Node 24 behavior. Upgrade
+  Node before installing 0.3.0; the package manifest and both installers refuse
+  an older runtime instead of leaving a partially working CLI.
 
 ## New
 
+- **Managed localhost previews.** `aether preview start|open|logs|status|stop`
+  and `/preview` run only an explicit argv declaration or
+  `.aether/preview.json`, show the execution and network plan before consent,
+  detect a reachable loopback URL, and use the existing no-shell platform
+  opener. An owner-private, one-use challenge authenticates control; the local
+  supervisor owns the full process tree, so stale PID files and unrelated
+  processes are never attached to or killed. Headless
+  runs print the URL without claiming a browser opened. This is a separate
+  local capability and does not relax web-fetch SSRF rules.
+
+- **`aether exec` — a packaged, agent-driven JSONL interface.** It starts the
+  packaged Node/Ollama brain child by default; explicit `--exec-driver cloud` uses an
+  authenticated hosted Cloud text-model dev session with required local tool authority and no server-side
+  downgrade. Cloud runs require explicit `--model` and `--max-uvt`, binding v2 resume to the same model
+  and per-session hosted spend ceiling instead of a mutable server default; the client
+  rejects a mismatched acknowledgement.
+  Neo/Kronus `aether-*` orchestrator IDs are rejected because the dev-session endpoint cannot
+  preserve their identity. Actual-Aether headless dogfood remains an external product dependency:
+  it needs a versioned orchestrator dev-session contract with router confirmation, local tool
+  receipts, controls/replay/cancel, and no server fallback. It emits `aether.exec/1` frames by default, with
+  an opt-in `aether.exec/2` session protocol for durable repository/workspace-bound
+  checkpoints, authority-expiring resume, confined `aether.exec.agent/1` definitions,
+  and session-correlated pause, resume, steer, and cancellation acknowledgements. It retains
+  sequence and correlation IDs, explicit permission decisions, bounded tool
+  receipts, structured stdin controls, and exactly one terminal result. Network
+  agent shell, Git, and network tools are disabled; configured host-run verification is authoritative,
+  so a model claim can never turn a failing, absent, or workspace-mutating gate into exit 0.
+  Cloud pause, resume, and steer are accepted only after the dev-session endpoint returns a
+  valid acknowledgement; transport loss or malformed state fails closed. The packaged
+  hosted-text-model production dogfood remains an acceptance dependency and has not been run by
+  this implementation change. Ollama and the model-free installation selftest are not
+  substitutes for that acceptance run.
+- **Bounded local setup.** `aether setup --local` and `aether local doctor`
+  diagnose Ollama without an account or a hosted request. `local models` lists
+  namespaced `ollama:<tag>` ids; `local use` and `local pull` show their plans
+  and require explicit approval. Neither operation silently switches the
+  backend. Auto-local fallback refuses bare model ids, hosted paths refuse the
+  `ollama:` namespace, and the compatibility bare-tag form is accepted only
+  beside an explicit `--local`.
 - **A review → commit → pull request rail.** `aether review` reads the
   repository's real state, lets you pick what goes in, commits exactly that, and
   `aether ship` publishes the head branch and opens the pull request.
@@ -69,13 +128,13 @@ either.
   build does not have reads as absent, not as unchecked.
 - **`aether support-bundle`** — a redacted diagnostic bundle you can hand to
   someone without handing over your credentials or your file contents.
-- **A command-registration seam.** A command now carries its own help text, its
-  own flag table and its own loader in one entry, so adding one is a single edit
-  instead of three that have to agree. Flag collisions are load-time errors
-  rather than last-writer-wins, and reachability is structural rather than
-  asserted by a regex over the source. You feel this as the three `doctor` fixes
-  below — those flags were lost precisely because the old shape let a command's
-  flags and its dispatch drift apart.
+- **An authoritative command-registration seam.** The versioned manifest owns
+  public help, flags, permissions, availability, documentation, and release
+  disposition; the runtime registry owns only handler names and loaders. CI
+  reconciles both sides, so missing/orphan handlers and flag collisions fail at
+  load time instead of drifting across separate hand-maintained surfaces. You
+  feel this as the three `doctor` fixes below — those flags were lost precisely
+  because the old shape let a command's public contract and dispatch diverge.
 
 ## Carried forward from the unpublished 0.2.0
 
@@ -100,16 +159,20 @@ either.
 ## Fixed
 
 - **A coding run no longer turns into a chat about your code without saying so.**
-  When the server answers 403/404 to a dev-session request — which is what
-  `api.aethersystems.net` does today, with agent dev sessions disabled — CloudBrain
-  treated it as "legacy server" and rerouted the run onto the one-way chat
+  When a server answers 403/404 to a dev-session request, CloudBrain treated it
+  as "legacy server" and rerouted the run onto the one-way chat
   stream. That path runs its tools **server-side against the cloud vault**, so a
   session asked to work in your checkout quietly became a conversation about it:
   normal header, plausible reply, **exit 0**, and nothing anywhere saying the
   transport had changed. A `ROUTING_DRIFT` banner now prints before any model
   output, carrying the status, the server's own sanitized detail, the
   consequence in plain words, and what to do about it; `--json` carries it
-  structurally as `kind:"routing_drift"` (#105).
+  structurally as `kind:"routing_drift"` (#105). The current production doctor
+  probe is still unproven: on August 27 the required non-billable
+  `purpose:"doctor", max_uvt:0` session was rejected with HTTP 403 because
+  production Agent DevSessions are disabled. No session was created, no UVT was
+  spent, and no orphan was left, so this release does not claim hosted coding
+  works.
 - **`aether auth login` opens the approval page on Windows.** The win32 launcher
   used `explorer.exe` for URLs as well as file paths, which opens a File Explorer
   window rather than the default browser — so the device-approval page never
@@ -214,13 +277,15 @@ repository cannot test:
 
 ## Availability — read this before upgrading
 
-**0.3.0 is not on npm.** At the time these notes were written the registry served
-exactly one version of `aether-agents`, `0.1.0`, and `latest` resolved to `0.1.0`.
-Neither 0.2.0 nor 0.3.0 has ever been published, and no GitHub release exists for
-either. So `npm i -g aether-agents --ignore-scripts` installs **0.1.0**, and none
-of the above is in it.
+**0.3.0 ships from source until the release workflow publishes it.** At the time
+these notes were written the registry served exactly one version of
+`aether-agents`, `0.1.0`, and `latest` resolved to `0.1.0`; that is a dated
+observation, not a standing claim about today. Read the current state with
+`npm view aether-agents version`, and read your own install with
+`aether --version`. If that reports a version below 0.3.0, none of the above is
+in it.
 
-Until a `v0.3.0` release is published, build from source:
+Until `aether --version` reports 0.3.0 or newer, build from source:
 
 ```bash
 git clone https://github.com/AetherAI3/aether-agent

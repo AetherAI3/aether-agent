@@ -14,13 +14,22 @@ import type { ToolResult } from "./tool_executor.js";
 
 export type TaskCommand = Extract<HostCommand, { type: "task" }>;
 
+export interface BrainControlResult {
+  accepted: boolean;
+  state: "running" | "paused" | "closed";
+  error?: string;
+}
+
 export interface Brain {
   /** Start the task; yields events until a `done` or `error` event. */
   run(task: TaskCommand): AsyncIterable<BrainEvent>;
   /** Reply to a tool_call the brain emitted (host executed it). */
   sendToolResult(id: string, result: ToolResult): void;
   /** Interactive control: pause / resume / steer (a steer carries a note). */
-  control(action: "pause" | "resume" | "steer", note?: string): void;
+  control(
+    action: "pause" | "resume" | "steer",
+    note?: string,
+  ): BrainControlResult | Promise<BrainControlResult> | void;
   /** Tear down (kill the subprocess / abort the stream). */
   close(): void;
 }

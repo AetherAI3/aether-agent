@@ -8,6 +8,7 @@
 // locally (see workspace.ts) and kept off the wire for now.
 
 import type { PermissionMode } from "../types.js";
+import { resolveHostedModel } from "./local_ollama.js";
 
 export interface WorkspaceContext {
   cwd: string;
@@ -39,7 +40,7 @@ export interface BuildChatRequestArgs {
 }
 
 export function buildChatRequest(args: BuildChatRequestArgs): ChatWireRequest {
-  const model = args.model?.trim() || null;
+  const model = resolveHostedModel(args.model) || null;
   const agent = args.agent?.trim() || null;
   const req: ChatWireRequest = {
     query: args.prompt,
@@ -81,7 +82,7 @@ export function buildDevSessionRequest(args: BuildDevSessionArgs): DevSessionWir
   const req: DevSessionWireRequest = {
     task: args.task,
     surface: "aether_agent",
-    model: args.model?.trim() || null,
+    model: resolveHostedModel(args.model) || null,
     effort: args.effort?.trim() || null,
     capabilities: [...args.capabilities],
     protocol_version: args.protocolVersion,

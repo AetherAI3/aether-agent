@@ -6,34 +6,20 @@ import {
   type DispatchedCommand,
   type FlagTable,
 } from "../core/command_dispatch.js";
+import { COMMAND_MANIFEST_SOURCE } from "./command_manifest_data.js";
 
-export const CLI_SECTIONS = ["Start", "Account", "Knowledge", "Media", "System"] as const;
-export const CLI_COMMANDS: CommandSpec[] = [
-  { name: "help", args: "[command]", summary: "show grouped help or command detail", section: "Start" },
-  { name: "agent", aliases: ["code"], args: "[task]", summary: "run the coding agent or open its REPL", section: "Start" },
-  { name: "chat", args: "[prompt]", summary: "start chat or send one prompt", section: "Start" },
-  { name: "resume", args: "[session-id|export [id] --out <file>]", summary: "replay a local session, or export it as a portable handoff", section: "Start" },
-  { name: "run", args: "<neo|kronus> <task>", summary: "stream an orchestrator run", section: "Start" },
-  { name: "models", args: "[use <id>]", summary: "list models or set the default", section: "Start" },
-  { name: "agents", summary: "list available orchestrators", section: "Start" },
-  { name: "auth", args: "<login|status|token|refresh|logout>", summary: "manage authentication", section: "Account" },
-  { name: "login", summary: "sign in (legacy shortcut)", section: "Account", hidden: true },
-  { name: "logout", summary: "sign out (legacy shortcut)", section: "Account", hidden: true },
-  { name: "github", args: "<connect|status|disconnect>", summary: "manage the GitHub connection", section: "Account" },
-  { name: "vault", args: "<command>", summary: "search and manage semantic memory", section: "Knowledge" },
-  { name: "workflow", args: "<command>", summary: "create and manage workflows", section: "Knowledge" },
-  { name: "memory", args: "[status|inspect|forget|prune]", summary: "inspect and manage scoped memory", section: "Knowledge" },
-  { name: "skills", args: "<subcommand>", summary: "inspect, trust, and manage agent skills", section: "Knowledge" },
-  { name: "capabilities", args: "[--available]", summary: "show the capability contract and runtime availability", section: "Knowledge" },
-  { name: "image", aliases: ["img"], args: "<prompt>", summary: "generate an image", section: "Media" },
-  { name: "video", aliases: ["vid"], args: "<prompt>", summary: "generate a video", section: "Media" },
-  { name: "output", aliases: ["out"], args: "[open <n>]", summary: "manage generated media", section: "Media" },
-  { name: "audit", args: "[limit]", summary: "show chain-of-custody events", section: "System" },
-  { name: "receipt", args: "<order-id>", summary: "export an audit proof package", section: "System" },
-  { name: "support-bundle", summary: "export a redacted diagnostic support bundle", section: "System" },
-  { name: "mcp", args: "[list|doctor|repair]", summary: "manage and diagnose MCP servers", section: "System" },
-  { name: "config", args: "[show|get|set]", summary: "inspect or change configuration", section: "System" },
-];
+const shellManifest = COMMAND_MANIFEST_SOURCE.filter((entry) => entry.surface === "shell");
+function commandSpec(entry: (typeof shellManifest)[number]): CommandSpec {
+  return {
+    name: entry.name,
+    ...(entry.aliases.length ? { aliases: [...entry.aliases] } : {}),
+    ...(entry.args === undefined ? {} : { args: entry.args }),
+    summary: entry.summary,
+    section: entry.section,
+    ...(entry.hidden ? { hidden: true } : {}),
+  };
+}
+export const CLI_SECTIONS = [...new Set(shellManifest.map((entry) => entry.section))];
 /**
  * Global flags — owned by main.ts's argv parse, readable by every command.
  * Declared here so the dispatch table can be validated against them at load
@@ -90,34 +76,51 @@ export const GLOBAL_FLAGS: FlagTable = {
 };
 
 /**
- * Self-dispatching commands. Each entry carries its own help metadata, its own
- * flags, and its own loader, so adding a command is one entry in one file — no
- * `switch` case in main.ts and no edit to the global flag table.
+ * Runtime registry: executable loaders only. Names bind these functions to
+ * the versioned public manifest; help, flags, permissions and release metadata
+ * never originate here.
  *
  * `doctor` lives here rather than in the switch because the seam has to be
  * load-bearing in production to be trustworthy: an empty table would make the
  * reachability tests vacuously true.
  */
-export const DISPATCH_COMMANDS: DispatchedCommand[] = [
+export const SHELL_RUNTIME_HANDLERS: Array<Pick<DispatchedCommand, "name" | "load">> = [
+  {
+    name: "exec",
+    load: async () => {
+      const { cmdExec } = await import("./exec.js");
+      return (ctx, argv, flags) => cmdExec(ctx, argv, flags);
+    },
+  },
+  {
+    name: "setup",
+    load: async () => {
+      const { cmdSetup } = await import("./local.js");
+      return (ctx, argv, flags) => cmdSetup(ctx, argv, flags);
+    },
+  },
+  {
+    name: "local",
+    load: async () => {
+      const { cmdLocal } = await import("./local.js");
+      return (ctx, argv, flags) => cmdLocal(ctx, argv, flags);
+    },
+  },
+  {
+    name: "preview",
+    load: async () => {
+      const { cmdPreview, previewOptionsFromFlags } = await import("./preview.js");
+      return (ctx, argv, flags) => cmdPreview(ctx, argv, previewOptionsFromFlags(flags));
+    },
+  },
   {
     name: "doctor",
-    args: "[--live|--fix] [--deep] [--only <id>]",
-    summary: "run structured runtime diagnostics",
-    section: "System",
     // doctor parses its own argv (parseDoctorArgs). It never saw these flags:
     // main.ts's parse is strict:false, so an undeclared `--live` was captured
     // into `values` and stripped from the positionals doctor was handed — the
     // live end-to-end proof silently ran as the fast configured-only report,
     // and `--only <id>` arrived as a bare positional and failed as unknown.
     // Declaring them here is what makes them reach the command at all.
-    flags: {
-      deep: { type: "boolean", default: false },
-      live: { type: "boolean", default: false },
-      fix: { type: "boolean", default: false },
-      "dry-run": { type: "boolean", default: false },
-      "no-ui": { type: "boolean", default: false },
-      only: { type: "string", multiple: true },
-    },
     load: async () => {
       const { cmdDoctor } = await import("./doctor.js");
       // Parsed values are handed over as data. Nothing is re-rendered into an
@@ -150,18 +153,11 @@ export const DISPATCH_COMMANDS: DispatchedCommand[] = [
     // parser never saw them, so `aether sessions --all` silently listed one
     // project.
     name: "sessions",
-    args: "[inspect|continue|export|archive|clean] [id]",
-    summary: "browse, inspect and continue past project sessions",
-    section: "Start",
     // `--all` and `--out` are GLOBAL: other commands already own those
     // spellings, so the table cannot hand either to this one, and a command
     // that shadowed a global would silently change what it means everywhere.
     // They arrive on ctx.flags instead; only what is genuinely this command's
     // is declared here.
-    flags: {
-      undo: { type: "boolean", default: false },
-      "no-select": { type: "boolean", default: false },
-    },
     load: async () => {
       const { cmdSessions } = await import("./sessions.js");
       // Parsed values are handed over as DATA — never re-rendered into an argv
@@ -197,20 +193,6 @@ export const DISPATCH_COMMANDS: DispatchedCommand[] = [
   // and are read off ctx.flags instead, the way doctor reads `--yes`.
   {
     name: "review",
-    args: "[stage|unstage|revert|commit|diff|verify]",
-    summary: "review changes, pick files or hunks, commit",
-    section: "Start",
-    flags: {
-      files: { type: "string" },
-      hunks: { type: "string" },
-      message: { type: "string", short: "m" },
-      // `--approve <action>` is the declared authority boundary: `--yes` alone
-      // never approves a destructive or a publishing step.
-      approve: { type: "string" },
-      title: { type: "string" },
-      body: { type: "string" },
-      base: { type: "string" },
-    },
     load: async () => {
       const { cmdReview } = await import("./review.js");
       // Parsed values are handed over as data — named properties, never
@@ -232,20 +214,6 @@ export const DISPATCH_COMMANDS: DispatchedCommand[] = [
   },
   {
     name: "ship",
-    args: "[--title t] [--base b]",
-    summary: "publish the head branch and open a pull request",
-    section: "Start",
-    // `review` already declares this identical table; two commands sharing one
-    // identical flag is a single parseArgs entry, not a collision.
-    flags: {
-      files: { type: "string" },
-      hunks: { type: "string" },
-      message: { type: "string", short: "m" },
-      approve: { type: "string" },
-      title: { type: "string" },
-      body: { type: "string" },
-      base: { type: "string" },
-    },
     load: async () => {
       const { cmdShip } = await import("./ship.js");
       return (ctx, argv, flags) =>
@@ -261,8 +229,26 @@ export const DISPATCH_COMMANDS: DispatchedCommand[] = [
   },
 ];
 
-/** Everything the CLI answers to, however it is dispatched. */
-export const ALL_CLI_COMMANDS: readonly CommandSpec[] = [...CLI_COMMANDS, ...DISPATCH_COMMANDS];
+const handlers = new Map(SHELL_RUNTIME_HANDLERS.map((handler) => [handler.name, handler.load]));
+const lazyManifest = shellManifest.filter((entry) => entry.handler.kind === "lazy");
+const orphanHandlers = SHELL_RUNTIME_HANDLERS.filter((handler) =>
+  !lazyManifest.some((entry) => entry.name === handler.name));
+if (orphanHandlers.length) throw new Error(`Runtime handlers missing from command manifest: ${orphanHandlers.map((item) => item.name).join(", ")}`);
+
+/** Compatibility projection consumed by the parser/dispatcher. Public fields come only from the manifest. */
+export const DISPATCH_COMMANDS: DispatchedCommand[] = lazyManifest.map((entry) => {
+  const load = handlers.get(entry.name);
+  if (!load) throw new Error(`Command manifest has no runtime handler for shell:${entry.name}`);
+  return {
+    ...commandSpec(entry),
+    flags: Object.fromEntries(Object.entries(entry.ownedFlags).map(([name, spec]) => [name, { ...spec }])),
+    load,
+  };
+});
+export const CLI_COMMANDS: CommandSpec[] = shellManifest.filter((entry) => entry.handler.kind === "host").map(commandSpec);
+
+/** Everything the CLI answers to, projected in manifest order. */
+export const ALL_CLI_COMMANDS: readonly CommandSpec[] = shellManifest.map(commandSpec);
 
 const registryErrors = [
   ...validateCommandRegistry(ALL_CLI_COMMANDS, CLI_SECTIONS),

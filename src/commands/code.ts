@@ -13,6 +13,7 @@ import type { BrainEvent } from "../core/brain_protocol.js";
 import type { ToolResult } from "../core/tool_executor.js";
 import { LocalBrain } from "../core/brain_local.js";
 import { OllamaBrain } from "../core/brain_ollama.js";
+import { resolveHostedModel, resolveLocalModelSelection } from "../core/local_ollama.js";
 import { CloudBrain } from "../core/brain_cloud.js";
 import { ToolExecutor } from "../core/tool_executor.js";
 import { stdioPrompt } from "../ui/interact.js";
@@ -99,6 +100,11 @@ export interface CodeOpts {
 }
 
 const nowIso = (): string => new Date().toISOString();
+
+/** Resolve the hosted model once for both the wire command and durable provenance. */
+export function resolveHostedSessionModel(explicit: string | undefined, configured: string): string {
+  return resolveHostedModel(explicit, configured);
+}
 
 /** Map a BrainEvent onto the pinned status line (verb + streamed tokens).
  * Exported so the wiring is unit-testable without a real brain. */
@@ -290,6 +296,13 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     goLocal = chooseBackend(pref, authed) === "local";
   }
   const brainKind: "local" | "cloud" = goLocal ? "local" : "cloud";
+  const localSelection = goLocal
+    ? resolveLocalModelSelection(ctx.flags.model, ctx.cfg.localModel ?? "", { allowBareExplicit: opts.local })
+    : null;
+  const resolvedHostedModel = goLocal ? "" : resolveHostedSessionModel(ctx.flags.model, ctx.cfg.defaultModel);
+  // Provenance uses a namespace; the Ollama wire protocol receives only the
+  // tag. That makes a handoff unambiguous without changing Ollama's API.
+  const resolvedModel = localSelection?.id ?? resolvedHostedModel;
 
   // The offline path drives the SAME Ollama brain the REPL's `--local` turns
   // already use (commands/chat.ts runLocalTurn) — pure TypeScript, shipped in
@@ -316,7 +329,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     : new SessionLog(
         {
           task: label,
-          model: ctx.flags.model ?? "",
+          model: resolvedModel,
           poolGb,
           brain: brainKind,
           cwd: ctx.flags.cwd,
@@ -376,7 +389,7 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     // --effort wins; otherwise the /effort dial saved in the Aether config
     // (same backend: TaskCommand.effort reaches the cloud brain unchanged).
     effort: opts.effort ?? (ctx.cfg.defaultEffort || undefined),
-    model: ctx.flags.model,
+    model: localSelection?.tag ?? (resolvedHostedModel || undefined),
     testCmd: opts.testCmd,
   };
 

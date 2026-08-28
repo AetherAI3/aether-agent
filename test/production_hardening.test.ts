@@ -18,7 +18,11 @@ const manifest = {
   main: "dist/src/index.js",
   types: "dist/src/index.d.ts",
   bin: { aether: "dist/src/main.js" },
-  files: ["dist/src", "README.md", "COMMANDS.md", "LICENSE", "NOTICE.md"],
+  files: [
+    "dist/src", "README.md", "COMMANDS.md", "LICENSE", "NOTICE.md",
+    "docs/generated/commands.md", "docs/generated/model-catalogue.md",
+    "docs/model-catalogue/catalogue.json", "docs/model-catalogue/index.html",
+  ],
   engines: { node: ">=24" },
   scripts: { prepack: "npm run build" },
 };
@@ -36,6 +40,10 @@ const pack: PackReport = {
     "NOTICE.md",
     "README.md",
     "package.json",
+    "docs/generated/commands.md",
+    "docs/generated/model-catalogue.md",
+    "docs/model-catalogue/catalogue.json",
+    "docs/model-catalogue/index.html",
     "dist/src/index.js",
     "dist/src/index.d.ts",
     "dist/src/main.js",
@@ -59,6 +67,13 @@ test("package allowlist rejects compiled tests and environment files", () => {
   assert.match(errors, /\.env/);
 });
 
+test("all generated public documents are required by both manifest and pack", () => {
+  const files = manifest.files.filter((path) => path !== "docs/model-catalogue/index.html");
+  assert.match(validateManifest({ ...manifest, files }).join("\n"), /must include generated public document docs\/model-catalogue\/index\.html/);
+  const missing = { ...pack, files: pack.files.filter((file) => file.path !== "docs/generated/commands.md") };
+  assert.match(validatePack(missing, manifest).join("\n"), /missing generated public document docs\/generated\/commands\.md/);
+});
+
 test("workflow policy rejects floating actions and unbounded jobs", () => {
   const valid = `permissions:\n  contents: read\njobs:\n  test:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - uses: actions/checkout@0123456789abcdef0123456789abcdef01234567\n      - run: npm ci --ignore-scripts\n`;
   assert.deepEqual(validateWorkflowText("valid.yml", valid), []);
@@ -70,6 +85,24 @@ test("workflow policy rejects floating actions and unbounded jobs", () => {
   assert.match(errors, /timeout-minutes/);
   const blockScalar = valid.replace("      - run: npm ci --ignore-scripts", "      - run: |\n          npm ci");
   assert.match(validateWorkflowText("block.yml", blockScalar).join("\n"), /ignore-scripts/);
+});
+
+test("workflow policy rejects job-scoped write-all permissions", () => {
+  const workflow = `permissions:\n  contents: read\njobs:\n  test:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    permissions: write-all\n    steps:\n      - run: npm ci --ignore-scripts\n`;
+  assert.match(
+    validateWorkflowText("job-write-all.yml", workflow).join("\n"),
+    /write-all|permissions/i,
+    "a job must not be able to silently widen the workflow's read-only permissions",
+  );
+});
+
+test("workflow policy rejects indirect package publication", () => {
+  const workflow = `permissions:\n  contents: read\njobs:\n  publish:\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - run: node scripts/publish-wrapper.js\n`;
+  assert.match(
+    validateWorkflowText("release.yml", workflow).join("\n"),
+    /publish|provenance|attestation/i,
+    "release policy must not be bypassed by hiding npm publish behind a wrapper",
+  );
 });
 
 test("publishing workflow must be event-gated, main-derived, and install-smoked", () => {
@@ -111,7 +144,10 @@ test("production verifier installs and launches the exact packed CLI", { timeout
   const result = verifyProduction(process.cwd(), `v${expected}`);
   assert.equal(result.package, "aether-agents");
   assert.equal(result.version, expected);
-  assert.equal(result.workflows, 3);
+  assert.equal(
+    result.workflows,
+    readdirSync(join(process.cwd(), ".github", "workflows")).filter((entry) => /\.ya?ml$/i.test(entry)).length,
+  );
   assert.ok(result.packedFiles > 0);
   assert.ok(result.packedBytes > 0);
 });

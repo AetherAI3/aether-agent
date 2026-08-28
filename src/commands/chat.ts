@@ -23,7 +23,7 @@ import { renderInputView } from "../ui/input_render.js";
 import { decodeKey, splitKeys } from "../ui/keys.js";
 import { ThinkingPulse } from "../ui/thinking.js";
 import { registerRestore } from "../ui/restore.js";
-import { completeSlash } from "./slash_registry.js";
+import { completeManifestSlash } from "./command_manifest.js";
 // history_store.ts (origin/main's own persistence + AETHER_NO_HISTORY opt-out)
 // supersedes the old readline-backed ./history.js — see chat.ts's resolution
 // report for why that file is now dead code pending a cleanup pass.
@@ -31,6 +31,7 @@ import { loadHistory, appendHistory, historyPath, historyEnabled } from "../core
 import { VERSION } from "../version.js";
 import { chooseBackend, type BackendPath } from "../core/backend.js";
 import { OllamaBrain } from "../core/brain_ollama.js";
+import { localModelId, resolveHostedModel, resolveLocalModel } from "../core/local_ollama.js";
 import type { Brain } from "../core/brain.js";
 import type { ToolResult } from "../core/tool_executor.js";
 import { ToolExecutor } from "../core/tool_executor.js";
@@ -212,7 +213,7 @@ async function runCloudTurn(
   reg.beginTurn(turnId);
   const req = buildChatRequest({
     prompt,
-    model: ctx.flags.model ?? ctx.cfg.defaultModel,
+    model: resolveHostedModel(ctx.flags.model, ctx.cfg.defaultModel),
     agent: ctx.flags.agent ?? "",
     // Only an explicit --model this invocation counts as a manual pick.
     manualModel: ctx.flags.model != null,
@@ -305,7 +306,10 @@ export async function runLocalTurn(
   skillGuard?: (tool: string) => SkillRefusal | null,
 ): Promise<void> {
   const cwd = ctx.flags.cwd;
-  const brain = deps.brain ?? new OllamaBrain(ctx.flags.model ? { model: ctx.flags.model } : {});
+  const model = resolveLocalModel(ctx.flags.model, ctx.cfg.localModel ?? "", {
+    allowBareExplicit: ctx.flags.local === true,
+  });
+  const brain = deps.brain ?? new OllamaBrain({ model });
   const exec = deps.exec ?? new ToolExecutor(cwd);
   const renderer = new HostRenderer({ poolGb: 5, json: ctx.flags.json });
   const approveTool = async (name: string, args: Record<string, unknown>): Promise<boolean> => {
@@ -327,7 +331,7 @@ export async function runLocalTurn(
     text: prompt,
     cwd,
     poolGb: 5,
-    ...(ctx.flags.model ? { model: ctx.flags.model } : {}),
+    model,
   };
   let sawError: string | null = null;
   // close() is what unblocks a loop parked on a tool result, so an abort that
@@ -466,7 +470,12 @@ export async function cmdChat(
 // command): every turn in this REPL opens its run session with it.
 async function repl(ctx: AppContext, skillOpts: TurnSkillOptions = {}): Promise<number> {
   const username = userInfo().username || "you";
-  const model = ctx.flags.model ?? ctx.cfg.defaultModel ?? "auto";
+  const backend = await resolveBackend(ctx);
+  const model = backend === "local"
+    ? localModelId(resolveLocalModel(ctx.flags.model, ctx.cfg.localModel ?? "", {
+        allowBareExplicit: ctx.flags.local === true,
+      }))
+    : resolveHostedModel(ctx.flags.model, ctx.cfg.defaultModel) || "auto";
   process.stdout.write(
     renderSplash({
       version: VERSION,
@@ -479,7 +488,6 @@ async function repl(ctx: AppContext, skillOpts: TurnSkillOptions = {}): Promise<
     }) + "\n\n",
   );
   // One-line dim banner: which brain serves turns this session (local-first).
-  const backend = await resolveBackend(ctx);
   const where = backend === "local" ? "local Ollama (offline)" : "cloud (Aether API)";
   process.stdout.write(theme.dim(`backend: ${where}`) + "\n");
   process.stdout.write("Type a prompt, or /help for commands. /exit to quit.\n\n");
@@ -922,7 +930,7 @@ async function repl(ctx: AppContext, skillOpts: TurnSkillOptions = {}): Promise<
           if (busy) return;
           const v = buf.value;
           if (v.startsWith("/") && !/\s/.test(v) && buf.pos === [...v].length) {
-            const r = completeSlash(v);
+            const r = completeManifestSlash(v);
             if (r.completed) {
               buf.clear();
               buf.insert(r.completed);

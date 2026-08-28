@@ -29,6 +29,7 @@ export type StreamFrameBody =
   // coding protocol: the API brain emits tool_call, the local host executes
   // and POSTs the result back.
   | { type: "session"; sessionId: string; protocolVersion: number; model?: string; tools?: string[] }
+  | { type: "notice"; notice: string; oldestSeq?: number }
   | { type: "tool_call"; toolCallId: string; name: string; args: Record<string, unknown>; risk?: string }
   | { type: "tool_result_ack"; toolCallId: string }
   // The server-signed chain-of-custody for this turn (commitment + attestation).
@@ -137,6 +138,12 @@ function normalizeFrameBody(obj: Record<string, unknown>): StreamFrameBody | nul
         protocolVersion: Number(obj["protocol_version"] ?? obj["protocolVersion"] ?? 0),
         model: strOrUndef(obj["model"]),
         tools: parseStrArray(obj["tools"]),
+      };
+    case "notice":
+      return {
+        type: "notice",
+        notice: String(obj["notice"] ?? ""),
+        oldestSeq: numOrUndef(obj["oldest_seq"] ?? obj["oldestSeq"]),
       };
     case "tool_call":
       return {

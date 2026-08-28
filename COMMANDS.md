@@ -3,6 +3,10 @@
 Complete reference for every command, flag, slash command, and environment
 variable. For a quick tour, see the [README](README.md).
 
+<!-- GENERATED-COMMAND-REFERENCE:START -->
+The complete manifest-derived reference is [docs/generated/commands.md](docs/generated/commands.md). Regenerate it with `npm run docs:generate`; verify drift with `npm run docs:check`.
+<!-- GENERATED-COMMAND-REFERENCE:END -->
+
 ```
 aether [global flags] <command> [args]
 aether [global flags] "<prompt>"        # bare prompt = one-shot chat
@@ -14,15 +18,32 @@ aether                                  # no args = interactive REPL
 <!-- Registry markers are checked against the declarative command registries. -->
 
 <!-- CLI-COMMANDS:START -->
-`help`, `agent`, `chat`, `resume`, `sessions`, `run`, `review`, `ship`, `models`, `agents`, `auth`,
+`help`, `agent`, `exec`, `chat`, `resume`, `sessions`, `run`, `review`, `ship`, `setup`, `local`, `preview`, `models`, `agents`, `auth`,
 `github`, `vault`, `workflow`, `memory`, `skills`, `capabilities`, `image`,
 `video`, `output`, `audit`, `receipt`, `doctor`, `support-bundle`, `mcp`,
 `config`
 <!-- CLI-COMMANDS:END -->
 
 <!-- SLASH-COMMANDS:START -->
-`help`, `models`, `model`, `agent`, `agents`, `tier`, `audit`, `effort`, `doctor`, `clear`, `exit`, `mcp`, `autonomous-execution`, `subagent-driven-execution`, `self-review`, `recon`, `plan`, `research`, `project-review`, `code-review`, `writing-skills`, `writing-plans`, `queue`, `steer`, `btw`, `pin`, `drop`, `snapshot`, `limit`, `audit-receipt`, `rollback`, `logs-view`, `goal`, `goals`, `memory`, `workflow`, `workflow-templates`, `workflow-template`, `vault`, `vault-context`, `vault-search`, `vault-recent`, `vault-project`, `vault-tag`, `vault-tree`, `delegate`, `tree`, `broadcast`, `gather`, `scaffold`, `port`, `test-drive`, `bench`, `purge`, `stage-diff`, `review`, `ship`, `revert`, `photogen`, `frame`, `re-frame`, `videogen`, `sequence`, `animate`, `re-cut`, `output`, `storyboard`, `add`, `hud`
+`help`, `models`, `model`, `agent`, `agents`, `tier`, `audit`, `effort`, `doctor`, `preview`, `clear`, `exit`, `mcp`, `autonomous-execution`, `subagent-driven-execution`, `self-review`, `recon`, `plan`, `research`, `project-review`, `code-review`, `writing-skills`, `writing-plans`, `queue`, `steer`, `btw`, `pin`, `drop`, `snapshot`, `limit`, `audit-receipt`, `rollback`, `logs-view`, `goal`, `goals`, `memory`, `workflow`, `workflow-templates`, `workflow-template`, `vault`, `vault-context`, `vault-search`, `vault-recent`, `vault-project`, `vault-tag`, `vault-tree`, `delegate`, `tree`, `broadcast`, `gather`, `scaffold`, `port`, `test-drive`, `bench`, `purge`, `stage-diff`, `review`, `ship`, `revert`, `photogen`, `frame`, `re-frame`, `videogen`, `sequence`, `animate`, `re-cut`, `output`, `storyboard`, `add`, `hud`
 <!-- SLASH-COMMANDS:END -->
+
+## Runtime capability requirements
+
+These identifiers are the public capability requirements referenced by command
+metadata. Their release treatment is recorded independently in the release
+notes.
+
+<!-- CAPABILITY-DOCS:START -->
+- `aether.catalogue` — live model and agent catalogue access.
+- `aether.hosted` — an authenticated hosted Aether runtime.
+- `aether.hosted-or-local` — either the hosted runtime or the packaged local fallback.
+- `aether.local-child` — local child-process brain authority; never a remote shell.
+- `aether.headless.v1` — versioned `aether.exec/1` JSONL events and controls.
+- `aether.headless.v2` — durable, repository-bound headless sessions with acknowledged controls.
+- `aether.local-preview` — consent-gated local dev-server supervision and loopback opening.
+- `ollama.local` — a user-operated Ollama endpoint and optional local CLI binary.
+<!-- CAPABILITY-DOCS:END -->
 
 
 ---
@@ -61,8 +82,9 @@ so a prompt that happens to look like a command still chats.
 aether "explain what src/router.ts does"
 aether --model opus "rewrite this function to be O(n)"
 ```
-A lone near-miss token is treated as a typo, not a prompt: `aether auht`
-suggests `aether auth` and exits `2` instead of spending a turn on "auht".
+A lone near-miss token is treated as a typo, not a prompt.
+Expected typo example: `aether auht` suggests `aether auth` and exits `2` before any hosted request.
+Use `aether chat auht` to send that exact text as a prompt intentionally.
 
 ### `aether code "<task>"` — autonomous coding agent
 One host loop drives a pluggable brain: cloud (UVT-metered) by default,
@@ -104,6 +126,38 @@ skill matched *automatically* from a trigger phrase contributes its instructions
 but never its policy — only a skill you name with `--skill` narrows.
 Both flags work on `aether chat` and the REPL too.
 
+### `aether exec "<task>"` — headless packaged agent
+
+Runs the packaged Ollama child by default, or an authenticated hosted Cloud text-model dev session with
+`--exec-driver cloud`. The cloud path keeps tool authority in this host and refuses any
+legacy server-executed downgrade; it requires explicit `--model <id>` so resumable authority
+cannot drift with a changed server default, plus `--max-uvt <positive-integer>` as a per-session
+hosted spend ceiling. Both bindings are persisted for v2 resume. Neo/Kronus `aether-*` orchestrator IDs are rejected
+because this endpoint cannot preserve their router identity. Stdout contains only versioned JSONL protocol frames;
+diagnostics use stderr. Protocol v1 remains
+the default. Select `--exec-protocol 2` for repository-bound checkpoints, pause/resume/steer,
+bounded idempotent controls, and confined reusable agent definitions. The default tool envelope
+is read-only. Agent shell, Git, and network tools are disabled in both versions. A successful
+model completion exits non-zero unless the host-run `--test-cmd` also passes; v2 additionally
+requires the verification result to remain bound to the same commit and workspace bytes.
+
+| Flag | Meaning |
+|---|---|
+| `--exec-protocol <1\|2>` | Select the headless protocol; v1 remains the compatibility default. |
+| `--exec-driver <ollama\|cloud\|selftest>` | Use the local model child, local-authority hosted text-model dev session (with explicit `--model`), or model-free installation selftest. |
+| `--max-uvt <positive-integer>` | Required cloud-driver per-session hosted spend ceiling; unavailable to local drivers and immutable on v2 resume. |
+| `--permission <deny\|read-only\|workspace-write>` | Set the host-enforced permission ceiling. |
+| `--allow-tool <name>` | Declare a safe file/search tool; repeat to declare more than one. |
+| `--capability-pack <id>` | Record a bounded capability-pack identifier; repeatable. |
+| `--agent-definition <path>` | Load an `aether.exec.agent/1` definition confined to the workspace (v2 only). |
+| `--authority-ttl-ms <ms>` | Bound v2 checkpoint authority to 1 second–4 hours. |
+| `--resume <session-id>` | Resume a non-terminal v2 checkpoint without replacing its authority. |
+| `--timeout-ms <ms>` | Bound the run to 100 ms–1 hour. |
+| `--test-cmd <command>` | Run the authoritative final verification gate. |
+
+See [`docs/HEADLESS_PROTOCOL.md`](docs/HEADLESS_PROTOCOL.md) for framing, structured stdin
+controls, checkpoint and agent-definition contracts, payload bounds, and stable exit codes.
+
 ### `aether run <neo|kronus> "<task>"` — orchestrator
 Hands a multi-step task to an orchestrator, which plans, fans out sub-agents,
 and synthesizes. Streams task-level progress.
@@ -112,6 +166,64 @@ aether run neo "add pagination to the users endpoint and write tests"
 aether run kronus "audit this service for race conditions and fix them"
 ```
 > Orchestrators are gated to paid tiers. Neo is available on Solo+; Kronus on Pro+.
+
+### `aether setup --local` and `aether local` — Ollama setup
+
+`aether setup --local` and `aether local doctor` perform the same bounded,
+read-only diagnosis: Ollama binary, normalized endpoint, server response,
+installed tags, selected local model, backend setting, and hosted sign-in state.
+No token value is printed and no hosted API is called.
+
+| Command | Effect |
+|---|---|
+| `aether local doctor` | Diagnose Ollama without changing anything. |
+| `aether local models` | List installed tags as `ollama:<tag>` ids. |
+| `aether local use <model>` | Plan and, after confirmation or `--yes`, save a namespaced local default. Does not switch the backend. |
+| `aether local pull <model>` | Plan and, after confirmation or `--yes`, run `ollama pull` with argv-only process launch. Does not select it. |
+
+Stable local setup exit codes are `21` binary absent, `22` server down, `23`
+no installed models, `24` selected model missing, `25` timeout, `26` malformed
+host/response, `27` failed Ollama operation, and `28` failed configuration
+mutation. Usage remains `2`; declining a shown plan is `20`, and a cancelled
+pull follows the conventional `130`. These values do
+not collide with the hosted routing-refusal code `3`.
+
+A bare `--model <tag>` is accepted for backward compatibility only when
+`--local` explicitly selects Ollama. Auto-local fallback requires the
+`ollama:<tag>` namespace, so a hosted model id cannot silently become an Ollama
+pull/chat tag. Conversely, an `ollama:` id is rejected before any hosted
+request.
+
+### `aether preview <start|open|logs|status|stop>` — managed local preview
+
+`preview start` accepts an argv-only command (`--command` plus repeatable
+`--arg`) or the versioned project declaration `.aether/preview.json`. Before it
+starts anything it prints the exact argv, working directory, inherited
+permissions, and network implications, then requires confirmation or `--yes`.
+The supervisor accepts readiness only from reachable loopback HTTP(S) URLs.
+An explicitly declared readiness URL must be unreachable before launch and
+then become reachable while the child remains stable; this prevents an
+unrelated listener from authenticating the child. A URL discovered from child
+output is observational convenience, not proof that the child owns the port.
+The supervisor stores sanitized bounded logs under `.aether/preview/` and owns
+the complete process tree. `status`, `logs`, and `stop` use an owner-private, one-use
+loopback challenge
+instead of trusting a PID file; an unverifiable stale PID is never signalled.
+
+```json
+{
+  "version": 1,
+  "command": "npm",
+  "args": ["run", "dev"],
+  "cwd": ".",
+  "readyUrl": "http://127.0.0.1:5173"
+}
+```
+
+Use `--no-open` in automation. A headless machine always receives the URL and
+an honest “not opened” result. `/preview start|open|logs|status|stop` uses the
+same project declaration and lifecycle inside the REPL. This local opener is
+separate from web fetching; it does not change the SSRF policy.
 
 ### `aether resume [id | export [id]]` — replay or carry a session
 Replays a prior local coding session's transcript from `~/.aether-agent/logs/`.

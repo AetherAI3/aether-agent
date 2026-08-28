@@ -47,6 +47,13 @@ jobs:
       - name: Build and test
         run: npm test
 
+      # Emit the compact, machine-readable package summary on both release
+      # platforms. The release-coherence suite binds the packet's named host
+      # measurement to this same npm pack result, so a value from one runner
+      # cannot be relabelled as evidence from the other.
+      - name: Emit exact-head production package report
+        run: npm run verify:production
+
   supply-chain:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -70,6 +77,9 @@ jobs:
 
       - name: Verify production package and policy
         run: npm run verify:production
+
+      - name: Verify live release truth
+        run: npm run release:truth
 
       - name: Generate CycloneDX SBOM
         run: npm sbom --sbom-format cyclonedx > aether-agents.cdx.json

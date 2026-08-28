@@ -343,8 +343,9 @@ export function runReleaseCandidate(repoRoot: string, options: CandidateOptions 
       const file = join(packDir, tarball.filename);
       const r = npm(["install", "--global", "--prefix", prefix, file, "--ignore-scripts"], stage);
       if (r.code !== 0) throw new Error(`global install failed: ${tail(r.stderr || r.stdout)}`);
-      if (!existsSync(installedPackageDir(prefix))) throw new Error(`install left no package at ${installedPackageDir(prefix)}`);
-      return installedPackageDir(prefix);
+      const installed = installedPackageDir(prefix, pkg.name);
+      if (!existsSync(installed)) throw new Error(`install left no package at ${installed}`);
+      return installed;
     });
 
     // Prefer the bin shim npm actually put on PATH — that is the entrypoint a
@@ -354,7 +355,7 @@ export function runReleaseCandidate(repoRoot: string, options: CandidateOptions 
     const cli = (args: string[], cwd: string): RunResult => {
       const shim = join(prefix, "bin", "aether");
       if (process.platform !== "win32" && existsSync(shim)) return run(shim, args, cwd, 180_000);
-      const entry = join(installedPackageDir(prefix), "dist", "src", "main.js");
+      const entry = join(installedPackageDir(prefix, pkg.name), "dist", "src", "main.js");
       return run(process.execPath, [entry, ...args], cwd, 180_000);
     };
 
@@ -397,7 +398,7 @@ export function runReleaseCandidate(repoRoot: string, options: CandidateOptions 
     seq.step("installed demo:handoff", () => {
       const source = join(stage, "dist", "scripts", "handoff-demo.js");
       if (!existsSync(source)) throw new Error(`built handoff demo missing at ${source}`);
-      const installed = installedPackageDir(prefix);
+      const installed = installedPackageDir(prefix, pkg.name);
       const target = join(installed, "dist", "scripts", "handoff-demo.js");
       mkdirSync(dirname(target), { recursive: true });
       cpSync(source, target);
@@ -420,9 +421,15 @@ export function runReleaseCandidate(repoRoot: string, options: CandidateOptions 
   return report();
 }
 
-/** `<prefix>/node_modules/aether-agents` on POSIX, `<prefix>/node_modules/...` on Windows too. */
-function installedPackageDir(prefix: string): string {
-  return join(prefix, "node_modules", "aether-agents");
+/** npm's platform-specific global package directory under an explicit prefix. */
+export function installedPackageDir(
+  prefix: string,
+  packageName: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return platform === "win32"
+    ? join(prefix, "node_modules", packageName)
+    : join(prefix, "lib", "node_modules", packageName);
 }
 
 /**

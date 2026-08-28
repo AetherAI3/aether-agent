@@ -3,8 +3,9 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import type { AetherConfig } from "../types.js";
+import { isLocalModelId } from "./local_ollama.js";
 
 // The public API front door. The backend is served under the `/cloud` path; the
 // apex returns an info blob, so the `/cloud` suffix is required for every API
@@ -12,6 +13,7 @@ import type { AetherConfig } from "../types.js";
 export const DEFAULT_CONFIG: AetherConfig = {
   baseUrl: "https://api.aethersystems.net/cloud",
   defaultModel: "",
+  localModel: "",
   permissionMode: "ask",
   autoApply: false,
   telemetry: true,
@@ -31,6 +33,13 @@ export function configPath(): string {
 
 export function loadConfig(): AetherConfig {
   const cfg = loadConfigFile();
+  // Migrate the brief pre-release shape that stored an ollama: id in the
+  // hosted default slot. This is in-memory until the next explicit config
+  // write; no read-only command rewrites the user's file.
+  if (!cfg.localModel && isLocalModelId(cfg.defaultModel)) {
+    cfg.localModel = cfg.defaultModel;
+    cfg.defaultModel = "";
+  }
   // AETHER_BASE_URL is documented to override the config's baseUrl (a single
   // env var can point every API call at a staging/self-hosted backend without
   // editing config.json). This is a distinct concern from AETHER_BACKEND
@@ -75,6 +84,16 @@ export function saveConfig(cfg: AetherConfig): void {
   // POSIX and NTFS.
   const path = configPath();
   const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(out, null, 2) + "\n", "utf8");
-  renameSync(tmp, path);
+  try {
+    writeFileSync(tmp, JSON.stringify(out, null, 2) + "\n", "utf8");
+    renameSync(tmp, path);
+  } catch (error) {
+    try {
+      if (existsSync(tmp)) unlinkSync(tmp);
+    } catch {
+      // Preserve the original write/rename failure; the caller must see that
+      // the mutation did not complete rather than a best-effort cleanup error.
+    }
+    throw error;
+  }
 }

@@ -2,6 +2,7 @@
 // Follows the exact pattern of aether vault and aether github
 
 import type { AppContext } from "../core/context.js";
+import { resolveHostedModel } from "../core/local_ollama.js";
 import { createInterface } from "node:readline";
 import { fail as coreFail } from "../core/errors.js";
 import { hintFor } from "../core/error_hints.js";
@@ -70,7 +71,7 @@ async function workflowNew(ctx: AppContext, description: string): Promise<number
 
   const req = buildChatRequest({
     prompt: "[WORKFLOW_MODE] " + description,
-    model: ctx.flags.model ?? ctx.cfg.defaultModel,
+    model: resolveHostedModel(ctx.flags.model, ctx.cfg.defaultModel),
     manualModel: ctx.flags.model != null,
     meta: { workflow_json: null },
   });

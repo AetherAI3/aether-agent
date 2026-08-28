@@ -87,8 +87,8 @@ function grantingServer() {
         ok: true,
         status: 200,
         headers: new Headers({ "content-type": "application/json" }),
-        text: async () => JSON.stringify({ session_id: "devs_ok", protocol_version: 1, model: "sonnet" }),
-        json: async () => ({ session_id: "devs_ok", protocol_version: 1, model: "sonnet" }),
+        text: async () => JSON.stringify({ session_id: "devs_ok", protocol_version: 1, model: "kimi_k3" }),
+        json: async () => ({ session_id: "devs_ok", protocol_version: 1, model: "kimi_k3" }),
         body: null,
       } as unknown as Response;
     }
