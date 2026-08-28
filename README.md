@@ -1,6 +1,7 @@
 <div align="center">
 
 # Aether Agent
+[aether-code-3.html](https://github.com/user-attachments/files/31556546/aether-code-3.html)
 
 **A terminal coding agent built around verifiable results and portable work.**
 
