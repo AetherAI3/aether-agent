@@ -65,6 +65,8 @@ export const GLOBAL_FLAGS: FlagTable = {
   "no-log": { type: "boolean", default: false },
   worktree: { type: "boolean", default: false },
   repo: { type: "string" },
+  // Accepted only so existing experimental callers receive code.ts's explicit
+  // refusal. It is intentionally absent from normal help and generated docs.
   swarm: { type: "string" },
   resume: { type: "string" },
   out: { type: "string" },
@@ -287,6 +289,9 @@ export function renderCliHelp(target?: string): string {
     target,
     footer: [
       "Global flags: --model <id> --agent <id> --cwd <dir> --json --audit -y/--yes -h/--help -v/--version",
+      "First run: aether auth login -> aether auth status -> aether models",
+      'Hosted task: aether agent "explain this repository"',
+      "Local setup: aether setup --local",
       "Unknown command text remains a bare prompt.",
     ],
   });

@@ -6,7 +6,7 @@ This reference is generated from the validated, versioned command manifest. Avai
 
 Global shell flags accepted by the manifest:
 
-`--agent`, `--all`, `--apply`, `--audit`, `--available`, `--ci`, `--cwd`, `--effort`, `--help`, `--interactive`, `--json`, `--junit`, `--license-key`, `--local`, `--model`, `--no-browser`, `--no-log`, `--no-skills`, `--out`, `--password`, `--pool`, `--quiet`, `--repo`, `--resume`, `--scope`, `--skill`, `--swarm`, `--test-cmd`, `--token`, `--username`, `--version`, `--with-token`, `--worktree`, `--yes`
+`--agent`, `--all`, `--apply`, `--audit`, `--available`, `--ci`, `--cwd`, `--effort`, `--help`, `--interactive`, `--json`, `--junit`, `--license-key`, `--local`, `--model`, `--no-browser`, `--no-log`, `--no-skills`, `--out`, `--password`, `--pool`, `--quiet`, `--repo`, `--resume`, `--scope`, `--skill`, `--test-cmd`, `--token`, `--username`, `--version`, `--with-token`, `--worktree`, `--yes`
 
 ## Shell commands
 
