@@ -10,19 +10,23 @@ created or changed by those probes.
 | Package | `aether-agents` |
 | Proposed tag | `v0.3.0` |
 | Original PR branch base | `85a75645e8b94e8542bcf6ee0f384037a2915a5e` (`origin/main`, after #106; historical) |
-| Reconciled base/current main | `88b7498457afce482fa69363d908b0e8b3bd4ae9` (`origin/main`, after #111) |
-| Pre-merge candidate head | `3cf44bb3f2fc2ae22cc40678209383de8a9f66ad` (PR #107 exact head; regenerate after merge) |
-| Release commit | the merge commit of this integration PR into `main` — **re-run the candidate on it before tagging** (§6.6) |
+| Publication code base | `127145725b63c2800bc904ca8908b790238d7fce` (`origin/main`, after #109; #109 changed only the CodeQL workflow) |
+| PR #107 final head | `4c4f20bedfb7fb4e93dbe637ea69aa46d112b310` |
+| Agent 3.0 merge commit | `bf237bb64f1b74429f7a5835d22961fc17fac901` (tree-identical to the PR #107 final head) |
+| Earlier pre-merge candidate | `3cf44bb3f2fc2ae22cc40678209383de8a9f66ad` (historical PR #107 evidence) |
+| Tag target | the immutable `v0.3.0` commit after this evidence refresh; its `rc-final.json` and release-workflow evidence are authoritative |
 | Historical candidate | `fb96ee44b03f37a386954a32412728fa7e98a046` (PR-local evidence commit; historical only, not reachable from current `main`) |
 | Historical archive | `aether-agents-0.3.0.tgz` — 739,977 bytes packed / 3,022,168 unpacked / 575 entries |
 | Historical archive sha256 | `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` |
 | Current exact-head dry run | 618 entries / 4 workflows |
-| GitHub-hosted Ubuntu value | 3,688,966 unpacked bytes — exact-head CI run `32967113102` passed |
-| GitHub-hosted Windows value | 3,690,927 unpacked bytes — exact-head CI run `32967113102` passed |
+| GitHub-hosted Ubuntu value | 3,688,966 unpacked bytes — exact-head CI run `33160594500` passed |
+| GitHub-hosted Windows value | 3,690,927 unpacked bytes — exact-head CI run `33160594500` passed |
 | Current local Windows default-checkout measurement | 3,690,927 unpacked bytes / 836,234 predicted packed bytes |
 | Current local Linux/LF checkout measurement | 3,688,966 unpacked bytes / 835,957 predicted packed bytes |
 | Qualified pre-merge archive | `aether-agents-0.3.0.tgz` — 835,957 bytes packed / 3,688,966 unpacked / 618 entries at `3cf44bb...`; commit-bound candidate passed install, version, help, skills, capabilities, and handoff proof |
-| Qualified pre-merge archive sha256 | `6176172deb15eea57519408d93f23b3fac8ab5e2b2e541adddc34b4e5fb4c33d` — regenerate on every new head and replace from the merge commit before tagging |
+| Qualified pre-merge archive sha256 | `6176172deb15eea57519408d93f23b3fac8ab5e2b2e541adddc34b4e5fb4c33d` — historical only; publication-base evidence is recorded below |
+| Qualified final-candidate archive | `aether-agents-0.3.0.tgz` — 835,957 bytes packed / 3,688,966 unpacked / 618 entries at `1271457...`; commit-bound candidate passed release tests, install, version, help, skills, capabilities, and handoff proof |
+| Qualified final-candidate archive sha256 | `6176172deb15eea57519408d93f23b3fac8ab5e2b2e541adddc34b4e5fb4c33d` |
 | Cloud catalogue compatibility | PR #1327 final head `70e0645c96b16dedfefb90dd403daecb3c3d3b25`; landed as squash merge `fbb7b98a96682820b85a4bface002dcbf5bf9c37`, tree `9906df6f73b6cd8d8e57e1e552475976394d617f`; safe-field projection digest `sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712`. The package carries all 51 safe rows. On 2026-08-27 production `/cloud/healthz` reported deployed Cloud `c694c8805139`, and the live catalogue returned 51 rows, 48 available to the authenticated tier. |
 
 ## 1. Semantic version decision
@@ -50,10 +54,12 @@ The historical feature range `477f0fc..a845479` contains 28 commits from
 2026-08-19 through 2026-08-22 plus everything the unpublished v0.2.0 notes
 described. PR #96 then landed the release-owned notes, coherence gate and
 candidate tooling as `84d8767`; PR #106 reconciled the package manifest as
-`85a75645`. PR #107 adds the final product spine: generated command/model truth,
+`85a75645`. PR #107 landed the final product spine: generated command/model truth,
 bounded local Ollama setup, versioned headless execution, managed preview, and
-release-candidate hardening. The actual release range is `v0.1.0` through the
-verified PR #107 merge commit, not the historical 28-commit slice alone.
+release-candidate hardening. PR #109 then updated the paired CodeQL actions
+without changing packaged content. The actual release range is `v0.1.0`
+through the eventual immutable `v0.3.0` tag, not the historical 28-commit slice
+alone.
 
 - 4 feature waves: #72 (skills runtime and its three commands), #98
   (command-registration seam), #93/#94/#95/#97/#101/#102 (the review → commit →
@@ -84,20 +90,20 @@ review/ship rail, `aether sessions`, the skills wiring, the opener and token-sto
 fixes and finally #105 landed the same way. The notes and this packet were
 regenerated against each new base rather than tagged against the old one. #96
 then landed on `main`, and #106 corrected the stale 527-entry manifest that had
-survived beside its 575-entry header. The current product-spine integration
-worktree includes later release-truth, command-manifest, and bounded local/Ollama
-lanes on top of that historical range. Those commits are not silently folded
-into the old 28-commit count: review the actual merge-base-to-HEAD range. The
-current tree has a 618-entry commit-bound pre-merge archive. Any lane that lands before
-the tag is created moves the evidence again — which is why step 6 of §6 re-runs
-the candidate on the merge commit rather than trusting a historical digest.
+survived beside its 575-entry header. PR #107 added the later release-truth,
+command-manifest, and bounded local/Ollama work and landed as `bf237bb...`; its
+final head `4c4f20b...` has the same tree. PR #109 then landed as `1271457...`
+and changed only `.github/workflows/codeql.yml`, so the 618-entry package
+payload did not move. These commits are not silently folded into the old
+28-commit count: review the actual `v0.1.0..v0.3.0` range after the immutable
+tag exists.
 `test/release_coherence.test.ts` fails the build if a
 user-visible command reaches the registry without either a release note or a
 named exemption (§4), so the next lane to land cannot repeat this silently.
 
 ## 3. State of the world when this packet was written
 
-Registry state re-read live on 2026-08-27:
+Registry and GitHub release state re-read live on 2026-08-28:
 
 ```
 $ npm view aether-agents versions --json
@@ -135,33 +141,38 @@ That runs `.github/workflows/release.yml`'s sequence against a detached
 --tag v0.3.0` → `npm pack` → global install of **that tarball** into a clean
 prefix → CLI proofs run from the installed package.
 
-There are two evidence classes below. The current facts come from npm's
-**dry-run inventory** of the checked-out product-spine candidate after the local
-setup fix cycle; they do not describe an archive. This packet does not embed a
-supposed self-referential commit id: committing the packet changes that id.
-The archive digest and installed-CLI proof come from the **historical candidate**
-at `fb96ee44b03f37a386954a32412728fa7e98a046`; they do not describe the current
-618-entry tree. Neither substitutes for the post-merge run required by §6.6.
+There are three evidence classes below. The **publication-base candidate** is
+bound to `127145725b63c2800bc904ca8908b790238d7fce`; it produced the current
+archive and installed-CLI proof. The earlier `3cf44bb...` archive is retained as
+pre-merge provenance, and the `fb96ee44...` archive is older historical
+provenance. This packet does not pretend to embed its own future squash-merge
+commit: the immutable tag plus `rc-final.json` and release-workflow evidence
+bind the exact final commit after this documentation-only refresh lands.
 
-### Current integration dry-run
+### Final publication-base evidence
 
-On the integration tree, `verify:production` exited 0 and reported 618 entries
-and 4 workflows. Fresh clean platform-shaped candidate checkouts measured
-3,688,966 unpacked bytes for Linux/LF and 3,690,927 for Windows/default.
-Exact-head CI run `32967113102` confirmed both hosted platform values at
-`3cf44bb3f2fc2ae22cc40678209383de8a9f66ad`. The local
-Windows default checkout measured 3,690,927 unpacked / 836,234 predicted packed
-bytes; the clean LF checkout on that same Node 24.18.0/npm 11.16.0 toolchain
-measured 3,688,966 unpacked / 835,957 predicted packed
-bytes. The membership is identical; byte totals are checkout/toolchain
-observations and are not claimed to be cross-machine reproducible. These were
-`npm pack --dry-run` inventories. They did not produce
-`aether-agents-0.3.0.tgz`, so the current archive size and sha256 are pending
-rather than borrowed from an older candidate.
+The clean candidate generated at `2026-08-28T10:13:43.917Z` for `1271457...`
+reported `commitBound: true`, `ok: true`, 618 entries, 4 workflows, and
+`aether-agents-0.3.0.tgz` at 835,957 packed bytes / 3,688,966 unpacked bytes.
+Its SHA-256 is
+`6176172deb15eea57519408d93f23b3fac8ab5e2b2e541adddc34b4e5fb4c33d`.
+The candidate passed dependency install, high-severity audit, typecheck, build,
+the release-owned tests, production verification, pack, clean global install,
+installed version/help/skills/capabilities checks, and the installed handoff
+demo.
 
-Package and archive evidence attached to Agent head
-`e8ea19245a47de180332b5e34d93d5988b2df767` is historical after the #112
-transition-safe README change. It is not evidence for this candidate.
+Exact-head CI run `33160594500` confirmed the full suite and both hosted package
+measurements at `127145725b63c2800bc904ca8908b790238d7fce`: Ubuntu ran 1,618
+tests with 1,618 pass, 0 fail, and 0 skips; Windows ran 1,618 tests with 1,615
+pass, 0 fail, and 3 documented platform skips. The same SHA passed CodeQL run
+`33160594506` and release-truth run `33160594427`. Hosted and local clean
+checkouts measured 3,688,966 unpacked bytes for Linux/LF and 3,690,927 for
+Windows/default. The local Windows default checkout measured 3,690,927
+unpacked / 836,234 predicted packed bytes; the clean LF checkout on the same
+Node 24.18.0/npm 11.16.0 toolchain measured 3,688,966 unpacked / 835,957
+predicted packed bytes. Membership is identical; byte totals are
+checkout/toolchain observations and are not claimed to be cross-machine
+reproducible.
 
 The complete top-level npm dry-run reports for the two clean checkout shapes
 were:
@@ -172,10 +183,9 @@ were:
 ```
 
 The npm-reported `shasum` and `integrity` values above are host-bound dry-run
-metadata, not a claim that a current archive exists and not a substitute for
-the pending archive SHA-256. The README refresh changes package bytes without
-changing the 618-entry membership, which is why these measurements were
-regenerated rather than inherited.
+metadata. The candidate SHA-256 above is the digest of the archive produced on
+this machine; reproducibility is asserted by package membership and exact-head
+gates, not by assuming gzip bytes are identical across hosts.
 
 The current command surface also includes `aether preview
 start|open|logs|status|stop` and `/preview`. It manages only an explicit argv or
@@ -233,27 +243,22 @@ guard — so the digest moved with it. A digest that had survived those changes
 would have meant the pack was not reading the tree.
 
 The historical `70a48aca…` digest belongs only to the 575-entry archive in the
-candidate block. The current dry run has more entries and no archive, so
-there is no honest digest to compare with it yet. The packet itself remains
-outside the tarball: the `files` allowlist is `dist/src`, the four generated public
-documents, README, COMMANDS, LICENSE, and NOTICE; `docs/releases/` remains excluded.
+candidate block. The publication-base run produced the current 618-entry
+archive and its `6176172d…` digest. This packet remains outside the tarball: the
+`files` allowlist is `dist/src`, the four generated public documents, README,
+COMMANDS, LICENSE, and NOTICE; `docs/releases/` and the coherence tests remain
+excluded.
 
-None of these figures is a cross-machine reproducibility claim (see §5), and
-none is the digest a founder should tag against: §6.2 re-runs the candidate on
-the merge commit, because any lane landing before the tag moves this number
-again.
+None of these figures is a cross-machine reproducibility claim (see §5). The
+publication-base digest is the local comparison value; the immutable-tag
+workflow must regenerate and attest its own archive before npm publication.
 
-On the current documentation-hardening head, `npm run typecheck` and
-`npm run docs:check` exit 0; the focused command-manifest, generated-docs,
-public-docs, release-truth, release-coherence, and production-hardening set
-reports 65 pass / 0 fail; and `release:truth` reports
-12/12 pass with no unavailable or not-applicable lane. The older 1464-test
-result belonged to the historical candidate context and is not presented as
-current exact-head evidence. The full suite remains a required release workflow
-gate.
-The local-lane namespace, pull, config, session, handoff, command-manifest, and
-release-coherence selection independently reported 98 pass / 0 fail before
-integration; exact-head integration proof is rerun below before handoff.
+On this evidence-refresh branch, `npm run typecheck`, `npm run docs:check`, and
+`release:truth` pass; release truth reports 12/12 with no failed, unavailable,
+or not-applicable lane. The focused release-coherence/release-truth set reports
+35 pass / 0 fail. Exact publication-base CI supplies the full-suite evidence:
+1,618/1,618 pass on Ubuntu and 1,615 pass / 0 fail / 3 documented skips on
+Windows.
 
 ### Historical mutation check on the load-bearing gate
 
@@ -281,8 +286,8 @@ local default and LF checkouts measured 3,690,927 and 3,688,966 respectively
 because byte totals can move with checkout line
 endings and toolchain metadata. Five files are at the package root, four
 generated public documents are under `docs/`, and everything else is under
-`dist/src/`. This is an inventory prediction, not a statement that a current
-archive exists.
+`dist/src/`. The publication-base candidate produced the archive recorded at
+the top of this packet from exactly this membership.
 
 | Path | Entries |
 |---|---:|
@@ -382,15 +387,19 @@ to 3,022,168 unpacked bytes.
 Named as unproven rather than omitted:
 
 - **npm availability of 0.3.0.** Nothing here contacted the registry to publish.
-  Until step 11 completes, describe an unversioned install as following the
+  Until §6 step 7 completes, describe an unversioned install as following the
   registry's live `latest` dist-tag; do not hard-code which version that tag
   selects.
-- **The full `npm test` suite inside the candidate run.** The release-candidate
-  harness intentionally reports `npm-test` as `not-run` unless `--full-tests`
-  is supplied. The exact PR #107 head was therefore qualified separately:
-  1,618 tests, 1,615 pass, 0 fail, 3 documented Windows skips locally, with the
-  same head passing the required Ubuntu and Windows CI jobs. The merge commit
-  must repeat this proof before tagging.
+- **The full `npm test` suite inside the local candidate report.** The harness
+  intentionally reports `npm-test` as `not-run` unless `--full-tests`
+  is supplied. Full-suite proof is instead exact-head CI run `33160594500` at
+  `1271457...`: 1,618/1,618 pass with zero skips on Ubuntu, and 1,615 pass / 0
+  fail / 3 documented skips on Windows. This distinction prevents the local
+  candidate report from claiming a step it did not run.
+- **The hosted UID-boundary/Predator admission path.** Its zero-step hosted
+  admission failure was accepted when Cloud #1339 and Agent #107 landed as
+  post-release infrastructure hardening. It is not represented as passing and
+  is not a v0.3.0 publication blocker.
 - **Logout semantics on the deployed API.** The authenticated exact-head smoke
   reached `https://api.aethersystems.net/cloud` and received a cloud turn, and
   `/cloud/healthz` reported `c694c8805139`. The release can therefore claim
@@ -417,98 +426,59 @@ Named as unproven rather than omitted:
   default-off owner-bound redemption contract, but this package exposes no
   supported public handoff command and no activated production intake was
   qualified. No client-only substitute is treated as the Online bridge.
-- **A merge-commit archive or digest.** The current 618-entry archive is bound
-  to pre-merge PR head `3cf44bb...`; it proves the candidate, not the future
-  merge commit. The release workflow must regenerate it after merge.
+- **The eventual tag commit's workflow archive and digest.** The current
+  618-entry archive is bound to publication code base `1271457...`. This
+  evidence refresh touches only excluded release documentation and tests, but
+  the release workflow must still regenerate and attest the archive from the
+  immutable tag.
 - **Reproducibility of an archive digest across machines.** Once the exact-head
   archive exists, its digest is a machine reading to compare with CI, not a
   promise that another machine must produce byte-identical gzip bytes.
 - **`npm audit` against future advisories.** The audit result is a reading taken
   at pack time, not a standing property.
 
-## 6. Pre-merge gates and founder-owned actions
+## 6. Publication procedure
 
-The local evidence above is not merge authority. Neither `AA-REL-01` nor this
-integration created a tag, published a release, or contacted the registry to
-publish. The following pre-merge gates remain blocking and must be attached to
-the exact proposed head rather than inferred from an ancestor or a workstation:
+Cloud #1339 and Agent #107 are merged. Their former draft, review, manifest,
+Predator, and merge gates are complete or explicitly dispositioned; they are
+not publication gates to reopen.
 
-1. **Resolve every independent-review finding** and rerun the full suite,
-   release truth, generated-document check, installed-tarball verification, and
-   adversarial mutation coverage on the resulting clean commit.
+1. **Freeze final `main`.** Fetch it, require a clean worktree, verify all three
+   version sources are `0.3.0`, and run the commit-bound candidate. Require
+   `"ok": true`, `"commitBound": true`, the installed CLI checks, and successful
+   exact-head Linux, Windows, supply-chain, CodeQL, and release-truth checks.
 
-2. **Publish a draft branch and obtain required exact-head CI evidence** on both
-   Linux and Windows. Required checks must include the full suite and an install
-   and launch of the exact packed artifact outside the source tree.
+2. **Verify publication authentication before creating public state.** The
+   `npm-production` environment must exist, allow the `v*` tag policy, expose
+   `NPM_TOKEN`, and permit the workflow's OIDC/attestation permissions.
 
-3. **Run real Predator CI against the exact proposed head.** This repository has
-   no configured Predator client or recorded Predator result today; absence is
-   a blocking dependency, not a passing or not-applicable check.
+   Live check on 2026-08-28: `npm-production` exists, requires owner review, and
+   has the expected `v*` tag policy. No environment or repository `NPM_TOKEN`
+   is visible, the local environment has no npm token, and `npm whoami` reports
+   `ENEEDAUTH`. Do not create the tag or publish the GitHub release until that
+   credential is installed; publishing the release triggers the npm workflow.
 
-4. **Complete the final independent review** after CI and Predator evidence are
-   available, resolve its threads, and verify that no unrelated generated or
-   scratch artifacts entered the package.
+3. **Create and push immutable tag `v0.3.0`** at the qualified final `main` SHA.
+   Never move or retarget it.
 
-5. **Founder: merge the approved integration PR to `main`.** Note the merge
-   commit SHA; the tag must point at it, and `release.yml` refuses to publish a
-   tag that is not an ancestor of `origin/main`.
+4. **Publish GitHub Release `v0.3.0`** using
+   [`RELEASE-BODY-v0.3.0.md`](RELEASE-BODY-v0.3.0.md). Publication triggers the
+   existing `Release npm package` workflow.
 
-6. **Re-run the candidate on the merge commit**, so the tag is created against
-   evidence for the exact commit being tagged:
+5. **Approve and follow the release workflow.** It checks out the tag, proves
+   main ancestry, runs the full suite and production policy, creates the
+   CycloneDX SBOM and tarball, clean-installs the tarball, attests provenance,
+   uploads evidence, and publishes with `--access public --provenance`.
 
-   ```bash
-   git fetch origin main && git checkout <merge-sha>
-   npm ci --ignore-scripts && npm run release:candidate -- --out rc-final.json --full-tests
-   ```
+6. **Verify the registry independently.** Require `aether-agents@0.3.0`, the
+   `latest` dist-tag at `0.3.0`, expected provenance metadata, and a clean global
+   install whose version, help, skills, capabilities, and model-free canaries
+   pass. Record the workflow run and published tarball digest.
 
-   Confirm `"ok": true` and `"commitBound": true`.
-
-7. **Create the tag on that commit:**
-
-   ```bash
-   git tag -a v0.3.0 <merge-sha> -m "v0.3.0 — skills, and a release that matches the repository"
-   git push origin v0.3.0
-   ```
-
-8. **Publish a GitHub release for `v0.3.0`**, body taken from
-   [`RELEASE-BODY-v0.3.0.md`](RELEASE-BODY-v0.3.0.md). Publication — not tag
-   creation — is what triggers `release.yml`. Do not use the historical
-   2026-08-22 candidate record as the public release body.
-
-9. **Confirm the prerequisites `release.yml` needs before publishing the
-   release**, because a missing one fails the run after the release is already
-   public:
-   - the `npm-production` environment exists on the repository;
-   - `NPM_TOKEN` is set in it (the workflow asserts the secret is non-empty
-     before it publishes);
-   - the workflow's `id-token: write` / `attestations: write` permissions are
-     not restricted by an organisation policy.
-
-   Live check on 2026-08-27: `npm-production` exists and requires owner review,
-   but no `NPM_TOKEN` repository or environment secret is visible and local npm
-   is unauthenticated. Publishing the GitHub release before that credential is
-   installed would expose the release and then fail npm publication.
-
-10. **Watch the `Release npm package` workflow.** It re-runs the whole sequence on
-   the tag, attests provenance, uploads the tarball plus a CycloneDX SBOM as a
-   90-day artifact, and only then runs `npm publish --provenance`.
-
-11. **Verify availability from the registry, not from the workflow log:**
-
-   ```bash
-   npm view aether-agents versions --json      # must now include 0.3.0
-   npm view aether-agents dist-tags --json     # latest must be 0.3.0
-   ```
-
-   Record the exact archive's sha256 in this packet, then compare it with the
-   workflow artifact. Do not use the historical `70a48aca…` digest as the
-   expected digest for the current tree.
-
-12. **Only after step 11 succeeds**, add a dated release record stating that
-   0.3.0 was observed on npm. Keep the README's unversioned install wording
-   transition-safe: it follows the registry's live `latest` dist-tag and tells
-   readers how to inspect that tag. Do not replace it with a hard-coded version
-   that can become false during a publish transition.
+7. **Land post-publication truth.** Only after registry verification, remove the
+   README's transitional source-build workaround, add the dated published
+   release record, and publish the canonical AetherCloud patch-note batch with
+   Agent 3.0 classified as `PUBLISHED`.
 
 ## 7. Credentials
 
