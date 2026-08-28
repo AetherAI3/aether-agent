@@ -43,6 +43,9 @@ export interface DeviceRuntimeConfig {
   enabled?: boolean;
   /** Display-only device name sent as observation `display_name`; never identity. */
   displayName?: string;
+  /** Declared lane capacity this device offers, published as `lanes_reserved`
+   * so the Cloud can see headroom. Omitted means "only what is running". */
+  lanes?: number;
 }
 
 // Wire DTO from GET /models (snake_case mirrors the server catalog). A single

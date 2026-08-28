@@ -6,11 +6,16 @@
 // the only thing that talks to the Cloud on a cadence; these are one-shot.
 
 import { spawn, spawnSync } from "node:child_process";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { hostname } from "node:os";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppContext } from "../core/context.js";
+import type { AetherConfig } from "../types.js";
 import type { CommandFlags } from "../core/command_dispatch.js";
+import { saveConfig } from "../core/config.js";
 import { renderHealthReport } from "../core/health.js";
+import { isCredentialSafeUrl } from "../core/transport.js";
 import { DEVICE_ENROLL_PATH } from "../core/device_runtime/contract.js";
 import { deviceRuntimeEnabled } from "../core/device_runtime/enablement.js";
 import { loadEnrollment, saveEnrollment, type EnrollmentRecord } from "../core/device_runtime/identity.js";
@@ -19,6 +24,7 @@ import { spawnPowerShellWarden } from "../core/device_runtime/containment.js";
 import { listGroups } from "../core/device_runtime/registry.js";
 import { loadChain } from "../core/device_runtime/commands_exec.js";
 import { daemonPidAlive, readDaemonState } from "../core/device_runtime/daemon_state.js";
+import { checkpointDir } from "../core/device_runtime/paths.js";
 import { buildDeviceDoctorReport, type DoctorProbes } from "../core/device_runtime/doctor.js";
 
 export const DEVICE_EXIT = {
@@ -60,7 +66,11 @@ export async function cmdDevice(ctx: AppContext, argv: string[], flags: CommandF
     case undefined:
       return statusPanel(ctx);
     case "enroll":
-      return enroll(ctx);
+      return enroll(ctx, flags);
+    case "enable":
+      return setEnabled(ctx, true);
+    case "disable":
+      return setEnabled(ctx, false);
     case "start":
       return start(ctx);
     case "stop":
@@ -83,10 +93,35 @@ export async function cmdDevice(ctx: AppContext, argv: string[], flags: CommandF
       return uninstallService(ctx);
     default:
       process.stderr.write(
-        "usage: aether device <status|enroll|start|stop|restart|doctor|health|groups|last|install-service|uninstall-service>\n",
+        "usage: aether device <status|enroll|enable|disable|start|stop|restart|doctor|health|groups|last|" +
+          "install-service|uninstall-service>\n",
       );
       return DEVICE_EXIT.usage;
   }
+}
+
+/** The one-word health state the operator surface (and the canary runner) reads. */
+export type DeviceHealthState = "disabled" | "unenrolled" | "eligible" | "stale" | "offline" | "healthy";
+
+export interface DeviceStatusInputs {
+  enabled: boolean;
+  enrolled: boolean;
+  running: boolean;
+  stale: boolean;
+  online: boolean;
+}
+
+/**
+ * Collapse the status axes into one state, most-blocking first. `eligible`
+ * means every precondition holds and the daemon is simply not started yet —
+ * distinct from `disabled`/`unenrolled`, which need an operator action first.
+ */
+export function deviceHealthState(i: DeviceStatusInputs): DeviceHealthState {
+  if (!i.enabled) return "disabled";
+  if (!i.enrolled) return "unenrolled";
+  if (!i.running) return "eligible";
+  if (i.stale) return "stale";
+  return i.online ? "healthy" : "offline";
 }
 
 function statusPanel(ctx: AppContext): number {
@@ -96,19 +131,26 @@ function statusPanel(ctx: AppContext): number {
   const ageMs = state ? Date.now() - state.updated_at : null;
   const stale = ageMs !== null && ageMs > STALE_MS;
   const enabled = deviceRuntimeEnabled(ctx.cfg);
+  const health = deviceHealthState({ enabled, enrolled: Boolean(enrolled), running, stale, online: state?.online ?? false });
   const summary = {
+    state: health,
     enrolled: Boolean(enrolled),
     device_id: enrolled?.device_id ?? null,
+    // The Cloud this device is bound to. Not a secret — the bearer that goes
+    // with it is never printed by any subcommand.
+    base_url: enrolled?.base_url ?? null,
     enabled,
     running,
     stale,
     last_publish_seq: state?.last_publish_seq ?? 0,
     queue_depth: state?.queue_depth ?? 0,
     online: state?.online ?? false,
+    boot_id: state?.boot_id ?? null,
     heartbeat_age_s: ageMs === null ? null : Math.round(ageMs / 1000),
   };
   const lines = [
     `Aether device runtime`,
+    `  state:      ${health}`,
     `  enrolled:   ${summary.enrolled ? summary.device_id : "no"}`,
     `  enabled:    ${enabled ? "yes" : "no (default-off)"}`,
     `  daemon:     ${running ? (stale ? "running (heartbeat stale)" : "running") : "not running"}`,
@@ -120,11 +162,40 @@ function statusPanel(ctx: AppContext): number {
   return out(ctx, lines, summary);
 }
 
-async function enroll(ctx: AppContext): Promise<number> {
+/**
+ * Resolve the Cloud base URL an enrollment binds to. `--base-url` wins when
+ * present so an operator (or the unattended canary runner) can point a laptop at
+ * one specific Cloud without first mutating config; otherwise it is exactly
+ * today's `ctx.cfg.baseUrl`. Either way the value passes the same
+ * credential-safety rule the daemon's DeviceNet applies, because whatever lands
+ * in the enrollment record is where a device bearer token will be sent for the
+ * life of that enrollment.
+ */
+export function resolveEnrollBaseUrl(
+  configured: string,
+  override: string | undefined,
+): { ok: true; url: string } | { ok: false; reason: string } {
+  const raw = (override ?? configured ?? "").trim();
+  if (!raw) return { ok: false, reason: "no base URL: pass --base-url <url> or set one in config" };
+  if (!isCredentialSafeUrl(raw)) {
+    return {
+      ok: false,
+      reason: `refusing to enroll against ${raw}: a device bearer token would traverse cleartext (use https, or http on loopback)`,
+    };
+  }
+  return { ok: true, url: raw };
+}
+
+async function enroll(ctx: AppContext, flags: CommandFlags): Promise<number> {
   const token = await ctx.tokens.get();
   if (!token) {
     process.stderr.write("enroll needs an authenticated session — run `aether auth login` first.\n");
     return DEVICE_EXIT.notEnrolled;
+  }
+  const resolved = resolveEnrollBaseUrl(ctx.cfg.baseUrl, flags.str("base-url"));
+  if (!resolved.ok) {
+    process.stderr.write(`${resolved.reason}\n`);
+    return DEVICE_EXIT.usage;
   }
   let resp: EnrollResponse;
   try {
@@ -144,12 +215,38 @@ async function enroll(ctx: AppContext): Promise<number> {
     device_id: resp.device_id,
     device_token: resp.device_token,
     device_command_key: resp.device_command_key,
+    // Display metadata only — the hostname never authenticates the device.
     display_name: resp.display_name ?? hostname(),
-    base_url: ctx.cfg.baseUrl,
+    base_url: resolved.url,
     enrolled_at: Date.now(),
   };
   saveEnrollment(record);
-  return out(ctx, `Enrolled device ${record.device_id}.\n`, { enrolled: true, device_id: record.device_id });
+  return out(ctx, `Enrolled device ${record.device_id} against ${record.base_url}.\n`, {
+    enrolled: true,
+    device_id: record.device_id,
+    base_url: record.base_url,
+  });
+}
+
+/**
+ * Flip the persistent opt-in. `aether config set` only understands top-level,
+ * already-present keys, so the nested default-off switch needs its own verb —
+ * and the operator surface is the right place for it, next to start/stop.
+ * Disabling does NOT stop a running daemon; that is `aether device stop`, and
+ * saying so keeps the two actions honestly separate.
+ */
+function setEnabled(ctx: AppContext, enabled: boolean): number {
+  const next: AetherConfig = { ...ctx.cfg, deviceRuntime: { ...ctx.cfg.deviceRuntime, enabled } };
+  saveConfig(next);
+  ctx.cfg.deviceRuntime = next.deviceRuntime;
+  const envOverride = process.env["AETHER_DEVICE_RUNTIME"] === "1";
+  const human =
+    `Device runtime ${enabled ? "enabled" : "disabled"} in config.\n` +
+    (!enabled && envOverride
+      ? "Note: AETHER_DEVICE_RUNTIME=1 is still set in this environment and keeps it enabled here.\n"
+      : "") +
+    (enabled ? "" : "A running daemon is not stopped by this — run `aether device stop`.\n");
+  return out(ctx, human, { enabled, env_override: envOverride });
 }
 
 async function start(ctx: AppContext): Promise<number> {
@@ -273,9 +370,21 @@ async function health(ctx: AppContext): Promise<number> {
 
 function groups(ctx: AppContext): number {
   const now = Date.now();
+  // Registration facts only. There is no secret in a registration — the exe
+  // path and digest are what make the group identifiable, and the lease/fence
+  // are opaque controller-minted values, not credentials.
   const items = listGroups({ now: () => now }).map((g) => ({
     process_group_id: g.process_group_id,
+    owner: g.owner,
+    project: g.project,
+    workspace_id: g.workspace_id,
+    task_id: g.task_id,
     exe_path: g.exe_path,
+    exe_sha256: g.exe_sha256,
+    parent_pid: g.parent_pid,
+    job_object_name: g.job_object_name,
+    command_classes: [...g.command_classes],
+    lease_epoch: g.lease_epoch,
     expires_at: g.expires_at,
     expires_in_s: Math.max(0, Math.round((g.expires_at - now) / 1000)),
   }));
@@ -293,19 +402,68 @@ function last(ctx: AppContext): number {
   const chain = loadChain(enrolled.device_id);
   const lastId = chain.seen_command_ids[chain.seen_command_ids.length - 1] ?? null;
   const lastResult = lastId ? chain.results[lastId] ?? null : null;
-  // Never surface secrets: the result's detail is already redacted, and only the
-  // command id, status, and result_seq are shown.
+  const checkpoint = latestCheckpoint();
+  // Never surface secrets: the result's detail is already redacted through
+  // boundDetail(), and only the command id, status, result_seq and the
+  // checkpoint's own identifiers are shown — never a checkpoint's contents.
   const summary = {
     last_command_id: lastId,
     last_outbox_seq: chain.last_outbox_seq,
     last_status: lastResult?.status ?? null,
     last_detail: lastResult?.detail ?? null,
     result_seq: chain.result_seq,
+    last_checkpoint: checkpoint,
   };
-  const human = lastId
-    ? `last command ${lastId}\n  status: ${summary.last_status}\n  detail: ${summary.last_detail}\n  outbox_seq: ${summary.last_outbox_seq}\n`
-    : "No commands processed yet.\n";
+  const human =
+    (lastId
+      ? `last command ${lastId}\n  status: ${summary.last_status}\n  detail: ${summary.last_detail}\n  outbox_seq: ${summary.last_outbox_seq}\n`
+      : "No commands processed yet.\n") +
+    (checkpoint
+      ? `last checkpoint ${checkpoint.id}\n  kind: ${checkpoint.kind}\n  handoff: ${checkpoint.handoff_id ?? "-"}\n`
+      : "No checkpoints written yet.\n");
   return out(ctx, human, summary);
+}
+
+interface CheckpointSummary {
+  id: string;
+  kind: string;
+  handoff_id: string | null;
+  change_digest: string | null;
+  at: number | null;
+}
+
+/**
+ * The newest drain/emergency checkpoint, reduced to its identifiers. The record
+ * on disk already carries nothing but ids and digests (daemon.writeCheckpoint),
+ * and this projection keeps it that way rather than echoing the whole file.
+ */
+function latestCheckpoint(): CheckpointSummary | null {
+  const dir = checkpointDir();
+  let newest: { path: string; mtime: number } | null = null;
+  try {
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".json")) continue;
+      const path = join(dir, name);
+      const mtime = statSync(path).mtimeMs;
+      if (!newest || mtime > newest.mtime) newest = { path, mtime };
+    }
+  } catch {
+    return null; // no checkpoint directory yet
+  }
+  if (!newest) return null;
+  try {
+    const raw = JSON.parse(readFileSync(newest.path, "utf8")) as Record<string, unknown>;
+    const str = (k: string): string | null => (typeof raw[k] === "string" ? (raw[k] as string) : null);
+    return {
+      id: str("id") ?? basename(newest.path, ".json"),
+      kind: str("kind") ?? "unknown",
+      handoff_id: str("handoff_id"),
+      change_digest: str("change_digest"),
+      at: typeof raw["at"] === "number" ? (raw["at"] as number) : null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function scheduledTaskPresent(): boolean {

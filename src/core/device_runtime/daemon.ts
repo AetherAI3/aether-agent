@@ -23,6 +23,7 @@ import {
   defaultTelemetryInputs,
   serializeObservation,
   type ObservationMeta,
+  type TelemetryInputs,
 } from "./telemetry.js";
 import { Publisher } from "./publisher.js";
 import { DeviceNet } from "./net.js";
@@ -36,11 +37,16 @@ import {
 import { toWorkspaceHandoffV1 } from "./handoff_adapter.js";
 import { loadEnrollment, nextBootSeq, readSystemBootTimeMs, resolveBootIdentity, type EnrollmentRecord } from "./identity.js";
 import { deviceRuntimeEnabled } from "./enablement.js";
+import { makeRepoProbe } from "./repo_probe.js";
 import { DAEMON_STATE_SCHEMA, writeDaemonState, type DaemonState } from "./daemon_state.js";
 import { checkpointDir, deviceRuntimeDir } from "./paths.js";
 import type { DeviceCommand } from "./contract.js";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+const MIN_POLL_BACKOFF_MS = 1_000;
+const MAX_POLL_BACKOFF_MS = 60_000;
+const POLL_BACKOFF_STEPS = 7;
 
 export interface DaemonRunOptions {
   /** Injected for tests; production reads the real config + enrollment. */
@@ -50,6 +56,12 @@ export interface DaemonRunOptions {
   maxIterations?: number;
   now?: () => number;
   workspaceRoot?: string;
+  /** Injected so a test drives repo metadata without a checkout. */
+  repoProbe?: () => { name: string; revision: string } | null;
+  /** Injected so a test drives the machine curves without touching the OS. */
+  telemetryInputs?: TelemetryInputs;
+  /** Injected boot-time probe result, so a test never shells out for it. */
+  bootTimeMs?: number | null;
 }
 
 /** Reason the daemon could not start, or null when it may run. */
@@ -80,25 +92,46 @@ class Daemon {
     private readonly publisher: Publisher,
     private readonly boot_id: string,
     private readonly now: () => number,
+    private readonly repoProbe: () => { name: string; revision: string } | null,
   ) {
     this.startedAt = now();
   }
 
   private meta(seq: number): ObservationMeta {
     const cfg = loadConfig();
+    const live = listGroups({ now: this.now });
+    // "Active" lanes are the managed groups actually holding a Job Object right
+    // now; "reserved" is the operator-declared capacity this device offers, so
+    // the Cloud can see headroom rather than inferring it. An undeclared
+    // capacity reports the active count — never a number we made up.
+    const declaredLanes = cfg.deviceRuntime?.lanes;
+    const lanesActive = live.length;
+    const lanesReserved =
+      typeof declaredLanes === "number" && Number.isFinite(declaredLanes) && declaredLanes >= 0
+        ? Math.round(declaredLanes)
+        : lanesActive;
     return {
       device_id: this.enrollment.device_id,
       boot_id: this.boot_id,
       seq,
       agent_version: VERSION,
+      // Display metadata ONLY. Identity is device_id, which the Cloud minted at
+      // enrollment; the hostname never authenticates anything.
       display_name: cfg.deviceRuntime?.displayName ?? this.enrollment.display_name ?? hostname(),
-      capabilities: ["aether.device.observe/1", "aether.device.command/1"],
-      runtime_labels: [process.platform],
-      repo: null,
-      lanes_active: 0,
-      lanes_reserved: 0,
-      workload_count: listGroups({ now: this.now }).length,
+      capabilities: this.capabilities(),
+      runtime_labels: [process.platform, `node-${process.versions.node.split(".")[0] ?? "?"}`, `agent-${VERSION}`],
+      repo: this.repoProbe(),
+      lanes_active: lanesActive,
+      lanes_reserved: Math.max(lanesActive, lanesReserved),
+      workload_count: live.length,
     };
+  }
+
+  /** The contract capabilities this build actually implements on this platform. */
+  private capabilities(): string[] {
+    const caps = ["aether.device.observe/1", "aether.device.command/1", "aether.workspace-handoff/1"];
+    if (process.platform === "win32") caps.push("aether.device.job-object/1");
+    return caps;
   }
 
   private writeState(): void {
@@ -179,7 +212,9 @@ class Daemon {
 
   private lookupGroup(id: string): GroupCurrency | undefined {
     const g = getGroup(id, { now: this.now });
-    return g ? { lease_epoch: g.lease_epoch, fence_token: g.fence_token } : undefined;
+    return g
+      ? { lease_epoch: g.lease_epoch, fence_token: g.fence_token, command_classes: [...g.command_classes] }
+      : undefined;
   }
 
   async runSampleLoop(maxIterations: number | undefined): Promise<void> {
@@ -203,12 +238,17 @@ class Daemon {
 
   async runPollLoop(maxIterations: number | undefined): Promise<void> {
     let iterations = 0;
+    let pollFailures = 0;
     while (!this.stopping) {
       let commands: DeviceCommand[] = [];
       try {
         commands = await this.net.pollCommands(25);
+        pollFailures = 0;
       } catch {
-        await sleep(2000);
+        // Same bounded, jittered backoff the publisher uses, so a Cloud outage
+        // does not turn the poll loop into a tight reconnect storm.
+        pollFailures = Math.min(pollFailures + 1, POLL_BACKOFF_STEPS);
+        if (maxIterations === undefined) await sleep(this.pollBackoffMs(pollFailures));
       }
       for (const cmd of commands) {
         const result = await processCommand(cmd, {
@@ -229,6 +269,13 @@ class Daemon {
       iterations += 1;
       if (maxIterations !== undefined && iterations >= maxIterations) return;
     }
+  }
+
+  /** Exponential 1s → 60s with ±25% jitter, keyed on the consecutive failures. */
+  private pollBackoffMs(failures: number): number {
+    const exp = Math.min(MAX_POLL_BACKOFF_MS, MIN_POLL_BACKOFF_MS * 2 ** (failures - 1));
+    const jitter = 1 + (Math.random() * 2 - 1) * 0.25;
+    return Math.max(MIN_POLL_BACKOFF_MS, Math.min(MAX_POLL_BACKOFF_MS, Math.round(exp * jitter)));
   }
 
   stop(): void {
@@ -254,7 +301,9 @@ export async function runDeviceDaemon(options: DaemonRunOptions = {}): Promise<n
   const now = options.now ?? Date.now;
   const cfg = loadConfig();
   const enrollment = options.enrollment ?? loadEnrollment();
-  if (!options.enrollment && !deviceRuntimeEnabled(cfg)) {
+  // The default-off gate is unconditional: an injected enrollment is a test
+  // seam for identity, never a way past the operator's opt-in.
+  if (!deviceRuntimeEnabled(cfg)) {
     process.stderr.write("device runtime is disabled; refusing to start\n");
     return 3;
   }
@@ -263,11 +312,16 @@ export async function runDeviceDaemon(options: DaemonRunOptions = {}): Promise<n
     return 4;
   }
   mkdirSync(deviceRuntimeDir(), { recursive: true, mode: 0o700 });
-  const boot = resolveBootIdentity(readSystemBootTimeMs(), now);
+  const boot = resolveBootIdentity(
+    options.bootTimeMs !== undefined ? options.bootTimeMs : readSystemBootTimeMs(),
+    now,
+  );
   const net = options.net ?? new DeviceNet(enrollment.base_url, enrollment.device_token);
-  const sampler = new TelemetrySampler(defaultTelemetryInputs(options.workspaceRoot ?? process.cwd(), now));
+  const workspaceRoot = options.workspaceRoot ?? process.cwd();
+  const sampler = new TelemetrySampler(options.telemetryInputs ?? defaultTelemetryInputs(workspaceRoot, now));
   const publisher = new Publisher();
-  const daemon = new Daemon(enrollment, net, sampler, publisher, boot.boot_id, now);
+  const repoProbe = options.repoProbe ?? makeRepoProbe(workspaceRoot, now);
+  const daemon = new Daemon(enrollment, net, sampler, publisher, boot.boot_id, now, repoProbe);
 
   const onSignal = (): void => daemon.stop();
   process.once("SIGINT", onSignal);
