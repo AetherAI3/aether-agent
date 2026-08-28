@@ -58,11 +58,20 @@ test("cpu utilisation is 0 on the first sample then derives from the tick delta"
 test("EWMA smooths a spike rather than tracking it fully", () => {
   const busy = { idle: 0, total: 0 };
   const sampler = new TelemetrySampler(inputs({ cpuTimes: () => ({ ...busy }) }), 0.5);
-  sampler.sample(); // establishes baseline 0
-  busy.idle = 0;
-  busy.total = 100; // 100% instantaneous
+  // The first sample has no previous tick to difference against, so it carries
+  // no real utilisation and must NOT seed the average — a device that boots
+  // under load would otherwise report 0 and take several publish cycles to
+  // cross the throttle threshold, which is exactly when shedding matters most.
+  sampler.sample();
+  busy.idle = 100;
+  busy.total = 100; // first REAL delta: fully idle, seeds the average at 0
+  assert.equal(sampler.sample().cpu_util_pct, 0);
+  busy.total = 200; // idle unchanged => 100% busy this tick
   const s = sampler.sample();
-  assert.ok(s.cpu_util_pct > 0 && s.cpu_util_pct < 100, `smoothed value ${s.cpu_util_pct} should be between 0 and 100`);
+  assert.ok(
+    s.cpu_util_pct > 0 && s.cpu_util_pct < 100,
+    `smoothed value ${s.cpu_util_pct} should sit between the seed and the spike`,
+  );
 });
 
 test("120s window maxima track the peak over the window", () => {
