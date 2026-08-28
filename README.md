@@ -2,6 +2,7 @@
 
 
 # Aether Agent
+<img width="424" height="209" alt="image" src="assets/aether-agent-hero.png" />
 
 
 **A terminal coding agent built around verifiable results and portable work.**

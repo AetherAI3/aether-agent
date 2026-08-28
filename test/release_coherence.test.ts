@@ -266,6 +266,7 @@ test(
     const count = (predicate: (path: string) => boolean): number => paths.filter(predicate).length;
     const groups = [
       ["`COMMANDS.md`, `LICENSE`, `NOTICE.md`, `README.md`, `package.json`", count((path) => !path.includes("/"))],
+      ["`assets/**`", count((path) => path.startsWith("assets/"))],
       ["`docs/generated/**`, `docs/model-catalogue/**`", count((path) => path.startsWith("docs/"))],
       ["`dist/src/core/**`", count((path) => path.startsWith("dist/src/core/"))],
       ["`dist/src/ui/**`", count((path) => path.startsWith("dist/src/ui/"))],
@@ -296,6 +297,7 @@ test(
       json: count((path) => path.endsWith(".json")),
       md: count((path) => path.endsWith(".md")),
       html: count((path) => path.endsWith(".html")),
+      png: count((path) => path.endsWith(".png")),
       extensionless: count((path) => !/\.[^/]+$/.test(path)),
     };
     const normalizedPacket = packet.replace(/\s+/g, " ");
@@ -304,6 +306,7 @@ test(
         `By extension: ${extensionCounts.js} \`.js\`, ${extensionCounts.dts} \`.d.ts\`, `
         + `${extensionCounts.map} \`.js.map\`, ${extensionCounts.json} \`.json\`, `
         + `${extensionCounts.md} \`.md\`, ${extensionCounts.html} \`.html\`, `
+        + `${extensionCounts.png} \`.png\`, `
         + `${extensionCounts.extensionless} extensionless.`,
       ),
       "the packet has a stale extension manifest",
