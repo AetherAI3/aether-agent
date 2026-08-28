@@ -35,7 +35,7 @@ away tool authority.
 - Cancellation and preview stop clean up full process trees without attaching
   to stale or unrelated PIDs.
 - CI qualifies Linux, Windows, the packed supply chain, and CodeQL on the exact
-  release head; Predator is a separate mandatory release gate.
+  release head.
 - The npm workflow rebuilds from the tag, produces a CycloneDX SBOM, attests the
   package, and publishes with provenance through the owner-gated environment.
 
@@ -59,4 +59,4 @@ aether --version
   dependencies remain follow-up work.
 
 Full verification and rollback evidence is recorded in the
-[v0.3.0 operator packet](OPERATOR-PACKET-v0.3.0.md).
+[v0.3.0 operator packet](https://github.com/AetherAI3/aether-agent/blob/v0.3.0/docs/releases/OPERATOR-PACKET-v0.3.0.md).

@@ -48,8 +48,8 @@ type PacketRows = Map<string, string[]>;
 
 const ORIGINAL_BASE_LABEL = "Original PR branch base";
 const ORIGINAL_BASE_VALUE = "`85a75645e8b94e8542bcf6ee0f384037a2915a5e` (`origin/main`, after #106; historical)";
-const RECONCILED_BASE_LABEL = "Reconciled base/current main";
-const RECONCILED_BASE_VALUE = "`88b7498457afce482fa69363d908b0e8b3bd4ae9` (`origin/main`, after #111)";
+const RECONCILED_BASE_LABEL = "Publication code base";
+const RECONCILED_BASE_VALUE = "`127145725b63c2800bc904ca8908b790238d7fce` (`origin/main`, after #109; #109 changed only the CodeQL workflow)";
 const HOSTED_UBUNTU_LABEL = "GitHub-hosted Ubuntu value";
 const HOSTED_WINDOWS_LABEL = "GitHub-hosted Windows value";
 const LOCAL_WINDOWS_LABEL = "Current local Windows default-checkout measurement";
@@ -100,11 +100,11 @@ function assertPacketProvenance(packet: string): PacketRows {
   );
   assert.equal(
     onlyPacketRow(rows, HOSTED_UBUNTU_LABEL),
-    "3,688,966 unpacked bytes — exact-head CI run `32967113102` passed",
+    "3,688,966 unpacked bytes — exact-head CI run `33160594500` passed",
   );
   assert.equal(
     onlyPacketRow(rows, HOSTED_WINDOWS_LABEL),
-    "3,690,927 unpacked bytes — exact-head CI run `32967113102` passed",
+    "3,690,927 unpacked bytes — exact-head CI run `33160594500` passed",
   );
   assert.equal(
     onlyPacketRow(rows, LOCAL_WINDOWS_LABEL),
@@ -118,7 +118,7 @@ function assertPacketProvenance(packet: string): PacketRows {
   const normalized = packet.replace(/\s+/g, " ");
   assert.ok(
     normalized.includes(
-      "Exact-head CI run `32967113102` confirmed both hosted platform values at `3cf44bb3f2fc2ae22cc40678209383de8a9f66ad`.",
+      "Exact-head CI run `33160594500` confirmed the full suite and both hosted package measurements at `127145725b63c2800bc904ca8908b790238d7fce`:",
     ),
     "the operator packet must bind hosted package values to exact-head CI",
   );
@@ -185,14 +185,16 @@ test("the dated release log has an entry for this version, and the index links i
   }
 });
 
-test("the operator packet separates the qualified pre-merge archive from historical evidence", () => {
+test("the operator packet separates final-candidate, pre-merge, and historical archives", () => {
   const path = join(root, "docs", "releases", `OPERATOR-PACKET-v${VERSION}.md`);
   assert.ok(existsSync(path), `no docs/releases/OPERATOR-PACKET-v${VERSION}.md`);
   const packet = readFileSync(path, "utf8");
   assert.ok(packet.includes(`v${VERSION}`), "the operator packet does not name the proposed tag");
   assertPacketProvenance(packet);
+  assert.match(packet, /\| Qualified final-candidate archive \| `aether-agents-0\.3\.0\.tgz` — 835,957 bytes packed \/ 3,688,966 unpacked \/ 618 entries at `1271457\.\.\.`;/);
+  assert.match(packet, /\| Qualified final-candidate archive sha256 \| `6176172deb15eea57519408d93f23b3fac8ab5e2b2e541adddc34b4e5fb4c33d` \|/);
   assert.match(packet, /\| Qualified pre-merge archive \| `aether-agents-0\.3\.0\.tgz` — 835,957 bytes packed \/ 3,688,966 unpacked \/ 618 entries at `3cf44bb\.\.\.`;/);
-  assert.match(packet, /\| Qualified pre-merge archive sha256 \| `6176172deb15eea57519408d93f23b3fac8ab5e2b2e541adddc34b4e5fb4c33d` — regenerate on every new head/);
+  assert.match(packet, /\| Qualified pre-merge archive sha256 \| `6176172deb15eea57519408d93f23b3fac8ab5e2b2e541adddc34b4e5fb4c33d` — historical only/);
   assert.match(packet, /\| Historical archive \| `aether-agents-0\.3\.0\.tgz` — 739,977 bytes packed \/ 3,022,168 unpacked \/ 575 entries \|/);
   assert.match(packet, /\| Historical archive sha256 \| `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` \|/);
   assert.doesNotMatch(packet, /fb96ee44[^\n]*(?:ancestor of #96|ancestor of current `main`)/);
@@ -211,8 +213,8 @@ test("the operator packet fails closed on contradictory release-evidence mutatio
     [
       "duplicate hosted measurement",
       packet.replace(
-        `| ${HOSTED_UBUNTU_LABEL} | 3,688,966 unpacked bytes — exact-head CI run \`32967113102\` passed |`,
-        `| ${HOSTED_UBUNTU_LABEL} | 1 unpacked byte — contradictory |\n| ${HOSTED_UBUNTU_LABEL} | 3,688,966 unpacked bytes — exact-head CI run \`32967113102\` passed |`,
+        `| ${HOSTED_UBUNTU_LABEL} | 3,688,966 unpacked bytes — exact-head CI run \`33160594500\` passed |`,
+        `| ${HOSTED_UBUNTU_LABEL} | 1 unpacked byte — contradictory |\n| ${HOSTED_UBUNTU_LABEL} | 3,688,966 unpacked bytes — exact-head CI run \`33160594500\` passed |`,
       ),
     ],
     [
@@ -226,7 +228,7 @@ test("the operator packet fails closed on contradictory release-evidence mutatio
     [
       "stale hosted-provenance prose",
       packet.replace(
-        /Exact-head CI run `32967113102` confirmed both hosted platform values at\r?\n`3cf44bb3f2fc2ae22cc40678209383de8a9f66ad`\./,
+        /Exact-head CI run `33160594500` confirmed the full suite and both hosted package\r?\nmeasurements at `127145725b63c2800bc904ca8908b790238d7fce`:/,
         "Hosted values were confirmed without an exact head.",
       ),
     ],
