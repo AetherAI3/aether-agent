@@ -11,7 +11,9 @@ import { hostname } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AppContext } from "../core/context.js";
+import type { AetherConfig } from "../types.js";
 import type { CommandFlags } from "../core/command_dispatch.js";
+import { saveConfig } from "../core/config.js";
 import { renderHealthReport } from "../core/health.js";
 import { isCredentialSafeUrl } from "../core/transport.js";
 import { DEVICE_ENROLL_PATH } from "../core/device_runtime/contract.js";
@@ -65,6 +67,10 @@ export async function cmdDevice(ctx: AppContext, argv: string[], flags: CommandF
       return statusPanel(ctx);
     case "enroll":
       return enroll(ctx, flags);
+    case "enable":
+      return setEnabled(ctx, true);
+    case "disable":
+      return setEnabled(ctx, false);
     case "start":
       return start(ctx);
     case "stop":
@@ -87,7 +93,8 @@ export async function cmdDevice(ctx: AppContext, argv: string[], flags: CommandF
       return uninstallService(ctx);
     default:
       process.stderr.write(
-        "usage: aether device <status|enroll|start|stop|restart|doctor|health|groups|last|install-service|uninstall-service>\n",
+        "usage: aether device <status|enroll|enable|disable|start|stop|restart|doctor|health|groups|last|" +
+          "install-service|uninstall-service>\n",
       );
       return DEVICE_EXIT.usage;
   }
@@ -219,6 +226,27 @@ async function enroll(ctx: AppContext, flags: CommandFlags): Promise<number> {
     device_id: record.device_id,
     base_url: record.base_url,
   });
+}
+
+/**
+ * Flip the persistent opt-in. `aether config set` only understands top-level,
+ * already-present keys, so the nested default-off switch needs its own verb —
+ * and the operator surface is the right place for it, next to start/stop.
+ * Disabling does NOT stop a running daemon; that is `aether device stop`, and
+ * saying so keeps the two actions honestly separate.
+ */
+function setEnabled(ctx: AppContext, enabled: boolean): number {
+  const next: AetherConfig = { ...ctx.cfg, deviceRuntime: { ...ctx.cfg.deviceRuntime, enabled } };
+  saveConfig(next);
+  ctx.cfg.deviceRuntime = next.deviceRuntime;
+  const envOverride = process.env["AETHER_DEVICE_RUNTIME"] === "1";
+  const human =
+    `Device runtime ${enabled ? "enabled" : "disabled"} in config.\n` +
+    (!enabled && envOverride
+      ? "Note: AETHER_DEVICE_RUNTIME=1 is still set in this environment and keeps it enabled here.\n"
+      : "") +
+    (enabled ? "" : "A running daemon is not stopped by this — run `aether device stop`.\n");
+  return out(ctx, human, { enabled, env_override: envOverride });
 }
 
 async function start(ctx: AppContext): Promise<number> {

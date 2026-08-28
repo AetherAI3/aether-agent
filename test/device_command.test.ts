@@ -7,7 +7,8 @@ import { cmdDevice, DEVICE_EXIT, deviceHealthState, resolveEnrollBaseUrl } from 
 import { findDispatchedCliCommand } from "../src/commands/cli_registry.js";
 import { checkpointDir } from "../src/core/device_runtime/paths.js";
 import { loadEnrollment, saveEnrollment } from "../src/core/device_runtime/identity.js";
-import { DEFAULT_CONFIG } from "../src/core/config.js";
+import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.js";
+import { deviceRuntimeEnabled } from "../src/core/device_runtime/enablement.js";
 import type { AppContext } from "../src/core/context.js";
 import type { CommandFlags } from "../src/core/command_dispatch.js";
 
@@ -217,6 +218,48 @@ test("device enroll refuses an unsafe --base-url and writes NO enrollment", asyn
     assert.equal(code, DEVICE_EXIT.usage);
     assert.equal(posted, false, "an unsafe base URL must be refused before any request is made");
     assert.equal(loadEnrollment(), null);
+  });
+});
+
+// ── The persistent opt-in ───────────────────────────────────────────────────
+
+test("device enable / disable flips the persistent default-off switch", async () => {
+  await withConfigDir(async () => {
+    const prior = process.env["AETHER_DEVICE_RUNTIME"];
+    delete process.env["AETHER_DEVICE_RUNTIME"];
+    try {
+      const ctx = fakeCtx();
+      // Default: off, and start refuses.
+      assert.equal(deviceRuntimeEnabled(loadConfig()), false);
+      assert.equal((await capture(() => cmdDevice(ctx, ["start"], NOOP_FLAGS))).code, DEVICE_EXIT.disabled);
+
+      await capture(() => cmdDevice(ctx, ["enable"], NOOP_FLAGS));
+      assert.equal(deviceRuntimeEnabled(loadConfig()), true, "enable must persist to config");
+      assert.equal(ctx.cfg.deviceRuntime?.enabled, true, "the live context must see it too");
+
+      await capture(() => cmdDevice(ctx, ["disable"], NOOP_FLAGS));
+      assert.equal(deviceRuntimeEnabled(loadConfig()), false, "disable must persist to config");
+      // And a fresh context reading only config refuses to start again.
+      assert.equal((await capture(() => cmdDevice(fakeCtx(), ["start"], NOOP_FLAGS))).code, DEVICE_EXIT.disabled);
+    } finally {
+      if (prior !== undefined) process.env["AETHER_DEVICE_RUNTIME"] = prior;
+    }
+  });
+});
+
+test("disable reports honestly when the env override still wins", async () => {
+  await withConfigDir(async () => {
+    const prior = process.env["AETHER_DEVICE_RUNTIME"];
+    process.env["AETHER_DEVICE_RUNTIME"] = "1";
+    try {
+      const { out } = await capture(() => cmdDevice(fakeCtx(), ["disable"], NOOP_FLAGS));
+      const summary = JSON.parse(out) as { enabled: boolean; env_override: boolean };
+      assert.equal(summary.enabled, false);
+      assert.equal(summary.env_override, true, "the env override must be surfaced, not silently overridden");
+    } finally {
+      if (prior === undefined) delete process.env["AETHER_DEVICE_RUNTIME"];
+      else process.env["AETHER_DEVICE_RUNTIME"] = prior;
+    }
   });
 });
 
