@@ -50,7 +50,23 @@ export interface ChainState {
 export interface GroupCurrency {
   lease_epoch: number;
   fence_token: string;
+  /** The command classes the launcher granted this group. A class outside this
+   *  set is refused even with a perfect signature — authority is per-group. */
+  command_classes: string[];
 }
+
+/**
+ * Command classes that act ON a managed process group. Each one is meaningless
+ * — and dangerous — without an explicitly allowlisted target, so a command in
+ * one of these classes with a null process_group_id is rejected before any side
+ * effect. This is the rule that stops a signed `emergency_terminate` with no
+ * target from ever becoming "terminate whatever is running": there is no path
+ * from a DeviceCommand to a process that is not a registered managed group.
+ */
+export const GROUP_SCOPED_CLASSES: ReadonlySet<CommandClass> = new Set<CommandClass>([
+  "emergency_terminate",
+  "revoke_group",
+]);
 
 export interface AcceptanceContext {
   deviceId: string;
@@ -128,12 +144,23 @@ export function classifyCommand(cmd: DeviceCommand, ctx: AcceptanceContext): Cla
   // 8. monotonic sequence (a replay of a consumed seq is a duplicate)
   if (cmd.outbox_seq <= ctx.lastOutboxSeq) return { status: "duplicate", reason: "outbox_seq already consumed" };
 
-  // 9. group / lease / fence currency
+  // 9. group / lease / fence currency, and the group's GRANTED command classes.
   if (cmd.process_group_id !== null) {
+    if (typeof cmd.process_group_id !== "string" || !cmd.process_group_id) {
+      return { status: "rejected", reason: "invalid process_group_id" };
+    }
     const group = ctx.lookupGroup(cmd.process_group_id);
     if (!group) return { status: "rejected", reason: "process group is unknown or expired" };
     if (group.lease_epoch !== cmd.lease_epoch) return { status: "rejected", reason: "lease_epoch is stale" };
     if (group.fence_token !== cmd.fence_token) return { status: "rejected", reason: "fence_token is stale" };
+    if (!group.command_classes.includes(cmd.command_class)) {
+      return { status: "rejected", reason: "command_class is not granted to this process group" };
+    }
+  } else if (GROUP_SCOPED_CLASSES.has(cmd.command_class)) {
+    // A group-scoped class with no target has nothing it is allowed to touch.
+    // Refusing here — rather than at execution — means the chain head never
+    // advances on an untargeted destructive command.
+    return { status: "rejected", reason: `${cmd.command_class} requires an allowlisted process_group_id` };
   }
   return { status: "accepted" };
 }

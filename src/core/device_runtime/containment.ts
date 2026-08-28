@@ -73,6 +73,9 @@ export interface ContainmentDeps {
   resolveExe?: (path: string) => string;
   now?: () => number;
   uuid?: () => string;
+  /** The taskkill-tree fallback, injected so a test can prove exactly when it
+   *  does and does not fire. Production is core/process_tree_kill.ts. */
+  treeKill?: (pid: number) => void;
 }
 
 export interface TerminateResult {
@@ -136,6 +139,7 @@ function resolveDeps(deps: ContainmentDeps): Required<ContainmentDeps> {
     resolveExe: deps.resolveExe ?? defaultResolveExe,
     now: deps.now ?? Date.now,
     uuid: deps.uuid ?? randomUUID,
+    treeKill: deps.treeKill ?? ((pid) => terminateProcessTree({ pid, kill: () => true })),
   };
 }
 
@@ -230,6 +234,12 @@ export class ContainmentManager {
     const reg = getGroup(group_id, { now: this.deps.now });
     if (!reg) return { status: "unknown", via: "none", members: [], group_id };
 
+    // A registration whose parent_start_time_ms was never established (probe
+    // failed at launch) can never be PID-reuse-verified later, so it is not a
+    // safe kill target: a forged or fabricated registration must not become a
+    // licence to signal an arbitrary PID. Tear the job down through the warden
+    // if we still own one, but never fall back to signalling by PID.
+    const parentIdentityKnown = reg.parent_start_time_ms > 0;
     const current = this.deps.processStartTimeMs(reg.parent_pid);
     if (current !== null && current !== reg.parent_start_time_ms) {
       // The PID has been recycled onto a different process. Killing it would hit
@@ -237,7 +247,7 @@ export class ContainmentManager {
       // for the pruner.
       return { status: "pid-reuse-blocked", via: "none", members: [], group_id };
     }
-    const parentVerifiedAlive = current !== null && current === reg.parent_start_time_ms;
+    const parentVerifiedAlive = parentIdentityKnown && current !== null && current === reg.parent_start_time_ms;
 
     const warden = this.wardens.get(group_id);
     let via: TerminateResult["via"] = "none";
@@ -251,7 +261,7 @@ export class ContainmentManager {
         // The job terminate itself failed; fall back to a PID-verified tree kill
         // inside the same managed boundary (never a bare basename kill).
         if (parentVerifiedAlive) {
-          terminateProcessTree({ pid: reg.parent_pid, kill: () => true });
+          this.deps.treeKill(reg.parent_pid);
           via = "tree-kill-fallback";
         }
       } finally {
@@ -261,7 +271,7 @@ export class ContainmentManager {
     } else if (parentVerifiedAlive) {
       // No live warden (e.g. after a daemon restart). Only a verified parent may
       // be tree-killed; the KILL_ON_JOB_CLOSE limit already reaped any orphan job.
-      terminateProcessTree({ pid: reg.parent_pid, kill: () => true });
+      this.deps.treeKill(reg.parent_pid);
       via = "tree-kill-fallback";
     }
 

@@ -671,7 +671,11 @@ export const COMMAND_MANIFEST_SOURCE: readonly CommandManifestEntry[] = [
       "worktree",
       "yes"
     ],
-    "ownedFlags": {},
+    "ownedFlags": {
+      "base-url": {
+        "type": "string"
+      }
+    },
     "handler": {
       "id": "handler:shell:device",
       "kind": "lazy",
