@@ -21,7 +21,11 @@ import {
   type GroupCurrency,
   type ProcessDeps,
 } from "../src/core/device_runtime/commands_exec.js";
-import { COMMAND_RESULT_SCHEMA, type DeviceCommand } from "../src/core/device_runtime/contract.js";
+import {
+  COMMAND_CLASSES,
+  COMMAND_RESULT_SCHEMA,
+  type DeviceCommand,
+} from "../src/core/device_runtime/contract.js";
 import { ZERO_DIGEST } from "../src/core/device_runtime/canonical_json.js";
 import {
   TEST_COMMAND_KEY,
@@ -30,7 +34,13 @@ import {
   withDeviceSandboxAsync,
 } from "./device_sandbox.js";
 
-const LIVE_GROUP: GroupCurrency = { lease_epoch: 4, fence_token: "fence-current" };
+// Granted every class, so these cases isolate the acceptance checks they name.
+// Per-group class authority has its own dedicated tests.
+const LIVE_GROUP: GroupCurrency = {
+  lease_epoch: 4,
+  fence_token: "fence-current",
+  command_classes: [...COMMAND_CLASSES],
+};
 
 function ctx(overrides: Partial<AcceptanceContext> = {}): AcceptanceContext {
   return {
