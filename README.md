@@ -20,20 +20,19 @@ local host owns workspace tools, permissions, sessions, review, and verification
 
 ## Install the right version
 
-Two surfaces exist at once: the package published to npm, and the `main` source
-build in this repository. Publishing is an owner-controlled operation, so source
-presence is not registry availability, and the two can hold different versions.
+Use npm for the published CLI. The `main` source build is available for
+contributors and for testing unreleased changes; both paths carry the 0.3
+workflow when the installed version is 0.3.0 or newer.
 
 | Install | Version | What you get |
 |---|---:|---|
-| npm `latest` | [![npm latest](https://img.shields.io/npm/v/aether-agents?label=&color=14b8a6)](https://www.npmjs.com/package/aether-agents) | Whatever that badge resolves to right now — it tracks the live `latest` dist-tag. |
+| npm `latest` | [![npm latest](https://img.shields.io/npm/v/aether-agents?label=&color=14b8a6)](https://www.npmjs.com/package/aether-agents) | Published package; the badge tracks the live `latest` dist-tag. |
 | `main` source build | **0.3.0** | The 0.3 coding, Ollama, session, review, and ship workflows below. |
 
 > **Confirm your version before following a version-labelled section.** Run
 > `npm view aether-agents version` for the live `latest` dist-tag, and
 > `aether --version` for what you actually have installed. Sections marked
-> “source 0.3.0” require **0.3.0 or newer**; if your installed version is lower,
-> use the source build below. The
+> “source 0.3.0” require **0.3.0 or newer**. The
 > [release record](docs/releases/2026-08-22.md) and
 > [operator packet](docs/releases/OPERATOR-PACKET-v0.3.0.md) preserve the evidence.
 
@@ -44,15 +43,16 @@ npm install -g aether-agents@latest --ignore-scripts
 aether --version
 ```
 
-If that reports **0.3.0 or newer**, every section below applies. If it reports an
-earlier version, npm has not caught up with `main` yet — sign in, inspect models,
-and use chat, then build from source for the rest:
+The published 0.3.0 package includes every workflow below. Try the hosted basics:
 
 ```bash
 aether auth login
 aether models
 aether chat "hello"
 ```
+
+Contributors who need unreleased changes can use the source-build instructions in
+the next section.
 
 <!-- SOURCE-0.3-WORKFLOWS:START -->
 
