@@ -192,3 +192,47 @@ test("cmdLogin (device-code flow): a denied authorization still gets the styled 
     stderr.restore();
   }
 });
+
+test("cmdLogin reports an unavailable browser and continues with the printed device URL", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: unknown) => {
+    const value = String(url);
+    if (value.includes("/auth/device/code")) {
+      return new Response(JSON.stringify({
+        device_code: "dc-browser",
+        user_code: "BROW-SER",
+        verification_uri: "https://x.example/device",
+        verification_uri_complete: "https://x.example/device?code=BROW-SER",
+        interval: 0,
+        expires_in: 30,
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (value.includes("/auth/device/token")) {
+      return new Response(JSON.stringify({ access_token: "aek_browser_fallback" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected fetch in test: ${value}`);
+  }) as typeof fetch;
+  const ctx = fakeCtxWithApi();
+  const realStdoutWrite = process.stdout.write.bind(process.stdout);
+  let stdout = "";
+  process.stdout.write = ((chunk: unknown) => ((stdout += String(chunk)), true)) as typeof process.stdout.write;
+  const stderr = captureStderr();
+  try {
+    const code = await cmdLogin(ctx, {}, {
+      openBrowser: () => ({ status: "unavailable", detail: "synthetic headless session" }),
+    });
+    assert.equal(code, 0);
+    assert.match(stdout, /https:\/\/x\.example\/device/);
+    assert.match(stdout, /BROW-SER/);
+    assert.match(stderr.text(), /Browser was not opened \(unavailable\)/);
+    assert.match(stderr.text(), /aether auth login --no-browser/);
+    assert.equal(await ctx.tokens.get(), "aek_browser_fallback");
+  } finally {
+    globalThis.fetch = realFetch;
+    process.stdout.write = realStdoutWrite;
+    stderr.restore();
+  }
+});

@@ -11,7 +11,8 @@ import type { AppContext } from "../core/context.js";
 import { loginWithPassword } from "../core/auth.js";
 import { LOGOUT_PATH } from "../core/transport.js";
 import { requestDeviceCode, pollForToken } from "../core/device.js";
-import { openBrowser } from "../core/browser.js";
+import { openBrowserChecked } from "../core/browser.js";
+import type { OpenOutcome } from "../core/opener.js";
 import { theme } from "../ui/theme.js";
 import { errorHint, errorMessage } from "../core/errors.js";
 import { formatErrorLine } from "../ui/error_line.js";
@@ -24,6 +25,12 @@ export interface LoginOpts {
   withToken?: boolean;
   noBrowser?: boolean;
 }
+
+export interface LoginDependencies {
+  openBrowser: (url: string) => OpenOutcome;
+}
+
+const LOGIN_DEPENDENCIES: LoginDependencies = { openBrowser: openBrowserChecked };
 
 /** After a successful login, flag a shell-level AETHER_TOKEN: it is re-read by
  * every NEW process and would shadow the token just stored — the classic
@@ -43,7 +50,11 @@ function warnEnvTokenShadow(): void {
   }
 }
 
-export async function cmdLogin(ctx: AppContext, opts: LoginOpts): Promise<number> {
+export async function cmdLogin(
+  ctx: AppContext,
+  opts: LoginOpts,
+  dependencies: LoginDependencies = LOGIN_DEPENDENCIES,
+): Promise<number> {
   // 1. Direct token.
   if (opts.token) {
     await ctx.tokens.set(opts.token);
@@ -99,7 +110,17 @@ export async function cmdLogin(ctx: AppContext, opts: LoginOpts): Promise<number
     `\nTo sign in, open:\n  ${code.verification_uri}\n` +
       `and enter the code:\n\n    ${code.user_code}\n\n`,
   );
-  if (!opts.noBrowser) openBrowser(code.verification_uri_complete);
+  if (opts.noBrowser) {
+    process.stdout.write("Browser not opened (--no-browser); use the URL and code above.\n");
+  } else {
+    const opened = dependencies.openBrowser(code.verification_uri_complete);
+    if (opened.status !== "spawned") {
+      process.stderr.write(
+        `⚠ Browser was not opened (${opened.status}). Use the URL and code above, ` +
+          "or rerun: aether auth login --no-browser\n",
+      );
+    }
+  }
   process.stdout.write("Waiting for approval in your browser…\n");
   try {
     const token = await pollForToken(ctx.api, code, sleep);
