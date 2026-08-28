@@ -108,6 +108,7 @@ export class TelemetrySampler {
     // CPU utilisation from the delta of cumulative tick counters. The first
     // sample has no prior, so it reports 0 rather than a meaningless absolute.
     const cpu = this.inputs.cpuTimes();
+    const hadPrior = this.prevCpu !== null;
     let cpuInstant = 0;
     if (this.prevCpu) {
       const idleDelta = cpu.idle - this.prevCpu.idle;
@@ -120,11 +121,20 @@ export class TelemetrySampler {
     const availBytes = this.inputs.memAvailBytes();
     const memInstant = totalBytes > 0 ? ((totalBytes - availBytes) / totalBytes) * 100 : 0;
 
-    this.ewmaCpu = this.ewmaCpu === null ? cpuInstant : this.alpha * cpuInstant + (1 - this.alpha) * this.ewmaCpu;
+    // The first sample's 0 is a "not measured yet" placeholder, NOT an
+    // observation of an idle machine, so it must not seed the EWMA. Seeding on
+    // it would make a device that boots under load report 0 → 48 → 71 → 83 and
+    // take four publish cycles (~48s) to cross the 80% throttle threshold, on
+    // exactly the machine that needed shedding soonest. The EWMA therefore
+    // seeds on the first REAL delta; before that, cpu_util_pct stays 0.
+    if (hadPrior) {
+      this.ewmaCpu = this.ewmaCpu === null ? cpuInstant : this.alpha * cpuInstant + (1 - this.alpha) * this.ewmaCpu;
+    }
     this.ewmaMem = this.ewmaMem === null ? memInstant : this.alpha * memInstant + (1 - this.alpha) * this.ewmaMem;
 
-    const cpuPct = clampPct(this.ewmaCpu);
-    const memPct = clampPct(this.ewmaMem);
+    // A null EWMA means "no delta measured yet" and publishes as 0.
+    const cpuPct = this.ewmaCpu === null ? 0 : clampPct(this.ewmaCpu);
+    const memPct = this.ewmaMem === null ? 0 : clampPct(this.ewmaMem);
 
     // Windowed maxima evaluate against the SMOOTHED series so a single spurious
     // spike does not hold recovery open, matching how the Cloud reasons about it.
