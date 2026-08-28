@@ -84,8 +84,9 @@ test("launchManaged verifies the exe hash, creates the job, and assigns the task
       now: () => 1000,
       uuid: () => "grp-fixed",
     });
-    const reg = await mgr.launchManaged(spec(box.exe, box.sha));
+    const reg = await mgr.launchManaged({ ...spec(box.exe, box.sha), device_id: "dev-owner" });
     assert.equal(reg.process_group_id, "grp-fixed");
+    assert.equal(reg.device_id, "dev-owner", "a registration names the device it belongs to");
     assert.equal(reg.exe_sha256, box.sha);
     assert.equal(reg.parent_pid, 4321);
     assert.equal(reg.parent_start_time_ms, 999);

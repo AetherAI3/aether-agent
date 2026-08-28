@@ -14,7 +14,9 @@
 // the same detectors core/health.ts redacts against) so a new secret shape
 // protects this sink the moment it is added there.
 
+import { createHash } from "node:crypto";
 import { scanForSecrets } from "../redaction.js";
+import type { Handoff } from "../handoff.js";
 import { WORKSPACE_HANDOFF_SCHEMA, type WorkspaceHandoffV1 } from "./contract.js";
 
 export interface WorkspaceHandoffInput {
@@ -131,4 +133,102 @@ export function toWorkspaceHandoffV1(input: WorkspaceHandoffInput): WorkspaceHan
   const reason = workspaceHandoffRejectReason(handoff);
   if (reason) throw new Error(`refusing to emit workspace handoff: ${reason}`);
   return handoff;
+}
+
+// ── Adapting the repo's existing portable handoff ───────────────────────────
+
+/** The lane/DAG/fence identities a WorkspaceHandoff needs and a session Handoff
+ *  has no notion of. Supplied by the controller, never invented here. */
+export interface HandoffLaneIdentity {
+  handoff_id: string;
+  task_id: string;
+  lane_id: string;
+  dag_node_id: string;
+  fence_token: string;
+  lease_epoch: number;
+  policy_digest: string;
+  source_device_id: string;
+  created_at: number;
+  patch_refs?: Array<{ ref: string; sha256: string; bytes: number }>;
+  protocol_c_refs?: string[];
+}
+
+/**
+ * Project the repo's portable session handoff (core/handoff.ts) onto the frozen
+ * WorkspaceHandoff wire shape.
+ *
+ * The projection is deliberately LOSSY in one direction: a session Handoff
+ * carries `highlights` (narration), `filesTouched` (paths), `task` (the operator's
+ * prompt) and `context.instructionSources` (display paths). None of those may
+ * cross a machine boundary, so none of them is copied. What survives is what the
+ * contract permits — repository and exact revision, the test command and whether
+ * it verified, a change digest over the touched-file SET (names hashed, never
+ * published), the skill digest, and a bounded remaining-work summary.
+ *
+ * The result still goes through the same validator, so if a caller manages to
+ * smuggle a path or a credential into a surviving field, the handoff is REJECTED
+ * rather than emitted.
+ */
+export function fromPortableHandoff(h: Handoff, ids: HandoffLaneIdentity): WorkspaceHandoffV1 {
+  // A digest over the changed-file set: enough for the receiving machine to tell
+  // whether it is looking at the same change, without naming one path.
+  const change_digest = `sha256:${createHash("sha256")
+    .update([...h.filesTouched].sort().join("\n"), "utf8")
+    .digest("hex")}`;
+
+  // Remaining work, stated in counts and verdicts — never in narration, which is
+  // where a path or a secret would ride along.
+  const remaining =
+    h.finalStatus === "ok"
+      ? "prior run finished green"
+      : `prior run ended ${h.finalStatus}` +
+        (typeof h.remaining === "number" ? ` with ${h.remaining} failing test(s)` : "") +
+        `; ${h.filesTouched.length} file(s) changed`;
+
+  const skillDigests = h.context?.skills?.map((s) => s.digest).filter((d) => typeof d === "string") ?? [];
+  const skill_digest =
+    skillDigests.length === 0
+      ? null
+      : `sha256:${createHash("sha256").update([...skillDigests].sort().join("\n"), "utf8").digest("hex")}`;
+
+  return toWorkspaceHandoffV1({
+    handoff_id: ids.handoff_id,
+    task_id: ids.task_id,
+    lane_id: ids.lane_id,
+    dag_node_id: ids.dag_node_id,
+    fence_token: ids.fence_token,
+    lease_epoch: ids.lease_epoch,
+    repo: {
+      // The remote is NOT copied — it can carry a credential and always carries
+      // a host. Only a bare name and the exact sha travel.
+      name: portableRepoName(h),
+      revision: h.repo?.head ?? "",
+    },
+    patch_refs: ids.patch_refs ?? [],
+    change_digest,
+    test_cmd: h.testCmd ?? "",
+    test_verified: h.finalStatus === "ok",
+    remaining_summary: remaining,
+    policy_digest: ids.policy_digest,
+    skill_digest,
+    protocol_c_refs: ids.protocol_c_refs ?? [],
+    source_device_id: ids.source_device_id,
+    created_at: ids.created_at,
+  });
+}
+
+/** `owner/repo` from a session handoff's remote, or "" when it cannot be reduced. */
+function portableRepoName(h: Handoff): string {
+  const remote = h.repo?.remote;
+  if (!remote) return "";
+  const v = remote
+    .replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, "")
+    .replace(/^[^/@]*@/, "")
+    .replace(/^[^/:]+[:/]/, "")
+    .replace(/\.git$/, "")
+    .replace(/\/+$/, "");
+  const parts = v.split("/").filter(Boolean);
+  if (parts.length < 2) return "";
+  const name = `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
+  return /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(name) ? name : "";
 }

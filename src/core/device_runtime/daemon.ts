@@ -190,10 +190,10 @@ class Daemon {
       dag_node_id: str("dag_node_id"),
       fence_token: cmd.fence_token,
       lease_epoch: cmd.lease_epoch,
-      repo: {
-        name: typeof (p["repo"] as Record<string, unknown> | undefined)?.["name"] === "string" ? ((p["repo"] as Record<string, unknown>)["name"] as string) : "",
-        revision: typeof (p["repo"] as Record<string, unknown> | undefined)?.["revision"] === "string" ? ((p["repo"] as Record<string, unknown>)["revision"] as string) : "",
-      },
+      // The controller's repo facts win; otherwise fall back to what this
+      // machine actually has checked out, so a drain checkpoint is still
+      // attributable to an exact revision rather than to nothing.
+      repo: payloadRepo(p) ?? this.repoProbe() ?? { name: "", revision: "" },
       patch_refs: Array.isArray(p["patch_refs"]) ? (p["patch_refs"] as WorkspacePatchRef[]).map((r) => ({ ref: String(r.ref), sha256: String(r.sha256), bytes: Number(r.bytes) })) : [],
       change_digest: str("change_digest"),
       test_cmd: str("test_cmd"),
@@ -291,6 +291,16 @@ interface WorkspacePatchRef {
   ref: unknown;
   sha256: unknown;
   bytes: unknown;
+}
+
+/** `{name, revision}` from a command payload, or null when it names neither. */
+function payloadRepo(p: Record<string, unknown>): { name: string; revision: string } | null {
+  const repo = p["repo"];
+  if (!repo || typeof repo !== "object" || Array.isArray(repo)) return null;
+  const r = repo as Record<string, unknown>;
+  const name = typeof r["name"] === "string" ? r["name"] : "";
+  const revision = typeof r["revision"] === "string" ? r["revision"] : "";
+  return name || revision ? { name, revision } : null;
 }
 
 /**
