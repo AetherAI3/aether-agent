@@ -19,6 +19,7 @@
   "files": [
     "dist/src",
     "README.md",
+    "assets/aether-agent-hero.png",
     "COMMANDS.md",
     "docs/generated/commands.md",
     "docs/generated/model-catalogue.md",
