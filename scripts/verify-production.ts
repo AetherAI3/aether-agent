@@ -186,6 +186,14 @@ export function validateWorkflowText(name: string, text: string): string[] {
     if (!/git merge-base --is-ancestor HEAD origin\/main/.test(text)) {
       errors.push(`${name}: release commit ancestry to main must be verified`);
     }
+    if (/origin\/release\/0\.3/.test(text)) {
+      if (!text.includes('[[ "$RELEASE_TAG" =~ ^v0\\.3\\.[0-9]+$ ]]')) {
+        errors.push(`${name}: the release/0.3 exception must be restricted to numeric v0.3.x tags`);
+      }
+      if (!text.includes('test "$(git rev-parse HEAD)" = "$(git rev-parse origin/release/0.3)"')) {
+        errors.push(`${name}: v0.3.x publication must equal the exact release/0.3 head`);
+      }
+    }
     if (!/npm install --global[^\n]*--ignore-scripts/.test(text)) {
       errors.push(`${name}: the exact tarball must pass an install smoke test`);
     }

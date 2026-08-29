@@ -138,6 +138,20 @@ test("publishing workflow must be event-gated, main-derived, and install-smoked"
   assert.match(errors, /install smoke/);
 });
 
+test("a v0.3 maintenance release must use a numeric tag at the exact protected branch head", () => {
+  const release = readFileSync(join(process.cwd(), ".github", "workflows", "release.yml"), "utf8");
+  assert.deepEqual(validateWorkflowText("release.yml", release), []);
+
+  const looseTag = release.replace('[[ "$RELEASE_TAG" =~ ^v0\\.3\\.[0-9]+$ ]]', '[[ "$RELEASE_TAG" == v0.3.* ]]');
+  assert.match(validateWorkflowText("release.yml", looseTag).join("\n"), /numeric v0\.3\.x tags/);
+
+  const looseHead = release.replace(
+    'test "$(git rev-parse HEAD)" = "$(git rev-parse origin/release/0.3)"',
+    'git merge-base --is-ancestor HEAD origin/release/0.3',
+  );
+  assert.match(validateWorkflowText("release.yml", looseHead).join("\n"), /exact release\/0\.3 head/);
+});
+
 test("installer policy rejects pipe-to-shell and lifecycle-enabled global installs", () => {
   assert.deepEqual(validateInstallerText("safe.sh", "npm install -g aether-agents@latest --ignore-scripts"), []);
   assert.match(validateInstallerText("bad.sh", "curl https://example.test/install.sh | sh\nnpm install -g aether-agents").join("\n"), /pipe-to-shell/);

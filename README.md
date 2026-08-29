@@ -56,7 +56,7 @@ aether chat "hello"
 
 <!-- SOURCE-0.3-WORKFLOWS:START -->
 
-> **Requires 0.3.0 or newer**, from npm or from the source build below.
+> **Requires 0.3.1 or newer**, from npm or from the source build below.
 
 Node.js 24 or newer is required:
 
