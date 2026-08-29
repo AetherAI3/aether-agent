@@ -1,6 +1,6 @@
 {
   "name": "aether-agents",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Open-source terminal coding agent — runs on hosted frontier models (Claude, GPT, DeepSeek, Kimi, Gemma) or fully offline via Ollama. Edits your code, runs your tests, and verifies the result.",
   "type": "module",
   "bin": {
@@ -33,6 +33,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node dist/scripts/copy-skill-assets.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "npm run typecheck",
     "dev": "npm run build && node dist/src/main.js",
     "start": "node dist/src/main.js",
     "test": "npm run build && node --test --test-isolation=none \"dist/test/**/*.test.js\"",

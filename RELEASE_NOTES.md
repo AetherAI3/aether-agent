@@ -1,3 +1,15 @@
+# Aether Agent v0.3.1 — first-run recovery
+
+**August 28, 2026**
+
+- **Clearer first-run recovery.** The CLI now stops before executing on an
+  unsupported Node.js runtime and prints the upgrade path. Browser-based sign-in
+  continues with the displayed URL and code when the system browser cannot open.
+- **No feature expansion.** This is a compatibility patch over v0.3.0; it does
+  not include the later device-runtime work on `main`.
+
+---
+
 # Aether Agent v0.3.0 — durable work, verified delivery
 
 **Release candidate finalized August 27, 2026**

@@ -39,6 +39,21 @@ import { commandFlags } from "./core/command_dispatch.js";
 /** Coerce a parsed flag value to string | undefined. */
 const sf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
+export const MINIMUM_NODE_MAJOR = 24;
+
+/** Make an unsupported runtime actionable before it reaches a later syntax or API failure. */
+export function unsupportedNodeMessage(version: string): string | null {
+  const majorText = version.trim().replace(/^v/i, "").split(".", 1)[0] ?? "";
+  const major = Number.parseInt(majorText, 10);
+  if (Number.isInteger(major) && major >= MINIMUM_NODE_MAJOR) return null;
+  const found = version.trim() || "unknown";
+  return (
+    `Aether Agent requires Node.js >= ${MINIMUM_NODE_MAJOR} (found ${found}). ` +
+    "Upgrade Node, reopen your terminal, then run: aether --version\n" +
+    "https://nodejs.org/en/download"
+  );
+}
+
 // Real top-level subcommand names, sourced from the union of the switch's
 // registry and the dispatch table (cli_registry.ts) — the same registries the
 // dispatch is cross-checked against — so this can never drift from the actual
@@ -58,6 +73,11 @@ function suggestTopLevel(token: string): string | null {
 }
 
 export async function main(argv: string[]): Promise<number> {
+  const nodeError = unsupportedNodeMessage(process.versions.node);
+  if (nodeError) {
+    process.stderr.write(`${errTheme.red("✗")} ${nodeError}\n`);
+    return 1;
+  }
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,

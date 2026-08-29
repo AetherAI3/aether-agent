@@ -27,7 +27,7 @@ presence is not registry availability, and the two can hold different versions.
 | Install | Version | What you get |
 |---|---:|---|
 | npm `latest` | [![npm latest](https://img.shields.io/npm/v/aether-agents?label=&color=14b8a6)](https://www.npmjs.com/package/aether-agents) | Whatever that badge resolves to right now — it tracks the live `latest` dist-tag. |
-| `main` source build | **0.3.0** | The 0.3 coding, Ollama, session, review, and ship workflows below. |
+| `main` source build | **0.3.1** | The 0.3 coding, Ollama, session, review, and ship workflows below. |
 
 > **Confirm your version before following a version-labelled section.** Run
 > `npm view aether-agents version` for the live `latest` dist-tag, and

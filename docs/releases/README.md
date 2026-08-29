@@ -12,6 +12,9 @@ manifest, the evidence gathered, and the founder-owned steps that publish it.
 
 ## Index
 
+- [2026-08-28](2026-08-28.md) — **v0.3.1** patch candidate: actionable
+  Node.js-version recovery and browser-login fallback. Packet:
+  [OPERATOR-PACKET-v0.3.1.md](OPERATOR-PACKET-v0.3.1.md).
 - [v0.3.0 release body](RELEASE-BODY-v0.3.0.md) — publish-ready user-facing
   notes for the GitHub release. It deliberately makes no pre-publication npm
   claim; the dated publication record is added only after registry verification.
