@@ -8,7 +8,7 @@
 // `cmd /c start "" <url>` on Windows, which handed the URL to the command
 // interpreter as a token.
 
-import { openTarget, type OpenOutcome } from "./opener.js";
+import { openTarget, openTargetChecked, type OpenOutcome } from "./opener.js";
 
 /** Open `url` in the default browser. Never throws. */
 export function openBrowser(url: string): void {
@@ -18,4 +18,10 @@ export function openBrowser(url: string): void {
 /** Same launch, but with the outcome so a caller can report a refusal. */
 export function openBrowserChecked(url: string): OpenOutcome {
   return openTarget(url);
+}
+
+/** Wait for the initial OS launcher outcome when an interactive recovery path
+ * needs to tell the user whether the browser was actually started. */
+export function openBrowserAwaitLaunch(url: string): Promise<OpenOutcome> {
+  return openTargetChecked(url);
 }

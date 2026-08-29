@@ -11,7 +11,7 @@ import type { AppContext } from "../core/context.js";
 import { loginWithPassword } from "../core/auth.js";
 import { LOGOUT_PATH } from "../core/transport.js";
 import { requestDeviceCode, pollForToken } from "../core/device.js";
-import { openBrowserChecked } from "../core/browser.js";
+import { openBrowserAwaitLaunch } from "../core/browser.js";
 import type { OpenOutcome } from "../core/opener.js";
 import { theme } from "../ui/theme.js";
 import { errorHint, errorMessage } from "../core/errors.js";
@@ -27,10 +27,10 @@ export interface LoginOpts {
 }
 
 export interface LoginDependencies {
-  openBrowser: (url: string) => OpenOutcome;
+  openBrowser: (url: string) => OpenOutcome | Promise<OpenOutcome>;
 }
 
-const LOGIN_DEPENDENCIES: LoginDependencies = { openBrowser: openBrowserChecked };
+const LOGIN_DEPENDENCIES: LoginDependencies = { openBrowser: openBrowserAwaitLaunch };
 
 /** After a successful login, flag a shell-level AETHER_TOKEN: it is re-read by
  * every NEW process and would shadow the token just stored — the classic
@@ -113,7 +113,7 @@ export async function cmdLogin(
   if (opts.noBrowser) {
     process.stdout.write("Browser not opened (--no-browser); use the URL and code above.\n");
   } else {
-    const opened = dependencies.openBrowser(code.verification_uri_complete);
+    const opened = await dependencies.openBrowser(code.verification_uri_complete);
     if (opened.status !== "spawned") {
       process.stderr.write(
         `⚠ Browser was not opened (${opened.status}). Use the URL and code above, ` +

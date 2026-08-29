@@ -59,6 +59,15 @@ const EXPECTED_HOSTED_WINDOWS_UNPACKED = 3_690_927;
 const EXPECTED_LOCAL_WINDOWS_UNPACKED = 3_690_927;
 const EXPECTED_LINUX_PACKED = 835_957;
 const EXPECTED_WINDOWS_PACKED = 836_234;
+const V031_PACKET = {
+  "Package": "`aether-agents`",
+  "Proposed tag": "`v0.3.1`",
+  "Release line base": "`fb7ceb9c78fdacf84a864a07523185fb4387f531` (`v0.3.0`)",
+  "Candidate branch": "`codex/patch-release-031`",
+  "Archive evidence": "Pending exact-head hosted qualification — no v0.3.1 tarball or checksum exists yet.",
+  "Package manifest": "Pending exact-head `npm pack --dry-run` — no v0.3.1 entry count or byte total is asserted before that evidence exists.",
+  "Provenance evidence": "Pending the trusted-publishing workflow — no v0.3.1 provenance attestation exists yet.",
+} as const;
 
 function parsePacketRows(packet: string): PacketRows {
   const rows: PacketRows = new Map();
@@ -190,7 +199,11 @@ test("the current operator packet identifies the candidate and v0.3.0 retains it
   assert.ok(existsSync(path), `no docs/releases/OPERATOR-PACKET-v${VERSION}.md`);
   const current = readFileSync(path, "utf8");
   assert.ok(current.includes(`v${VERSION}`), "the operator packet does not name the proposed tag");
-  assert.match(current, new RegExp(`\\| Proposed tag \\| \\`v${VERSION}\\` \\|`));
+  const currentRows = parsePacketRows(current);
+  for (const [label, expected] of Object.entries(V031_PACKET)) {
+    assert.equal(onlyPacketRow(currentRows, label), expected, `the current packet has the wrong ${label}`);
+  }
+  assert.doesNotMatch(current, /aether-agents-0\.3\.0\.tgz|6176172deb15eea57519408d93f23b3fac8ab5e2b2e541adddc34b4e5fb4c33d/);
   const packet = read("docs", "releases", "OPERATOR-PACKET-v0.3.0.md");
   assertV030PacketProvenance(packet);
   assert.match(packet, /\| Qualified final-candidate archive \| `aether-agents-0\.3\.0\.tgz` — 835,957 bytes packed \/ 3,688,966 unpacked \/ 618 entries at `1271457\.\.\.`;/);

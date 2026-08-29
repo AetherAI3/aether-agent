@@ -14,6 +14,9 @@ until the final pull-request commit has passed the required hosted checks.
 | Deliberately excluded | Later feature work on `main`, including the device-runtime surface and other unreleased command changes. |
 | Selected-change provenance | Equivalent, selectively applied portions of `44f1223f62e83c14e8d7741d8590ce61721e3fab` (first-run hardening), reviewed against v0.3.0. |
 | Required qualification | Exact-head Windows, Linux, CodeQL, supply-chain, documentation, package, and release-truth checks; exact-package install canaries; then the release workflow’s trusted publication and provenance attestation. |
+| Archive evidence | Pending exact-head hosted qualification — no v0.3.1 tarball or checksum exists yet. |
+| Package manifest | Pending exact-head `npm pack --dry-run` — no v0.3.1 entry count or byte total is asserted before that evidence exists. |
+| Provenance evidence | Pending the trusted-publishing workflow — no v0.3.1 provenance attestation exists yet. |
 | Rollback | Restore npm `latest` to `0.3.0` if a post-publication regression is confirmed; do not unpublish a released version. |
 
 ## Version decision
@@ -29,3 +32,25 @@ The final merge commit, workflow run IDs, artifact digests, package integrity,
 SBOM, provenance attestation, and platform canary results are added only from
 the corresponding immutable hosted evidence. Until then this candidate is not
 publishable.
+
+## Commands retained without an explicit release-note invocation
+
+These existing visible commands are intentionally retained without adding a
+new v0.3.1 announcement. The named exemptions are reviewed at each release so
+the patch does not silently add a command surface:
+
+- `aether help`
+- `aether chat`
+- `aether run`
+- `aether agents`
+- `aether github`
+- `aether vault`
+- `aether workflow`
+- `aether memory`
+- `aether image`
+- `aether video`
+- `aether output`
+- `aether audit`
+- `aether receipt`
+- `aether mcp`
+- `aether config`
