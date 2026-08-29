@@ -64,8 +64,8 @@ const V031_PACKET = {
   "Proposed tag": "`v0.3.1`",
   "Release line base": "`fb7ceb9c78fdacf84a864a07523185fb4387f531` (`v0.3.0`)",
   "Candidate branch": "`codex/patch-release-031`",
-  "Archive evidence": "Pending exact-head hosted qualification — no v0.3.1 tarball or checksum exists yet.",
-  "Package manifest": "Pending exact-head `npm pack --dry-run` — no v0.3.1 entry count or byte total is asserted before that evidence exists.",
+  "Archive evidence": "No release archive exists. The current local Windows `npm pack --dry-run --json --ignore-scripts` reported `aether-agents-0.3.1.tgz`, 837,371 packed bytes, 3,695,485 unpacked bytes, `shasum` `889864b707b5611eefa93461bde5f90757538731`, and integrity `sha512-wJjcMrxHQbdo7RfTciMD7evZJSt2wo1CNsrONNRI8w4zPeBILxNG+2/1WHaH7RVFeXz563gp1T4Bd0abpgTHqw==`; dry-run metadata is not a release checksum or provenance attestation.",
+  "Package manifest": "The same current local dry run reported 618 entries. Hosted exact-head package evidence remains required before release.",
   "Provenance evidence": "Pending the trusted-publishing workflow — no v0.3.1 provenance attestation exists yet.",
 } as const;
 
