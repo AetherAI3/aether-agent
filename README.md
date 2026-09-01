@@ -2,7 +2,7 @@
 
 # Aether Agent
 
-**An open-source terminal coding agent for working in a local repository with hosted models or local Ollama.**
+**An open-source terminal coding agent for local repositories. Local Ollama is supported; hosted-model coding is account-dependent and Coming later / HOLD as a complete journey.**
 
 [![CI](https://github.com/AetherAI3/aether-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AetherAI3/aether-agent/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/aether-agents?label=npm)](https://www.npmjs.com/package/aether-agents)
