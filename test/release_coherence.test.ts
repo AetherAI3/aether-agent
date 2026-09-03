@@ -59,6 +59,15 @@ const EXPECTED_HOSTED_WINDOWS_UNPACKED = 3_690_927;
 const EXPECTED_LOCAL_WINDOWS_UNPACKED = 3_690_927;
 const EXPECTED_LINUX_PACKED = 835_957;
 const EXPECTED_WINDOWS_PACKED = 836_234;
+const V032_PACKET = {
+  "Package": "`aether-agents`",
+  "Proposed tag": "`v0.3.2`",
+  "Release line base": "`c4a16242ad117a499f91e3b531baa80f1a3ff0bd` (`v0.3.1`)",
+  "Candidate branch": "`fix/reconcile-v031-into-main`",
+  "Archive evidence": "No release archive exists. The current local Windows `npm pack --dry-run --json --ignore-scripts` reported `aether-agents-0.3.2.tgz`, 1,387,500 packed bytes, 4,461,548 unpacked bytes, `shasum` `3e22664fe2bc647efe87a72a4d4fb95cb5566e83`, and integrity `sha512-AKvvYi40h64DvOylTk3qDKbs6k+MLP5kt3tUBtoQUDLcu+nTOiEnPxYDbmcmelynROKZjPVnsKxzlOCFJfodow==`; dry-run metadata is not a release checksum or provenance attestation.",
+  "Package manifest": "The same current local dry run reported 673 entries. Hosted exact-head package evidence remains required before release.",
+  "Provenance evidence": "Pending the trusted-publishing workflow — no v0.3.2 provenance attestation exists yet.",
+} as const;
 
 function parsePacketRows(packet: string): PacketRows {
   const rows: PacketRows = new Map();
@@ -79,7 +88,7 @@ function onlyPacketRow(rows: PacketRows, label: string): string {
   return values[0]!;
 }
 
-function assertPacketProvenance(packet: string): PacketRows {
+function assertV030PacketProvenance(packet: string): PacketRows {
   const rows = parsePacketRows(packet);
   const baseLabels = [...rows.keys()].filter((label) => /base/i.test(label)).sort();
   assert.deepEqual(
@@ -185,12 +194,18 @@ test("the dated release log has an entry for this version, and the index links i
   }
 });
 
-test("the operator packet separates final-candidate, pre-merge, and historical archives", () => {
+test("the current operator packet identifies the candidate and v0.3.0 retains its historical provenance", () => {
   const path = join(root, "docs", "releases", `OPERATOR-PACKET-v${VERSION}.md`);
   assert.ok(existsSync(path), `no docs/releases/OPERATOR-PACKET-v${VERSION}.md`);
-  const packet = readFileSync(path, "utf8");
-  assert.ok(packet.includes(`v${VERSION}`), "the operator packet does not name the proposed tag");
-  assertPacketProvenance(packet);
+  const current = readFileSync(path, "utf8");
+  assert.ok(current.includes(`v${VERSION}`), "the operator packet does not name the proposed tag");
+  const currentRows = parsePacketRows(current);
+  for (const [label, expected] of Object.entries(V032_PACKET)) {
+    assert.equal(onlyPacketRow(currentRows, label), expected, `the current packet has the wrong ${label}`);
+  }
+  assert.doesNotMatch(current, /aether-agents-0\.3\.0\.tgz|6176172deb15eea57519408d93f23b3fac8ab5e2b2e541adddc34b4e5fb4c33d/);
+  const packet = read("docs", "releases", "OPERATOR-PACKET-v0.3.0.md");
+  assertV030PacketProvenance(packet);
   assert.match(packet, /\| Qualified final-candidate archive \| `aether-agents-0\.3\.0\.tgz` — 835,957 bytes packed \/ 3,688,966 unpacked \/ 618 entries at `1271457\.\.\.`;/);
   assert.match(packet, /\| Qualified final-candidate archive sha256 \| `6176172deb15eea57519408d93f23b3fac8ab5e2b2e541adddc34b4e5fb4c33d` \|/);
   assert.match(packet, /\| Qualified pre-merge archive \| `aether-agents-0\.3\.0\.tgz` — 835,957 bytes packed \/ 3,688,966 unpacked \/ 618 entries at `3cf44bb\.\.\.`;/);
@@ -201,7 +216,7 @@ test("the operator packet separates final-candidate, pre-merge, and historical a
 });
 
 test("the operator packet fails closed on contradictory release-evidence mutations", () => {
-  const packet = read("docs", "releases", `OPERATOR-PACKET-v${VERSION}.md`);
+  const packet = read("docs", "releases", "OPERATOR-PACKET-v0.3.0.md");
   const mutations = [
     [
       "duplicate reconciled base",
@@ -236,16 +251,16 @@ test("the operator packet fails closed on contradictory release-evidence mutatio
 
   for (const [name, mutant] of mutations) {
     assert.notEqual(mutant, packet, `${name} mutation did not alter the packet fixture`);
-    assert.throws(() => assertPacketProvenance(mutant), name);
+    assert.throws(() => assertV030PacketProvenance(mutant), name);
   }
 });
 
 test(
-  "the operator packet's final-candidate manifest keeps matching the package membership",
+  "the v0.3.0 operator packet's final-candidate manifest keeps matching the package membership",
   { timeout: 120_000 },
   () => {
-    const packet = read("docs", "releases", `OPERATOR-PACKET-v${VERSION}.md`);
-    assertPacketProvenance(packet);
+    const packet = read("docs", "releases", "OPERATOR-PACKET-v0.3.0.md");
+    assertV030PacketProvenance(packet);
     const packed = currentPackReport();
     const header = /\| Current exact-head dry run \| ([\d,]+) entries \/ ([\d,]+) workflows \|/.exec(packet);
     assert.ok(header, "the operator packet has no parseable current dry-run summary");
