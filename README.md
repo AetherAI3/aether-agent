@@ -19,7 +19,7 @@ and shows you the exit code. Hosted models or your own local Ollama.
 
 <br />
 
-<img width="880" alt="Installing Aether Agent, launching it, then browsing the slash-command help and the model picker" src="assets/aether-agent-demo.gif" />
+<img width="820" alt="Aether Agent starting up, then the slash-command help and the model picker" src="assets/aether-agent-demo.gif" />
 
 <sub>Install → launch → `/help` → `/models`. That's the whole first run.</sub>
 
@@ -31,7 +31,7 @@ and shows you the exit code. Hosted models or your own local Ollama.
 
 ## Quickstart
 
-Three commands, from inside the repository you want it to work on:
+Run these from inside the repository you want Aether to work on:
 
 ```bash
 npm install -g aether-agents@latest --ignore-scripts
@@ -43,9 +43,9 @@ That last line is the whole idea: **one task, one way to prove it worked.**
 Aether makes the edit, your machine runs `npm test`, and the real exit code
 decides whether the run is verified. No exit code, no claim.
 
-Prefer Python tooling? `pipx install aether-agent` installs the same CLI and
-forwards every command to it — `aether-agent code "..."` and `aether code "..."`
-do the same work. See [`packages/pypi-cli`](packages/pypi-cli/README.md).
+Prefer Python? `pipx install aether-agent` installs the same CLI and forwards
+every command to it, so `aether-agent code "..."` and `aether code "..."` do the
+same work. See [`packages/pypi-cli`](packages/pypi-cli/README.md).
 
 ## Pick where the model runs
 
@@ -79,33 +79,31 @@ Once Ollama and the model are downloaded, inference can stay on the machine.
 The default endpoint is loopback; if `OLLAMA_HOST` points elsewhere, prompts go
 there instead. Network tools stay separate and permissioned either way.
 
-## What you get
+## Model catalogue
 
-- **One terminal workflow.** Task, diff, tests, and review in the same place you
-  already work.
-- **Proof instead of vibes.** `--test-cmd` ties "done" to a command and an exit
-  code. Change the repo afterwards and that evidence goes stale on purpose.
-- **Repo-aware tools.** File, search, shell, Git, session, and review tools scoped
-  to the workspace you chose — not your whole machine.
-- **Offline-capable.** A local Ollama endpoint needs no Aether account at all.
-- **Frontier models when you want them.** `aether models` shows exactly what your
-  account can reach.
-- **MCP built in.** Inspect, diagnose, and repair configured MCP servers without
-  stepping around tool permissions.
-- **You hold the keys.** Writes, shell, network, Git, and publishing all sit
-  behind host-side approval.
-
-## Models
-
-`aether models` is the only authoritative answer for your account — the snapshot
-below is a dated catalogue, not an entitlement.
+What your account can actually reach is whatever `aether models` prints while
+you are signed in. The snapshot below is a dated reference, published so the
+list is readable without signing in first.
 
 <!-- MODEL-CATALOGUE:START -->
 A dated, sanitized offline fallback snapshot is available as [HTML](docs/model-catalogue/index.html), [JSON](docs/model-catalogue/catalogue.json), and [Markdown](docs/generated/model-catalogue.md). It was generated at `2026-08-23T00:00:00.000Z` from Cloud public projection `model-catalogue-v1` with verified digest `sha256:80ba3ba1144d301e2cca407ceced74cb2b371f1da6e3982b87305ff12a3d4712`. Listed availability is not an account entitlement; use `aether models` while signed in.
 <!-- MODEL-CATALOGUE:END -->
 
-Local Ollama availability is independent of that catalogue — it's whatever you
-have installed at your configured endpoint.
+Local Ollama is independent of all of it — you get whatever you have installed
+at your configured endpoint.
+
+## What you get
+
+- **One terminal workflow.** Task, diff, tests, and review in the same place you
+  already work.
+- **Proof, not claims.** `--test-cmd` ties "done" to a command and an exit code.
+  Change the repo afterwards and that evidence goes stale on purpose.
+- **Repo-aware tools.** File, search, shell, Git, session, and review tools
+  scoped to the workspace you chose — not your whole machine.
+- **Work you can pick back up.** Sessions are project-scoped: list them, resume
+  one, or hand it off as a redacted bundle.
+- **MCP built in.** Inspect, diagnose, and repair configured MCP servers without
+  stepping around tool permissions.
 
 ## Commands
 
@@ -136,44 +134,47 @@ environment variable, and exit code.
 
 [**Aether Code**](https://app.aethersystems.net/) is the browser surface for the
 same Aether account — one of three apps on the portal, alongside Web Chat and
-Design Lab. Sign in once and pick where you want to work that day.
+Design Lab. Sign in once, then pick where you want to work that day.
 
-The two are deliberately separate products. Aether Agent is a standalone
-open-source CLI: it works with no Aether account at all on the local route, and
-it doesn't claim to hand a session back and forth with the web app.
+Aether Code and Aether Agent are deliberately separate products. The CLI is
+standalone and open source: on the local route it needs no Aether account at
+all, and it makes no claim to hand a session back and forth with the web app.
 
 ### Coming next: live session viewing
 
-Remote viewing — the /rc lane — is the bridge between the two, and it is being
-integrated now. The host lives in
+Remote viewing — /rc — is the bridge between the terminal and the browser, and
+it is being integrated now. The host lives in
 [PR #108](https://github.com/AetherAI3/aether-agent/pull/108) and is **not part
-of 0.3.x**, so nothing below is a command you can run yet. The design, in short:
+of 0.3.x**, so nothing below is something you can run yet. What it will do:
 
 - Starting a session prints a link and a QR code.
 - Your phone or browser **watches** the run. It never gets tool authority.
-- A status view shows what is exposed, and revoking it takes one command.
+- One command shows what is exposed; another revokes it.
 - Outbound TLS only — no inbound listener on your machine.
 - Events are allowlisted and redacted: no environment variables, credentials,
   cookies, private memory, raw file contents, absolute paths, or unredacted
   shell history.
 - If the broker drops, your local session carries on regardless.
 
-Those invariants are release requirements, which is exactly why the lane is
-still open rather than shipped.
+Those are release requirements, not goals — which is why the work is still open
+rather than shipped.
 
 ## What stays on your machine
 
-- File tools are confined to the workspace you selected. Writes, shell, Git,
-  network, and publishing each pass a host-side permission gate.
-- Hosted runs send your task and the context you provide to the Aether API.
-  Repository tools and checks run locally, and the local-authority route fails
-  closed rather than degrading.
-- Ollama prompts go to your configured endpoint — loopback by default.
-- Credentials and session records live outside the repository. Portable handoffs
-  drop transcripts, file contents, shell commands, and absolute paths, but give
-  them a read before you share one.
-- `aether ship` prints its branch, commit, destination, and pull-request plan
-  before it acts. `--yes` on its own is not publication authority.
+- **Files stay in the workspace.** File tools are confined to the workspace you
+  selected, and writes, shell, Git, network, and publishing each pass a
+  host-side permission gate.
+- **Hosted runs send only what you hand over.** Your task and context go to the
+  Aether API; repository tools and checks run in your checkout, and the
+  local-authority route fails closed rather than quietly degrading.
+- **Local runs stay local.** Ollama prompts go to your configured endpoint,
+  which is loopback by default.
+- **Secrets live outside the repository.** So do session records. Portable
+  handoffs drop transcripts, file contents, shell commands, and absolute paths —
+  still give one a read before you share it.
+- **Publishing is never implicit.** `aether ship` prints its branch, commit,
+  destination, and pull-request plan before it acts, and `--yes` on its own is
+  not publication authority.
 
 [SECURITY.md](SECURITY.md) has the supported versions, the full boundary, and
 the private path for reporting a vulnerability.
@@ -222,8 +223,8 @@ npm pack --dry-run
 
 The package has no runtime dependencies — TypeScript and Node types are
 development-only. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull
-request, and check the [architecture and protocol docs](docs/) or
-[production operations](docs/PRODUCTION_OPERATIONS.md) if you're going deeper.
+request, and see the [architecture and protocol docs](docs/) or
+[production operations](docs/PRODUCTION_OPERATIONS.md) if you are going deeper.
 
 ## Help and license
 
