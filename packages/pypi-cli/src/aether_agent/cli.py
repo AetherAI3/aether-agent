@@ -9,9 +9,10 @@ Two rules keep it honest:
 1. Every argument that is not in the ``self`` namespace is forwarded to the real ``aether``
    CLI unchanged, and its exit code is this process's exit code. This launcher never
    reimplements, filters, or renames an agent command.
-2. It installs one known version -- the version of this package -- into a private prefix
-   that needs no administrator rights, unless an ``aether`` is already on PATH, in which
-   case that one is used and nothing is installed behind your back.
+2. It installs the same agent the documented npm route installs -- the ``latest``
+   dist-tag, unless you pin one -- into a private prefix that needs no administrator
+   rights, unless an ``aether`` is already on PATH, in which case that one is used and
+   nothing is installed behind your back.
 
 Zero runtime dependencies: it shells out to ``node`` and ``npm``, which the agent requires
 anyway.
@@ -55,11 +56,19 @@ def _print_error(message: str) -> None:
     print(message, file=sys.stderr)
 
 
+#: What `self install` fetches when nothing is pinned. `latest` rather than this
+#: package's own version on purpose: the agent ships maintenance releases from branches
+#: that never reach main, so a launcher pinned to main's version would quietly install an
+#: older agent than `npm install -g aether-agents@latest` gives. The two install routes
+#: must land on the same agent; pin explicitly when you want a fixed one.
+DEFAULT_NPM_TAG = "latest"
+
+
 def _requested_version() -> str:
-    """The npm version to install: this package's version unless overridden."""
+    """The npm version or dist-tag to install: `latest` unless pinned."""
     override = os.environ.get("AETHER_AGENT_NPM_VERSION", "").strip()
     if not override:
-        return __version__
+        return DEFAULT_NPM_TAG
     if not VERSION_PATTERN.match(override):
         _print_error(f"Invalid AETHER_AGENT_NPM_VERSION: {override}")
         raise SystemExit(2)
@@ -197,6 +206,7 @@ def _cmd_doctor(_: argparse.Namespace) -> int:
         print(f"node           v{node} ({supported})")
     print(f"npm            {'found' if shutil.which('npm') else 'not found'}")
     print(f"install root   {install_root()}")
+    print(f"installs       {NPM_PACKAGE}@{_requested_version()}")
 
     found = resolve_binary()
     if found is None:
@@ -247,7 +257,7 @@ def _self_parser() -> argparse.ArgumentParser:
     installer.add_argument(
         "--npm-version",
         default=None,
-        help=f"npm version to install (default {__version__})",
+        help=f"npm version or dist-tag to install (default {DEFAULT_NPM_TAG})",
     )
     installer.set_defaults(handler=_cmd_install)
 

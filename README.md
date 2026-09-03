@@ -170,7 +170,7 @@ badge or `npm view aether-agents version` for the npm `latest` dist-tag, and
 | Install | Version | What it represents |
 |---|---:|---|
 | npm `latest` | [![npm latest](https://img.shields.io/npm/v/aether-agents?label=&color=14b8a6)](https://www.npmjs.com/package/aether-agents) | Published package; the badge resolves the live dist-tag. |
-| PyPI `aether-agent` | [![PyPI latest](https://img.shields.io/pypi/v/aether-agent?label=&color=3775a9)](https://pypi.org/project/aether-agent/) | Launcher that installs and runs the npm CLI; its version is the agent version it installs. |
+| PyPI `aether-agent` | [![PyPI latest](https://img.shields.io/pypi/v/aether-agent?label=&color=3775a9)](https://pypi.org/project/aether-agent/) | Launcher that installs and runs the npm CLI; it fetches the npm `latest` dist-tag unless you pin one. |
 | `main` source build | **0.3.0** | Current repository source and its 0.3 workflow. |
 
 The [release record](docs/releases/2026-08-22.md),
