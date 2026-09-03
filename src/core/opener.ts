@@ -183,10 +183,52 @@ export function openTarget(target: string, options: OpenOptions = {}): OpenOutco
       detached: true,
       shell: false,
     });
-    // ENOENT (no xdg-open on a minimal container) arrives asynchronously.
+    // This synchronous API only reports whether spawning was attempted. Callers
+    // that need to distinguish a missing launcher from a launched browser must
+    // use openTargetChecked below, which waits for spawn or error.
     child.on("error", () => {});
     child.unref();
     return plan;
+  } catch (err) {
+    return {
+      status: "spawn-error",
+      executable: plan.executable,
+      args: plan.args,
+      detail: err instanceof Error ? err.message : "opener could not be launched",
+    };
+  }
+}
+
+/**
+ * Open a target and wait until the OS launcher either starts or reports its
+ * initial launch failure. This still does not wait for the browser itself:
+ * once the launcher emits `spawn`, it is detached and can outlive the CLI.
+ */
+export async function openTargetChecked(target: string, options: OpenOptions = {}): Promise<OpenOutcome> {
+  const plan = planOpen(target, options);
+  if (plan.status !== "spawned") return plan;
+
+  const launcher = options.spawnFn ?? spawn;
+  try {
+    const child = launcher(plan.executable!, [...plan.args!], {
+      stdio: "ignore",
+      detached: true,
+      shell: false,
+    });
+    return await new Promise<OpenOutcome>((resolve) => {
+      child.once("error", (err) => {
+        resolve({
+          status: "spawn-error",
+          executable: plan.executable,
+          args: plan.args,
+          detail: err instanceof Error ? err.message : "opener could not be launched",
+        });
+      });
+      child.once("spawn", () => {
+        child.unref();
+        resolve(plan);
+      });
+    });
   } catch (err) {
     return {
       status: "spawn-error",

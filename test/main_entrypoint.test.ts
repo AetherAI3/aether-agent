@@ -2,7 +2,20 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { isMainInvocation } from "../src/main.js";
+import { isMainInvocation, MINIMUM_NODE_MAJOR, unsupportedNodeMessage } from "../src/main.js";
+
+test("unsupported Node versions provide one copyable recovery path", () => {
+  assert.equal(MINIMUM_NODE_MAJOR, 24);
+  assert.equal(unsupportedNodeMessage("24.0.0"), null);
+  assert.equal(unsupportedNodeMessage("v26.1.0"), null);
+  for (const version of ["23.9.0", "v20.0.0", "", "not-a-version"]) {
+    const message = unsupportedNodeMessage(version);
+    assert.ok(message);
+    assert.match(message, /requires Node\.js >= 24/);
+    assert.match(message, /reopen your terminal.*aether --version/s);
+    assert.match(message, /nodejs\.org\/en\/download/);
+  }
+});
 
 test("installed npm bin symlink is recognized as the CLI entrypoint", () => {
   const shim = resolve("virtual", "bin", "aether");

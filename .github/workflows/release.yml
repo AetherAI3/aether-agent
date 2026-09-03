@@ -31,11 +31,22 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify release commit belongs to main
+      - name: Verify release commit belongs to a trusted release line
         shell: bash
         run: |
-          git fetch --no-tags origin main
-          git merge-base --is-ancestor HEAD origin/main
+          git fetch --no-tags origin main release/0.3
+
+          if git merge-base --is-ancestor HEAD origin/main; then
+            exit 0
+          fi
+
+          if [[ "$RELEASE_TAG" =~ ^v0\.3\.[0-9]+$ ]] && \
+             test "$(git rev-parse HEAD)" = "$(git rev-parse origin/release/0.3)"; then
+            exit 0
+          fi
+
+          echo "Release commit is not on main or the exact v0.3 maintenance head" >&2
+          exit 1
 
       - name: Set up Node.js and npm registry
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

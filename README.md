@@ -18,7 +18,7 @@
 
 <!-- SOURCE-0.3-WORKFLOWS:START -->
 
-> **Requires 0.3.0 or newer.** Check the installed CLI with `aether --version`.
+> **Requires 0.3.2 or newer.** Check the installed CLI with `aether --version`.
 
 ## Quickstart
 
@@ -171,7 +171,7 @@ badge or `npm view aether-agents version` for the npm `latest` dist-tag, and
 |---|---:|---|
 | npm `latest` | [![npm latest](https://img.shields.io/npm/v/aether-agents?label=&color=14b8a6)](https://www.npmjs.com/package/aether-agents) | Published package; the badge resolves the live dist-tag. |
 | PyPI `aether-agent` | [![PyPI latest](https://img.shields.io/pypi/v/aether-agent?label=&color=3775a9)](https://pypi.org/project/aether-agent/) | Launcher that installs and runs the npm CLI; it fetches the npm `latest` dist-tag unless you pin one. |
-| `main` source build | **0.3.0** | Current repository source and its 0.3 workflow. |
+| `main` source build | **0.3.2** | Current repository source: the 0.3 workflow plus every 0.3.1 maintenance fix. |
 
 The [release record](docs/releases/2026-08-22.md),
 [release notes](RELEASE_NOTES.md), and

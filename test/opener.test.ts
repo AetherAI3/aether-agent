@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import {
   isAllowedUrl,
   looksLikeUrl,
   openTarget,
+  openTargetChecked,
   planOpen,
   resolveOpenCommand,
 } from "../src/core/opener.js";
@@ -226,6 +228,20 @@ test("a spawn failure is reported, not thrown", () => {
   });
   assert.equal(outcome.status, "spawn-error");
   assert.match(outcome.detail, /ENOENT/);
+});
+
+test("openTargetChecked reports a real asynchronous ENOENT from a missing Linux launcher", async () => {
+  const outcome = await openTargetChecked("https://example.invalid/device", {
+    platform: "linux",
+    env: DESKTOP_ENV,
+    // Keep the production xdg-open selection, but replace this test process's
+    // executable with one guaranteed not to exist so Node emits the real async
+    // ENOENT path rather than a synthetic thrown error.
+    spawnFn: ((_: string, args: readonly string[], options: Record<string, unknown>) =>
+      spawn("aether-test-missing-xdg-open", [...args], options as Parameters<typeof spawn>[2])) as never,
+  });
+  assert.equal(outcome.status, "spawn-error");
+  assert.match(outcome.detail, /ENOENT|not found/i);
 });
 
 test("planOpen validates without launching so doctor can report read-only", () => {
