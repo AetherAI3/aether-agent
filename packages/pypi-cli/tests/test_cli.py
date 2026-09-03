@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from aether_agent import NPM_PACKAGE, __version__, cli
+from aether_agent import NPM_PACKAGE, cli
 
 AETHER = Path("/bin/aether")
 MANAGED = Path("/managed/aether")
@@ -36,11 +36,14 @@ class TestInstallRoot(unittest.TestCase):
 
 
 class TestRequestedVersion(unittest.TestCase):
-    def test_defaults_to_this_package_version(self) -> None:
+    def test_defaults_to_the_npm_latest_dist_tag(self) -> None:
+        # Not this package's version: the agent ships maintenance releases from branches
+        # that never reach main, so pinning to main's version would install an older agent
+        # than the documented `npm install -g aether-agents@latest` route.
         with mock.patch.dict(
             "os.environ", {"AETHER_AGENT_NPM_VERSION": ""}, clear=False
         ):
-            self.assertEqual(cli._requested_version(), __version__)
+            self.assertEqual(cli._requested_version(), "latest")
 
     def test_accepts_an_explicit_override(self) -> None:
         with mock.patch.dict(
@@ -148,7 +151,7 @@ class TestForwarding(unittest.TestCase):
 
 
 class TestSelfNamespace(unittest.TestCase):
-    def test_install_pins_the_version_this_launcher_declares(self) -> None:
+    def test_install_targets_the_same_agent_as_the_npm_route(self) -> None:
         with (
             mock.patch.object(cli, "_require_supported_node"),
             mock.patch.object(cli, "_require", return_value="npm"),
@@ -163,7 +166,7 @@ class TestSelfNamespace(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertEqual(command[:2], ["npm", "install"])
         self.assertIn("--ignore-scripts", command)
-        self.assertEqual(command[-1], f"{NPM_PACKAGE}@{__version__}")
+        self.assertEqual(command[-1], f"{NPM_PACKAGE}@{cli.DEFAULT_NPM_TAG}")
 
     def test_install_accepts_an_explicit_npm_version(self) -> None:
         with (

@@ -23,10 +23,12 @@ Requires **Node 24+** on PATH (the agent's own requirement) and Python 3.10+.
   `aether` CLI unchanged, and its exit code becomes this process's exit code. `aether-agent code`,
   `aether-agent doctor`, `aether-agent sessions`, and the slash commands inside the REPL all behave
   exactly as documented in [`COMMANDS.md`](https://github.com/AetherAI3/aether-agent/blob/main/COMMANDS.md).
-- **Installs one known version.** The version of this package *is* the version of the agent it
-  installs, so `pipx install aether-agent==0.3.0` gets you agent `0.3.0`. Installation goes into a
-  private prefix under your own data directory, with `--ignore-scripts`, so it needs no
-  administrator rights and runs no package lifecycle scripts.
+- **Installs the same agent the npm route does.** By default it fetches the npm `latest`
+  dist-tag, so `pipx install aether-agent` and `npm install -g aether-agents@latest` land on the
+  same agent. Pin a specific one with `self install --npm-version 0.3.1` or
+  `AETHER_AGENT_NPM_VERSION`. Installation goes into a private prefix under your own data
+  directory, with `--ignore-scripts`, so it needs no administrator rights and runs no package
+  lifecycle scripts.
 - **Defers to an agent you already have.** If `aether` is already on PATH, that is the one it runs.
   It never installs a second copy behind your back.
 - **Adds no dependencies.** It shells out to `node` and `npm`, which the agent requires anyway.
@@ -38,20 +40,24 @@ is the agent's, `aether-agent self doctor` is the launcher's.
 
 ```bash
 aether-agent self install              # install or update the agent CLI
-aether-agent self install --npm-version 0.2.1
+aether-agent self install --npm-version 0.3.1
 aether-agent self doctor               # node, npm, install root, and which aether would run
 aether-agent self path                 # print that binary's path
 aether-agent self uninstall            # remove only what this launcher installed
 ```
 
-`self install` is optional: the first forwarded command installs the agent if it is missing.
+`self install` is optional: the first forwarded command installs the agent if it is missing. Run
+it again later to update to the current `latest`.
+
+This package's own version tracks the repository's `main`, so the launcher and the agent release
+together; it is not the version installed. `aether-agent self doctor` prints both.
 
 ## Environment
 
 | Variable | Effect |
 | --- | --- |
 | `AETHER_AGENT_HOME` | Where the launcher keeps its private npm prefix. Defaults to `$XDG_DATA_HOME/aether-agent` (`%LOCALAPPDATA%\aether-agent` on Windows). |
-| `AETHER_AGENT_NPM_VERSION` | Install a different version of `aether-agents` than this package declares. Validated before use. |
+| `AETHER_AGENT_NPM_VERSION` | Pin the version or dist-tag of `aether-agents` to install, instead of `latest`. Validated before use. |
 
 The agent's own variables — `AETHER_API_KEY`, `OLLAMA_HOST`, and the rest — are read by the agent,
 not by this launcher, and are documented in
