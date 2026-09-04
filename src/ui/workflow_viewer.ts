@@ -2,6 +2,9 @@ import type { BrainEvent } from "../core/brain_protocol.js";
 import { titledBox, theme } from "./box.js";
 import { humanTokens } from "./statusbar.js";
 import { formatElapsed } from "./elapsed.js";
+import { sanitizeTerm } from "./text.js";
+
+const safeInline = (value: string): string => sanitizeTerm(value).replace(/[\r\n\t]+/g, " ");
 
 export interface AgentEntry {
   id: string;
@@ -61,10 +64,10 @@ export function applyViewerFrame(
       return {
         ...state,
         visible: true,
-        workflowId: frame.workflowId,
+        workflowId: safeInline(frame.workflowId),
         phases: frame.phases.map((p) => ({
           n: p.n,
-          type: p.type,
+          type: safeInline(p.type),
           agentCount: p.agents,
           status: "waiting" as const,
           artifactSummary: null,
@@ -88,7 +91,7 @@ export function applyViewerFrame(
         ...state,
         phases: state.phases.map((p) =>
           p.n === frame.phaseN
-            ? { ...p, status: "done" as const, artifactSummary: frame.artifactSummary }
+            ? { ...p, status: "done" as const, artifactSummary: safeInline(frame.artifactSummary) }
             : p
         ),
       };
@@ -99,9 +102,9 @@ export function applyViewerFrame(
         agents: [
           ...state.agents,
           {
-            id: frame.agentId,
+            id: safeInline(frame.agentId),
             phaseN: frame.phaseN,
-            brief: frame.brief,
+            brief: safeInline(frame.brief),
             status: "running" as const,
             feed: "",
             summary: null,
@@ -117,7 +120,7 @@ export function applyViewerFrame(
       return {
         ...state,
         agents: state.agents.map((a) =>
-          a.id === frame.agentId ? { ...a, feed: a.feed + frame.delta } : a
+          a.id === safeInline(frame.agentId) ? { ...a, feed: a.feed + sanitizeTerm(frame.delta) } : a
         ),
       };
 
@@ -125,11 +128,11 @@ export function applyViewerFrame(
       return {
         ...state,
         agents: state.agents.map((a) =>
-          a.id === frame.agentId
+          a.id === safeInline(frame.agentId)
             ? {
                 ...a,
                 status: "done" as const,
-                summary: frame.summary,
+                summary: safeInline(frame.summary),
                 tokens: frame.tokens ?? a.tokens,
                 toolCalls: frame.toolCalls ?? a.toolCalls,
                 durationMs: frame.durationMs ?? a.durationMs,
@@ -274,7 +277,7 @@ export function renderAgentFeed(state: WorkflowViewerState): string {
   if (!state.selectedAgentId) return "";
   const agent = state.agents.find((a) => a.id === state.selectedAgentId);
   if (!agent) return "";
-  return `=== ${agent.id} — ${agent.brief} ===\n\n${agent.feed}`;
+  return `=== ${safeInline(agent.id)} — ${safeInline(agent.brief)} ===\n\n${sanitizeTerm(agent.feed)}`;
 }
 
 /** Clear sequence for repainting the popout in place: cursor-up + clear-line

@@ -44,6 +44,28 @@ export class StreamTimeoutError extends Error {
   }
 }
 
+/** A peer sent one SSE event without a delimiter beyond the decoder's cap. */
+export class StreamEventTooLargeError extends Error {
+  constructor(public maxBytes: number) {
+    super(
+      `stream event exceeded the ${maxBytes}-byte safety limit; ` +
+        "the request was cancelled and the prompt is safe to retry",
+    );
+    this.name = "StreamEventTooLargeError";
+  }
+}
+
+/** The connection remained alive, but only cosmetic keepalives arrived. */
+export class MeaningfulProgressTimeoutError extends StreamTimeoutError {
+  constructor(timeoutMs: number) {
+    super(timeoutMs);
+    this.name = "MeaningfulProgressTimeoutError";
+    this.message =
+      `turn stalled after ${Math.round(timeoutMs / 1000)}s with no meaningful progress; ` +
+      "the request was cancelled, your prompt is safe to retry, and `aether doctor` can inspect connectivity";
+  }
+}
+
 /**
  * A chat/agent SSE stream ended (the underlying byte stream closed normally,
  * no throw) without ever delivering a terminal `done` or `error` frame.
@@ -177,6 +199,7 @@ export function httpStatusHint(status: number): string | null {
  */
 export function nonHttpErrorHint(err: unknown): string | null {
   if (err instanceof MalformedResponseError) return "retry, or /doctor to check connectivity";
+  if (err instanceof StreamEventTooLargeError) return "retry, or /doctor to inspect the server stream";
   if (err instanceof StreamTimeoutError) return "the stream went quiet - retry, or /doctor to check connectivity";
   if (err instanceof StreamIncompleteError) return "retry, or /doctor to check connectivity";
   if (err instanceof RequestTimeoutError) return "the request went quiet - retry, or /doctor to check connectivity";

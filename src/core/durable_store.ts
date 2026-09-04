@@ -220,6 +220,25 @@ export interface AtomicWriteOptions {
 }
 
 let tmpCounter = 0;
+const RENAME_RETRY_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
+const RENAME_RETRY_WAIT = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+
+/** Windows can transiently deny an atomic replace while Defender/indexing has
+ * just opened the destination. A bounded retry preserves the same-volume
+ * rename contract without turning that platform race into a lost generation.
+ * Permanent permission failures still surface after at most 75 ms. */
+function renameAtomicWithRetry(from: string, to: string): void {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      renameSync(from, to);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? "";
+      if (attempt >= 5 || !RENAME_RETRY_CODES.has(code)) throw error;
+      Atomics.wait(RENAME_RETRY_WAIT, 0, 0, 5 * (attempt + 1));
+    }
+  }
+}
 
 function baseName(path: string): string {
   const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
@@ -269,11 +288,11 @@ export function atomicWriteFile(
       const backupTmp = options.backupPath + ".tmp";
       copyFileSync(path, backupTmp);
       fsyncPath(backupTmp, "r+");
-      renameSync(backupTmp, options.backupPath);
+      renameAtomicWithRetry(backupTmp, options.backupPath);
       fault("after-backup");
     }
     fault("before-rename");
-    renameSync(tmp, path);
+    renameAtomicWithRetry(tmp, path);
     fault("after-rename");
     fsyncPath(dir, "r");
   } catch (err) {

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   LineBuffer,
   encodeCommand,
+  MAX_MONOLOGUE_DEPTH,
   parseEventLine,
   PROTOCOL_VERSION,
   TOOLS,
@@ -27,6 +28,39 @@ const FIXTURE = join(REPO_ROOT, "test", "fixtures", "bridge_conformance.json");
 test("decodeEvent maps snake_case wire keys to camelCase", () => {
   const ev = parseEventLine('{"type":"status","phase":"grounding","pool_used":100,"pool_cap":500}');
   assert.deepEqual(ev, { type: "status", phase: "grounding", poolUsed: 100, poolCap: 500 });
+});
+
+test("decodeEvent normalizes hostile numeric fields before they reach renderers", () => {
+  assert.deepEqual(parseEventLine('{"type":"monologue","text":"x","depth":"Infinity"}'), {
+    type: "monologue",
+    text: "x",
+    depth: 0,
+  });
+  assert.deepEqual(parseEventLine('{"type":"monologue","text":"x","depth":-99}'), {
+    type: "monologue",
+    text: "x",
+    depth: 0,
+  });
+  assert.deepEqual(parseEventLine('{"type":"monologue","text":"x","depth":1e308}'), {
+    type: "monologue",
+    text: "x",
+    depth: MAX_MONOLOGUE_DEPTH,
+  });
+  assert.deepEqual(
+    parseEventLine('{"type":"status","phase":"x","pool_used":-1,"pool_cap":"NaN"}'),
+    { type: "status", phase: "x", poolUsed: 0, poolCap: 0 },
+  );
+  assert.deepEqual(
+    parseEventLine(
+      '{"type":"workflow_start","workflow_id":"w","phases":[{"n":"Infinity","type":"run","agents":-3}],"total_agents":"NaN"}',
+    ),
+    {
+      type: "workflow_start",
+      workflowId: "w",
+      phases: [{ n: 0, type: "run", agents: 0 }],
+      totalAgents: 0,
+    },
+  );
 });
 
 test("decodeEvent reads the skill event", () => {

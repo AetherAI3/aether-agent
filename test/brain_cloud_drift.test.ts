@@ -326,3 +326,47 @@ test("`aether agent` against a server with dev sessions disabled exits 3 and mak
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("JSON `aether agent` appends one parseable failed turn outcome after fatal routing drift", async () => {
+  const { fetchImpl, calls } = refusingServer(403, "agent dev sessions disabled");
+  const dir = mkdtempSync(join(tmpdir(), "aether-drift-json-"));
+  const prompt = "private prompt must not be copied into the outcome";
+  const ctx = {
+    cfg: { backend: "cloud", permissionMode: "ask" },
+    api: new ApiClient("https://stub.test", tokens),
+    tokens,
+    confirm: async () => false,
+    flags: { json: true, audit: false, yes: false, cwd: dir, model: "kimi_k3" },
+  } as unknown as AppContext;
+  const origErr = process.stderr.write.bind(process.stderr);
+  const origOut = process.stdout.write.bind(process.stdout);
+  let stdout = "";
+  process.stderr.write = (() => true) as typeof process.stderr.write;
+  process.stdout.write = ((chunk: unknown) => ((stdout += String(chunk)), true)) as typeof process.stdout.write;
+  try {
+    const code = await withFetch(fetchImpl, () =>
+      cmdCode(ctx, prompt, {
+        local: false,
+        pool: 5,
+        quiet: true,
+        noLog: true,
+      }),
+    );
+    assert.equal(code, EXIT_ROUTING_REFUSED);
+    assert.ok(!calls.some((call) => call.url.includes("/agent/chat/stream")));
+    const records = stdout.trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert.equal(records[0]?.["kind"], "routing_drift");
+    const outcome = records.at(-1);
+    assert.equal(outcome?.["protocol"], "aether.turn/1");
+    assert.equal(outcome?.["type"], "turn_outcome");
+    assert.equal(outcome?.["state"], "failed");
+    assert.equal(outcome?.["prompt_preserved"], true);
+    assert.equal("prompt" in (outcome ?? {}), false);
+    assert.equal(JSON.stringify(outcome).includes(prompt), false);
+    assert.equal(records.filter((record) => record["type"] === "turn_outcome").length, 1);
+  } finally {
+    process.stderr.write = origErr;
+    process.stdout.write = origOut;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

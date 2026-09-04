@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "contractId": "aether.voice.portable.v1",
+  "upstream": {
+    "repository": "AetherAI3/AETHER-CLOUD",
+    "path": "contracts/voice/v1/portable-voice.json",
+    "commitSha": "f91d677ece3c76c21a09db071ce796c5b2e8c6ea",
+    "canonicalSha256": "6e801c40080e7b360fd33bdeb7bb679124a49a91619e92e56db543bb0a5c8ffe"
+  },
+  "authority": {
+    "types": "site/lib/voice/types.ts",
+    "machine": "site/lib/voice/machine.ts",
+    "session": "site/lib/voice/session.ts",
+    "playback": "site/lib/voice/playback.ts",
+    "hints": "site/lib/voice/hints.ts",
+    "telemetry": "site/lib/voice/telemetry.ts",
+    "transcribeRoute": "api/routes/agent_core_routes.py",
+    "speakRoute": "api/routes/agent_voice_routes.py"
+  },
+  "lifecycle": {
+    "states": [
+      "idle",
+      "connecting",
+      "listening",
+      "user_speaking",
+      "processing",
+      "thinking",
+      "speaking",
+      "interrupted",
+      "error"
+    ],
+    "modes": ["idle", "conversation", "push"],
+    "startModes": ["conversation", "push"],
+    "errorKinds": [
+      "gated",
+      "mic_denied",
+      "mic_lost",
+      "stt_failed",
+      "tts_failed",
+      "agent_failed",
+      "disconnected",
+      "unsupported"
+    ],
+    "recoverableErrors": [
+      "stt_failed",
+      "tts_failed",
+      "agent_failed",
+      "disconnected"
+    ],
+    "terminalErrors": ["gated", "mic_denied", "mic_lost", "unsupported"],
+    "turnDoneStateByMode": {
+      "conversation": "listening",
+      "push": "idle"
+    },
+    "bargeInFrom": ["thinking", "speaking"],
+    "bargeInState": "interrupted"
+  },
+  "ports": {
+    "capture": "MicSource",
+    "captureHandle": "MicHandle",
+    "recognition": "SpeechRecognitionProvider",
+    "synthesis": "VoiceSynthesisProvider",
+    "agent": "AgentBridge",
+    "playback": "SpeechQueue"
+  },
+  "routes": {
+    "transcribe": {
+      "method": "POST",
+      "path": "/agent/transcribe",
+      "requestMediaType": "multipart/form-data",
+      "requestFields": ["audio", "duration_s", "hints"],
+      "successMediaType": "application/json",
+      "successBodyRequired": ["text"],
+      "gatedStatuses": [401, 402],
+      "providerFailureStatus": 502
+    },
+    "speak": {
+      "method": "POST",
+      "path": "/agent/voice/speak",
+      "requestMediaType": "application/json",
+      "requestFields": ["text", "voice", "purpose"],
+      "successMediaType": "audio/*",
+      "successHeaders": ["X-Aether-Voice-Model", "Cache-Control"],
+      "gatedStatuses": [401, 402],
+      "synthesisUnavailableStatus": 503,
+      "synthesisUnavailableDisposition": "degrade_speech_only"
+    }
+  },
+  "playbackQueue": {
+    "sequenceOrigin": 0,
+    "allocation": "after_speakable_filter",
+    "allocatedSequenceOutcomes": ["enqueue", "skip", "cancel"],
+    "ordering": "strict"
+  },
+  "privacy": {
+    "captureRequiresExplicitStart": true,
+    "rawAudioPersistence": "forbidden",
+    "telemetryContent": "metadata_only_no_audio_or_transcript",
+    "ttsCacheControl": "no-store",
+    "hintTermLimit": 48,
+    "serializedHintCharacterLimit": 900,
+    "browserPartials": {
+      "mayStreamAudioToBrowserProvider": true,
+      "optOutEnvironmentVariable": "NEXT_PUBLIC_VOICE_BROWSER_PARTIALS",
+      "disabledValue": "0"
+    }
+  }
+}

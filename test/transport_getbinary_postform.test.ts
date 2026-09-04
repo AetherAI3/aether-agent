@@ -231,3 +231,59 @@ test("postForm: an explicit timeoutMs override widens the bound past a short def
     restore();
   }
 });
+
+test("postForm: timeout also bounds a successful JSON body after response headers", async () => {
+  const restore = mockFetch((async () => new Response(
+    new ReadableStream<Uint8Array>(),
+    { status: 200, headers: { "content-type": "application/json" } },
+  )) as typeof fetch);
+  try {
+    const api = new ApiClient("https://api.example", new StaticTokenStore("sess_abc"));
+    await assert.rejects(
+      () => api.postForm("/vault/spaces/upload", new FormData(), undefined, 5),
+      (err: unknown) => err instanceof RequestTimeoutError,
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("postJsonBinary: a quiet successful audio body is bounded after headers", async () => {
+  const restore = mockFetch((async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(enc.encode("audio-prefix"));
+      },
+    });
+    return new Response(body, { status: 200, headers: { "content-type": "audio/wav" } });
+  }) as typeof fetch);
+  try {
+    const api = new ApiClient("https://api.example", new StaticTokenStore("sess_abc"));
+    const response = await api.postJsonBinary("/agent/voice/speak", { text: "hello" }, undefined, 5);
+    assert.ok(response.body);
+    const iterator = (response.body as unknown as AsyncIterable<Uint8Array>)[Symbol.asyncIterator]();
+    assert.equal((await iterator.next()).done, false);
+    await assert.rejects(
+      () => iterator.next(),
+      (err: unknown) => err instanceof StreamTimeoutError,
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("postJsonBinary: timeout covers a non-2xx JSON error body after headers", async () => {
+  const restore = mockFetch((async () => new Response(
+    new ReadableStream<Uint8Array>(),
+    { status: 503, headers: { "content-type": "application/json" } },
+  )) as typeof fetch);
+  try {
+    const api = new ApiClient("https://api.example", new StaticTokenStore("sess_abc"));
+    await assert.rejects(
+      () => api.postJsonBinary("/agent/voice/speak", { text: "hello" }, undefined, 5),
+      (err: unknown) => err instanceof RequestTimeoutError,
+    );
+  } finally {
+    restore();
+  }
+});

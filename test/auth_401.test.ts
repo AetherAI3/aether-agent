@@ -254,6 +254,97 @@ test("ApiClient: a straggler 401 after a concurrent rotation retries with the NE
   }
 });
 
+test("ApiClient: cancelling the sole 401 waiter aborts refresh and prevents a late token mutation or retry", async () => {
+  const real = globalThis.fetch;
+  const calls: Call[] = [];
+  const updates: string[] = [];
+  let releaseRefresh: (() => void) | undefined;
+  let announceRefresh: (() => void) | undefined;
+  const refreshStarted = new Promise<void>((resolve) => { announceRefresh = resolve; });
+  const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+  const store: import("../src/core/auth.js").TokenStore = {
+    async get() { return updates.at(-1) ?? "sess_old"; },
+    async set(token) { updates.push(token); },
+    async update(token) { updates.push(token); },
+    async clear() {},
+  };
+  globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+    const target = String(url);
+    calls.push({ url: target, init: init ?? {} });
+    if (target.endsWith("/auth/refresh")) {
+      announceRefresh?.();
+      // Deliberately ignore init.signal: the transport still must prevent this
+      // late provider completion from rotating credentials after cancellation.
+      await refreshGate;
+      return jsonRes(200, { session_token: "sess_new" });
+    }
+    return jsonRes(401, { detail: "expired" });
+  }) as typeof globalThis.fetch;
+  try {
+    const api = new ApiClient("https://api.example", store);
+    const controller = new AbortController();
+    const pending = api.getJson("/models", controller.signal, 1_000);
+    await refreshStarted;
+    controller.abort();
+    await assert.rejects(pending, (error: unknown) => (error as Error).name === "AbortError");
+    assert.equal(calls.length, 2, "one request and one refresh; cancelled demand never retries");
+    assert.deepEqual(updates, [], "cancelled refresh cannot update the active token");
+    releaseRefresh?.();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.deepEqual(updates, [], "ignored late refresh completion remains mutation-free");
+    assert.equal(calls.length, 2);
+  } finally {
+    releaseRefresh?.();
+    globalThis.fetch = real;
+  }
+});
+
+test("ApiClient: one cancelled 401 waiter does not abort a shared refresh needed by another request", async () => {
+  const real = globalThis.fetch;
+  let token = "sess_old";
+  let oldRequests = 0;
+  let refreshRequests = 0;
+  let releaseRefresh: (() => void) | undefined;
+  let announceBothOld: (() => void) | undefined;
+  const bothOld = new Promise<void>((resolve) => { announceBothOld = resolve; });
+  const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+  const store: import("../src/core/auth.js").TokenStore = {
+    async get() { return token; },
+    async set(next) { token = next; },
+    async update(next) { token = next; },
+    async clear() {},
+  };
+  globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+    const target = String(url);
+    if (target.endsWith("/auth/refresh")) {
+      refreshRequests += 1;
+      await refreshGate;
+      return jsonRes(200, { session_token: "sess_new" });
+    }
+    if (bearer(init ?? {}) === "Bearer sess_new") return jsonRes(200, { ok: true });
+    oldRequests += 1;
+    if (oldRequests === 2) announceBothOld?.();
+    return jsonRes(401, { detail: "expired" });
+  }) as typeof globalThis.fetch;
+  try {
+    const api = new ApiClient("https://api.example", store);
+    const firstController = new AbortController();
+    const first = api.getJson("/models", firstController.signal, 1_000);
+    const second = api.getJson<{ ok: boolean }>("/models", undefined, 1_000);
+    await bothOld;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    firstController.abort();
+    await assert.rejects(first, (error: unknown) => (error as Error).name === "AbortError");
+    releaseRefresh?.();
+    assert.deepEqual(await second, { ok: true });
+    assert.equal(refreshRequests, 1, "both 401s share one refresh flight");
+    assert.equal(token, "sess_new");
+  } finally {
+    releaseRefresh?.();
+    globalThis.fetch = real;
+  }
+});
+
 test("EnvOverrideTokenStore: update() (auto-refresh) swaps the active token WITHOUT touching disk", () =>
   withTempConfigDir(async () => {
     const disk = new FileTokenStore();

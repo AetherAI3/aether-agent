@@ -74,6 +74,39 @@ test("pollUntilConnected times out", async () => {
   );
 });
 
+test("pollUntilConnected cancellation interrupts a provider sleep that ignores cancellation", async () => {
+  const api = { async getJson() { return []; }, async postJson() { return {}; } } as unknown as ApiClient;
+  const c = new McpClient(api);
+  const controller = new AbortController();
+  const polling = c.pollUntilConnected(
+    "fal.ai",
+    async () => new Promise<void>(() => {}),
+    { signal: controller.signal, timeoutSec: 180 },
+  );
+  controller.abort();
+  await assert.rejects(polling, (error: unknown) => {
+    assert.equal((error as Error).name, "AbortError");
+    return true;
+  });
+});
+
+test("broker calls forward the cancellation signal and timeout to ApiClient", async () => {
+  let receivedSignal: AbortSignal | undefined;
+  let receivedTimeout: number | undefined;
+  const api = {
+    async getJson(_path: string, signal?: AbortSignal, timeoutMs?: number) {
+      receivedSignal = signal;
+      receivedTimeout = timeoutMs;
+      return [];
+    },
+    async postJson() { return {}; },
+  } as unknown as ApiClient;
+  const controller = new AbortController();
+  await new McpClient(api).listProviders({ signal: controller.signal, timeoutMs: 321 });
+  assert.equal(receivedSignal, controller.signal);
+  assert.equal(receivedTimeout, 321);
+});
+
 test("broker-absent backend rejects (404 propagates)", async () => {
   const api = fakeApi({});
   const c = new McpClient(api);

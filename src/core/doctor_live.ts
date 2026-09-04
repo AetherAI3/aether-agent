@@ -37,6 +37,10 @@ import { appendCustody, readCustodyLog } from "./custody.js";
 import { McpClient } from "./mcp.js";
 import { LocalMcpStore } from "./mcp_store.js";
 import { bounded } from "./mcp_diagnostics.js";
+import {
+  McpOperationSupervisor,
+  McpOperationTimeoutError,
+} from "./mcp_lifecycle.js";
 import { openTarget, type OpenOptions } from "./opener.js";
 import { defaultRunner, ghAuthStatus, type Runner } from "./worktree.js";
 import {
@@ -795,14 +799,19 @@ async function mcpProbe(
   const probe = { id: "mcp.broker", category: "mcp", title: "MCP broker" };
   const registered = store.inspect().servers.length;
   const started = Date.now();
+  const supervisor = new McpOperationSupervisor();
   try {
     // Two calls, because a provider being *known* is not the same as it being
     // *connected*: listProviders is the catalogue, listConnections is the
     // subset this account has actually linked.
-    const [providers, connections] = await Promise.all([
-      bounded(client.listProviders(), timeoutMs),
-      bounded(client.listConnections(), timeoutMs),
-    ]);
+    const [providers, connections] = await supervisor.run(
+      "doctor broker discovery",
+      (signal) => Promise.all([
+        client.listProviders({ signal, timeoutMs }),
+        client.listConnections({ signal, timeoutMs }),
+      ]),
+      { timeoutMs },
+    );
     const linked = new Set(connections.map((c) => c.provider_id));
     const connected = providers.filter((p) => linked.has(p.provider_id));
     const reachable = axis("yes", {
@@ -823,9 +832,10 @@ async function mcpProbe(
       });
     }
 
-    const tools = (await bounded(
-      client.listTools(connected[0]!.provider_id),
-      timeoutMs,
+    const tools = (await supervisor.run(
+      "doctor broker tool catalog",
+      (signal) => client.listTools(connected[0]!.provider_id, { signal, timeoutMs }),
+      { timeoutMs },
     )) as DoctorSafeTool[];
     const safe = pickDoctorSafeTool(tools);
     if (!safe) {
@@ -842,19 +852,26 @@ async function mcpProbe(
     return check(probe, {
       configured: axis("yes"),
       reachable,
-      verified: axis("yes", {
-        checkedAt: new Date().toISOString(),
-        evidence: `invoked declared readOnly + doctorSafe tool ${safe}`,
-      }),
+      verified: notChecked(
+        `tool ${safe} is declared readOnly + doctorSafe, but this client exposes no ` +
+          "doctor-safe invocation route; listing a tool is not execution proof",
+      ),
       severity: "info",
     });
   } catch (err) {
     return check(probe, {
       configured: axis(registered ? "yes" : "unknown"),
-      reachable: axis("no", { checkedAt: new Date().toISOString(), evidence: message(err) }),
+      reachable: axis("no", {
+        checkedAt: new Date().toISOString(),
+        evidence: err instanceof McpOperationTimeoutError
+          ? err.message
+          : "broker probe failed; run `aether mcp doctor` for redacted diagnostics",
+      }),
       verified: axis("no"),
       severity: "warning",
     });
+  } finally {
+    supervisor.dispose();
   }
 }
 

@@ -144,9 +144,18 @@ export interface StreamOptions {
   method?: "POST" | "GET";
 }
 
+interface RefreshFlight {
+  readonly usedToken: string;
+  readonly controller: AbortController;
+  promise: Promise<boolean>;
+  waiters: number;
+  settled: boolean;
+  committing: boolean;
+}
+
 export class ApiClient {
   /** In-flight refresh, shared so concurrent 401s trigger ONE /auth/refresh. */
-  private refreshing: Promise<boolean> | null = null;
+  private refreshing: RefreshFlight | null = null;
 
   constructor(
     private readonly baseUrl: string,
@@ -161,7 +170,12 @@ export class ApiClient {
    * route itself (no recursion), or a refresh that fails for any reason — so
    * the ORIGINAL 401 is what surfaces to the user.
    */
-  private async refreshSession(failedPath: string, usedToken: string | null): Promise<boolean> {
+  private async refreshSession(
+    failedPath: string,
+    usedToken: string | null,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    throwIfAborted(signal);
     if (failedPath.startsWith("/auth/")) return false;
     if (!usedToken || isApiKeyToken(usedToken)) return false;
     // Same fail-closed rule as authHeaders(): never POST a session token over
@@ -172,43 +186,82 @@ export class ApiClient {
     // rotation-detecting servers that would invalidate the just-minted token.
     // Just signal "retry with the new token".
     const current = await this.tokens.get();
+    throwIfAborted(signal);
     if (current !== usedToken) return current != null;
-    this.refreshing ??= (async () => {
+
+    let flight = this.refreshing;
+    if (!flight || flight.usedToken !== usedToken) {
+      const controller = new AbortController();
+      flight = {
+        usedToken,
+        controller,
+        promise: Promise.resolve(false),
+        waiters: 0,
+        settled: false,
+        committing: false,
+      };
+      const owned = flight;
+      owned.promise = this.runSessionRefresh(usedToken, owned).finally(() => {
+        owned.settled = true;
+        if (this.refreshing === owned) this.refreshing = null;
+      });
+      this.refreshing = owned;
+    }
+
+    // Each 401 owns one lease on the shared refresh. A cancelled caller stops
+    // waiting immediately. The refresh itself is aborted only after its last
+    // interested caller leaves, so one Ctrl+C cannot break a concurrent live
+    // request, while a sole cancelled demand cannot rotate credentials later.
+    flight.waiters += 1;
+    try {
+      return await waitForRefreshFlight(flight, signal);
+    } finally {
+      flight.waiters = Math.max(0, flight.waiters - 1);
+      if (flight.waiters === 0 && !flight.settled) flight.controller.abort();
+    }
+  }
+
+  private async runSessionRefresh(usedToken: string, flight: RefreshFlight): Promise<boolean> {
+    const signal = AbortSignal.any([flight.controller.signal, AbortSignal.timeout(10_000)]);
+    try {
+      const res = await fetch(this.url(REFRESH_PATH), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          Authorization: `Bearer ${usedToken}`,
+        },
+        body: "{}",
+        signal,
+      });
+      if (flight.controller.signal.aborted || !res.ok) return false;
+      let body: { session_token?: string } | undefined;
       try {
-        const res = await fetch(this.url(REFRESH_PATH), {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-            Authorization: `Bearer ${usedToken}`,
-          },
-          body: "{}",
-          // Bounded on its own: this fetch runs outside the caller's
-          // raceAgainst machinery, so without a timeout a blackholed
-          // /auth/refresh would hang the retry path forever.
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!res.ok) return false;
-        let body: { session_token?: string } | undefined;
-        try {
-          body = (await res.json()) as { session_token?: string };
-        } catch {
-          return false;
-        }
-        if (!body?.session_token) return false;
-        // update() (when the store distinguishes it) swaps the ACTIVE token
-        // without widening persistence — an automatic refresh must not write
-        // a desktop-embedded session over the standalone CLI's on-disk token.
-        // Explicit logins keep using set(), which does persist.
-        await (this.tokens.update?.(body.session_token) ?? this.tokens.set(body.session_token));
-        return true;
+        body = (await res.json()) as { session_token?: string };
       } catch {
         return false;
-      } finally {
-        this.refreshing = null;
       }
-    })();
-    return this.refreshing;
+      if (flight.controller.signal.aborted || !body?.session_token) return false;
+
+      // Do not overwrite a rotation performed by another process while this
+      // network request was in flight. A matching fresh value already means
+      // callers may retry; any other value belongs to a newer authority.
+      const current = await this.tokens.get();
+      if (flight.controller.signal.aborted) return false;
+      if (current !== usedToken) return current === body.session_token;
+
+      // update() (when the store distinguishes it) swaps the ACTIVE token
+      // without widening persistence — an automatic refresh must not write a
+      // desktop-embedded session over the standalone CLI's on-disk token.
+      // From this point the TokenStore contract has no abort/rollback port.
+      // Mark the commit boundary so cancellation waits for the write and can
+      // never return to the caller before a late credential mutation occurs.
+      flight.committing = true;
+      await (this.tokens.update?.(body.session_token) ?? this.tokens.set(body.session_token));
+      return !flight.controller.signal.aborted;
+    } catch {
+      return false;
+    }
   }
 
   private url(path: string): string {
@@ -273,21 +326,24 @@ export class ApiClient {
         );
       };
       let res = await open();
-      if (res.status === 401 && (await this.refreshSession(path, used))) {
+      if (res.status === 401 && (await this.refreshSession(path, used, signal))) {
         // Drop the rejected response's body so the socket is released before
         // the retry (undici keep-alive would otherwise pin the connection).
         void res.body?.cancel().catch(() => {});
         res = await open();
       }
-      if (!res.ok) throw await toHttpError(res);
+      if (!res.ok) {
+        throw await toHttpError(res, signal, timeoutMs, () => new StreamTimeoutError(timeoutMs));
+      }
       // Fail-soft: server returns plain JSON `{"stream": false}` instead of an
       // SSE body when it can't/shouldn't stream -> caller falls back to /agent/chat.
       const ct = res.headers.get("content-type") ?? "";
       if (ct.startsWith("application/json")) {
         let body: unknown;
         try {
-          body = await res.json();
-        } catch {
+          body = await raceAgainst(res.json(), signal, timeoutMs);
+        } catch (error) {
+          if (error instanceof StreamTimeoutError || signal?.aborted) throw error;
           body = undefined;
         }
         throw new StreamUnavailableError(body);
@@ -377,11 +433,13 @@ export class ApiClient {
         );
       };
       let res = await send();
-      if (res.status === 401 && (await this.refreshSession(pathOrUrl, used))) {
+      if (res.status === 401 && (await this.refreshSession(pathOrUrl, used, signal))) {
         void res.body?.cancel().catch(() => {});
         res = await send();
       }
-      if (!res.ok) throw await toHttpError(res);
+      if (!res.ok) {
+        throw await toHttpError(res, signal, effTimeoutMs, () => new RequestTimeoutError(effTimeoutMs));
+      }
       if (!res.body) {
         cleanup();
         return res;
@@ -412,6 +470,70 @@ export class ApiClient {
       ) {
         throw new Error(sanitizeServerText(err.message));
       }
+      throw err;
+    }
+  }
+
+  /**
+   * Authed JSON POST whose successful response is binary (for example the
+   * Cloud Voice synthesis route). This deliberately returns a Response so the
+   * caller can inspect media-type and provenance headers before consuming the
+   * bytes. Authentication refresh, connect timeout, caller abort, typed HTTP
+   * errors, and the response-body idle timeout match getBinary().
+   */
+  async postJsonBinary(
+    path: string,
+    body: unknown,
+    signal?: AbortSignal,
+    timeoutMs?: number,
+  ): Promise<Response> {
+    const effTimeoutMs = normalizeTimeoutMs(timeoutMs ?? defaultRequestTimeoutMs());
+    const net = new AbortController();
+    const releaseNet = (): void => net.abort();
+    if (signal) {
+      if (signal.aborted) releaseNet();
+      else signal.addEventListener("abort", releaseNet, { once: true });
+    }
+    const cleanup = (): void => signal?.removeEventListener("abort", releaseNet);
+    try {
+      let used: string | null = null;
+      const send = async (): Promise<Response> => {
+        used = await this.tokens.get();
+        return raceAgainst(
+          fetch(this.url(path), {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "audio/*, application/octet-stream",
+              ...(await this.authHeaders(used)),
+            },
+            body: JSON.stringify(body),
+            signal: net.signal,
+          }),
+          signal,
+          effTimeoutMs,
+          () => new RequestTimeoutError(effTimeoutMs),
+        );
+      };
+      let res = await send();
+      if (res.status === 401 && (await this.refreshSession(path, used, signal))) {
+        void res.body?.cancel().catch(() => {});
+        res = await send();
+      }
+      if (!res.ok) {
+        throw await toHttpError(res, signal, effTimeoutMs, () => new RequestTimeoutError(effTimeoutMs));
+      }
+      if (!res.body) {
+        cleanup();
+        return res;
+      }
+      const wrapped = toReadableStream(
+        withIdleTimeout(res.body as unknown as AsyncIterable<Uint8Array>, signal, effTimeoutMs, releaseNet, cleanup),
+      );
+      return new Response(wrapped, { status: res.status, statusText: res.statusText, headers: res.headers });
+    } catch (err) {
+      releaseNet();
+      cleanup();
       throw err;
     }
   }
@@ -451,12 +573,14 @@ export class ApiClient {
         );
       };
       let res = await send();
-      if (res.status === 401 && (await this.refreshSession(path, used))) {
+      if (res.status === 401 && (await this.refreshSession(path, used, signal))) {
         void res.body?.cancel().catch(() => {});
         res = await send();
       }
-      if (!res.ok) throw await toHttpError(res);
-      return await parseOkBody<T>(res);
+      if (!res.ok) {
+        throw await toHttpError(res, signal, effTimeoutMs, () => new RequestTimeoutError(effTimeoutMs));
+      }
+      return await parseOkBody<T>(res, signal, effTimeoutMs);
     } finally {
       releaseNet();
       signal?.removeEventListener("abort", releaseNet);
@@ -506,13 +630,15 @@ export class ApiClient {
         );
       };
       let res = await send();
-      if (res.status === 401 && (await this.refreshSession(path, used))) {
+      if (res.status === 401 && (await this.refreshSession(path, used, signal))) {
         // Release the rejected response before retrying (see stream()).
         void res.body?.cancel().catch(() => {});
         res = await send();
       }
-      if (!res.ok) throw await toHttpError(res);
-      return await parseOkBody<T>(res);
+      if (!res.ok) {
+        throw await toHttpError(res, signal, timeoutMs, () => new RequestTimeoutError(timeoutMs));
+      }
+      return await parseOkBody<T>(res, signal, timeoutMs);
     } finally {
       releaseNet();
       signal?.removeEventListener("abort", releaseNet);
@@ -541,11 +667,17 @@ export class ApiClient {
  * is exactly the dropped-connection case this fix exists to catch, not a
  * legitimate empty response.
  */
-async function parseOkBody<T>(res: Response): Promise<T> {
+async function parseOkBody<T>(res: Response, signal: AbortSignal | undefined, timeoutMs: number): Promise<T> {
   let text: string;
   try {
-    text = await res.text();
-  } catch {
+    text = await raceAgainst(
+      res.text(),
+      signal,
+      timeoutMs,
+      () => new RequestTimeoutError(timeoutMs),
+    );
+  } catch (error) {
+    if (error instanceof RequestTimeoutError || signal?.aborted) throw error;
     throw new MalformedResponseError(res.status);
   }
   if (!text.trim()) return undefined as T;
@@ -574,11 +706,17 @@ export function sanitizeServerText(v: string): string {
   return v.replace(/[\x00-\x1f\x7f-\x9f]+/g, " ").trim().slice(0, 200);
 }
 
-async function toHttpError(res: Response): Promise<HttpError> {
+async function toHttpError(
+  res: Response,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+  onTimeout: () => unknown,
+): Promise<HttpError> {
   let body: unknown;
   try {
-    body = await res.json();
-  } catch {
+    body = await raceAgainst(res.json(), signal, timeoutMs, onTimeout);
+  } catch (error) {
+    if (error instanceof RequestTimeoutError || error instanceof StreamTimeoutError || signal?.aborted) throw error;
     body = undefined;
   }
   // Surface the server's own explanation (FastAPI uses `detail`, others
@@ -618,10 +756,10 @@ export function defaultStreamTimeoutMs(): number {
   const raw = process.env["AETHER_STREAM_TIMEOUT_MS"];
   if (raw == null || raw.trim() === "") return DEFAULT_STREAM_TIMEOUT_MS;
   const parsed = Number(raw);
-  // 0 is a valid "disabled" value (see normalizeTimeoutMs) — only fall back to
-  // the default when the env var is missing or genuinely invalid, never
-  // silently discard an explicit 0.
-  if (parsed === 0) return 0;
+  // Environment configuration is the production path and may never remove
+  // the bound. Library callers/tests can still opt out explicitly with
+  // `{timeoutMs: 0}` on one request without making every terminal stream
+  // vulnerable to a ping-only infinite wait.
   return normalizeTimeoutMs(parsed) || DEFAULT_STREAM_TIMEOUT_MS;
 }
 
@@ -634,10 +772,9 @@ export function defaultRequestTimeoutMs(): number {
   const raw = process.env["AETHER_REQUEST_TIMEOUT_MS"];
   if (raw == null || raw.trim() === "") return DEFAULT_REQUEST_TIMEOUT_MS;
   const parsed = Number(raw);
-  // 0 is a valid "disabled" value (see normalizeTimeoutMs) — only fall back to
-  // the default when the env var is missing or genuinely invalid, never
-  // silently discard an explicit 0.
-  if (parsed === 0) return 0;
+  // As with stream defaults, an environment value cannot globally disable the
+  // production bound. Explicit per-call `{timeoutMs: 0}` remains the narrow
+  // embed/test escape hatch.
   return normalizeTimeoutMs(parsed) || DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
@@ -689,8 +826,44 @@ function raceAgainst<T>(
   });
 }
 
+/** A caller may leave a shared refresh independently. Once the refresh has
+ * crossed into TokenStore.update(), however, that interface has no abort or
+ * rollback contract; keep the cancelled caller pending until the write has
+ * settled so no credential mutation can occur after its request returns. */
+function waitForRefreshFlight(
+  flight: RefreshFlight,
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  if (!signal) return flight.promise;
+  if (signal.aborted) return Promise.reject(abortError(signal));
+  return new Promise<boolean>((resolve, reject) => {
+    let settled = false;
+    let cancelled = false;
+    const finish = (error: unknown | null, value?: boolean): void => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      if (error !== null) reject(error);
+      else resolve(Boolean(value));
+    };
+    const onAbort = (): void => {
+      cancelled = true;
+      if (!flight.committing) finish(abortError(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    flight.promise.then(
+      (value) => finish(cancelled ? abortError(signal) : null, value),
+      (error: unknown) => finish(cancelled ? abortError(signal) : error),
+    );
+  });
+}
+
 function abortError(signal: AbortSignal): unknown {
   return signal.reason ?? Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw abortError(signal);
 }
 
 async function* withIdleTimeout(

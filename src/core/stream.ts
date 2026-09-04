@@ -9,6 +9,11 @@
 // be ignored. The CF-flush preamble (`:<4096 spaces>`) and `ping` heartbeat are
 // handled here (comment lines skipped; ping surfaced as a typed liveness frame).
 
+import { StreamEventTooLargeError } from "./errors.js";
+
+/** One event may contain model text, but never an unbounded delimiter-free body. */
+export const MAX_SSE_EVENT_BYTES = 1_048_576;
+
 export type StreamFrame = StreamFrameBody & {
   /** Per-session monotonic sequence number (dev-session frames only). A
    *  reconnecting client resumes with ?last_seq=N and MUST skip seq <= N so a
@@ -23,7 +28,17 @@ export type StreamFrameBody =
   | { type: "reasoning"; text: string }
   | { type: "delta"; text: string }
   | { type: "usage"; uvt: number; cents: number }
-  | { type: "done"; uvt: number; cents: number; inputTokens?: number; outputTokens?: number; ok?: boolean }
+  | {
+      type: "done";
+      uvt: number;
+      cents: number;
+      inputTokens?: number;
+      outputTokens?: number;
+      ok?: boolean;
+      /** False only for a client-synthesized terminal frame after the legacy
+       * non-streaming endpoint, which does not report authoritative usage. */
+      usageKnown?: boolean;
+    }
   | { type: "error"; msg: string; errorCode?: string; refId?: string }
   // Agent dev sessions (/agent/dev/sessions/{id}/stream) — the bidirectional
   // coding protocol: the API brain emits tool_call, the local host executes
@@ -123,6 +138,9 @@ function normalizeFrameBody(obj: Record<string, unknown>): StreamFrameBody | nul
         // Only set when the wire carried it (dev-session done frames) — legacy
         // frames must round-trip byte-identical for the conformance tests.
         ...(obj["ok"] === undefined ? {} : { ok: Boolean(obj["ok"]) }),
+        ...(obj["usage_known"] === undefined && obj["usageKnown"] === undefined
+          ? {}
+          : { usageKnown: Boolean(obj["usage_known"] ?? obj["usageKnown"]) }),
       };
     case "error":
       return {
@@ -304,18 +322,31 @@ export async function* decodeSse(
 ): AsyncGenerator<StreamFrame> {
   const td = new TextDecoder();
   let buf = "";
+  let pendingBytes = 0;
   for await (const chunk of stream) {
+    pendingBytes += chunk.byteLength;
     // SSE permits CRLF line endings; "\r\n\r\n" contains no "\n\n", so a
     // CRLF server/proxy would buffer the whole response and deliver zero
     // frames. Normalize as we append (a split CRLF at a chunk boundary is
     // caught on the next pass since the lone \r stays in buf).
     buf = (buf + td.decode(chunk, { stream: true })).replace(/\r\n/g, "\n");
     let idx: number;
+    let consumedEvent = false;
     while ((idx = buf.indexOf("\n\n")) !== -1) {
       const raw = buf.slice(0, idx);
       buf = buf.slice(idx + 2);
+      consumedEvent = true;
+      if (Buffer.byteLength(raw, "utf8") > MAX_SSE_EVENT_BYTES) {
+        throw new StreamEventTooLargeError(MAX_SSE_EVENT_BYTES);
+      }
       const frame = parseEvent(raw);
       if (frame) yield frame;
+    }
+    // Recompute only after consuming complete events. During delimiter-free
+    // dribbles the monotonic byte counter avoids an O(n²) re-encoding attack.
+    if (consumedEvent) pendingBytes = Buffer.byteLength(buf, "utf8");
+    if (pendingBytes > MAX_SSE_EVENT_BYTES) {
+      throw new StreamEventTooLargeError(MAX_SSE_EVENT_BYTES);
     }
   }
   const tail = parseEvent(buf);

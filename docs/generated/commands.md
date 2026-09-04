@@ -1,5 +1,5 @@
 <!-- GENERATED FILE: run `npm run docs:generate`; do not edit by hand. -->
-<!-- manifest-digest: sha256:845aebd7f9882dd7d38977c75e678ccf15a3d2a2fd740c4eb37711a95e24dc4e -->
+<!-- manifest-digest: sha256:7cff3bb8bc15e3ff28f1701218bf4286128b72b2dbc1e46b05fafbbaae9ed29b -->
 # Generated command reference
 
 This reference is generated from the validated, versioned command manifest. Availability is evaluated at runtime; a listed command may still require authentication, a hosted capability, or local tooling.
@@ -255,6 +255,23 @@ Command flags:
 - `--no-ui`
 - `--only <value>…`
 
+#### `aether settings [list [section]|show <id|section>|get <id>|set <id> <value> [--scope global|project]|unset <id> [--scope global|project]|reset <section> [--scope global|project] [--preview]|doctor [section]|export --redacted|import <file> --preview]`
+
+inspect, validate, stage, and apply typed developer settings
+
+Permission: `local-write` · Availability: `runtime-dependent` · Telemetry: `shell.settings`
+
+Command flags:
+
+- `--redacted`
+- `--preview`
+
+#### `aether voice [status|on|off|toggle|test|doctor|settings]`
+
+inspect or control capability\-aware Aether Voice
+
+Permission: `network` · Availability: `runtime-dependent` · Telemetry: `shell.voice`
+
 ## Interactive slash commands
 
 ### Session
@@ -312,6 +329,18 @@ Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.
 structured runtime diagnostics
 
 Permission: `unknown` · Availability: `runtime-dependent` · Telemetry: `slash.doctor`
+
+#### `/settings [section]`
+
+open or inspect typed developer settings
+
+Permission: `local-write` · Availability: `runtime-dependent` · Telemetry: `slash.settings`
+
+#### `/voice [on|off|toggle|test|doctor|settings]`
+
+inspect or control capability\-aware Aether Voice
+
+Permission: `network` · Availability: `runtime-dependent` · Telemetry: `slash.voice`
 
 #### `/preview start|open|logs|status|stop`
 

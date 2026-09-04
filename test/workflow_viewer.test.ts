@@ -368,3 +368,27 @@ test("redraw clear sequence stays bounded across repeated cursor moves (Finding 
     assert.strictEqual(len, baselineLen, "clear sequence must not grow across repeated moves");
   }
 });
+
+test("workflow viewer strips terminal controls from streamed identity and feed fields", () => {
+  const hostile = "safe\u001b]52;c;clipboard\u0007\u009b2J";
+  let state = applyViewerFrame(createViewerState(), {
+    type: "workflow_start",
+    workflowId: hostile,
+    phases: [{ n: 1, type: hostile, agents: 1 }],
+    totalAgents: 1,
+  } as BrainEvent);
+  state = applyViewerFrame(state, {
+    type: "agent_spawn",
+    agentId: hostile,
+    phaseN: 1,
+    brief: hostile,
+  } as BrainEvent);
+  state = applyViewerFrame(state, {
+    type: "agent_progress",
+    agentId: hostile,
+    delta: hostile,
+  } as BrainEvent);
+  const rendered = renderCiTree(state) + renderAgentFeed(selectAgent(state, state.agents[0]!.id));
+  assert.doesNotMatch(rendered, /[\u001b\u0007\u009b]/);
+  assert.match(rendered, /safe/);
+});

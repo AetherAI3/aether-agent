@@ -14,6 +14,26 @@
 
 ---
 
+# Unreleased — terminal convergence (review only)
+
+- **Typed developer settings.** `aether settings` and `/settings` expose one
+  staged settings model with explicit scope/source/precedence, doctors,
+  deterministic redacted JSON, validation, confirmation, receipts, and
+  compensation. Unsupported Cloud and Actions controls identify their exact
+  prerequisites instead of saving decorative local switches.
+- **Capability-aware Aether Voice.** `aether voice` and `/voice` expose a
+  default-off status/doctor rail. Embedders can inject capture, playback, and
+  their existing conversation send bridge into the portable Voice controller;
+  the standalone CLI does not claim audio hardware it cannot prove.
+- **Visible terminal outcomes.** Hosted and local chat turns now share a typed
+  lifecycle and emit one terminal outcome, including structured JSON failures
+  for incomplete and zero-UVT streams without silently changing backend.
+- **Release status.** These changes are an unmerged review candidate. No
+  version bump, package publish, tag, deployment, billing change, or production
+  migration is included.
+
+---
+
 # Aether Agent v0.3.1 — first-run recovery
 
 **August 28, 2026**

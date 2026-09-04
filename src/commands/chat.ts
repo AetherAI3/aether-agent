@@ -7,10 +7,25 @@ import { StringDecoder } from "node:string_decoder";
 import type { AppContext, GlobalFlags } from "../core/context.js";
 import { theme, errTheme } from "../ui/theme.js";
 import { buildChatRequest } from "../core/envelope.js";
-import { CHAT_STREAM_PATH, CHAT_PATH, defaultStreamTimeoutMs } from "../core/transport.js";
+import { CHAT_STREAM_PATH, CHAT_PATH, defaultStreamTimeoutMs, sanitizeServerText } from "../core/transport.js";
 import { decodeSse } from "../core/stream.js";
 import { Renderer } from "../core/render.js";
-import { StreamIncompleteError, StreamUnavailableError, errorHint, isAbortError } from "../core/errors.js";
+import {
+  HttpError,
+  MeaningfulProgressTimeoutError,
+  StreamIncompleteError,
+  StreamTimeoutError,
+  StreamUnavailableError,
+  errorHint,
+  errorMessage,
+  isAbortError,
+} from "../core/errors.js";
+import {
+  TurnLifecycle,
+  describeStreamFailure,
+  recoverSubmittedPrompt,
+  type TurnOutcome,
+} from "../core/turn_lifecycle.js";
 import { formatErrorLine } from "../ui/error_line.js";
 import { appendCustody } from "../core/custody.js";
 import { handleSlash, primeCatalog } from "./slash.js";
@@ -33,7 +48,7 @@ import { chooseBackend, type BackendPath } from "../core/backend.js";
 import { OllamaBrain } from "../core/brain_ollama.js";
 import { localModelId, resolveHostedModel, resolveLocalModel } from "../core/local_ollama.js";
 import type { Brain } from "../core/brain.js";
-import type { ToolResult } from "../core/tool_executor.js";
+import type { RunOptions, ToolResult } from "../core/tool_executor.js";
 import { ToolExecutor } from "../core/tool_executor.js";
 import { HostRenderer } from "../ui/host_render.js";
 import type { TaskCommand } from "../core/brain.js";
@@ -55,6 +70,7 @@ import {
 } from "../ui/workflow_viewer.js";
 import type { WorkflowViewerState } from "../ui/workflow_viewer.js";
 import type { StreamFrame } from "../core/stream.js";
+import type { BrainEvent } from "../core/brain_protocol.js";
 
 // Key decoding lives in ui/keys.ts (shared with pickers/viewers); re-exported
 // here so existing imports keep working.
@@ -68,10 +84,9 @@ interface ChatJsonResponse {
 
 /** Thrown when a turn completes its stream but the server sent an `error`
  *  frame instead of `done` — a rendered "✗ msg" is NOT a successful turn
- *  (CONTRACTS.md invariant 5). runTurn is void+onFrame (orchestrator-style,
- *  see resolveBackend below); this is how it still signals failure to the
- *  one-shot `cmdChat` path without forcing a boolean-return shape onto every
- *  onFrame call site. */
+ *  (CONTRACTS.md invariant 5). runTurn returns a typed success outcome; this
+ *  exception carries the corresponding failed outcome while still signalling
+ *  failure to the one-shot `cmdChat` path. */
 /** Session-level skill selection for REPL/one-shot chat turns (`--skill`, `--no-skills`). */
 export interface TurnSkillOptions {
   explicitSkill?: string;
@@ -79,9 +94,301 @@ export interface TurnSkillOptions {
 }
 
 export class ChatTurnError extends Error {
-  constructor(msg: string) {
+  constructor(
+    msg: string,
+    readonly outcome?: TurnOutcome,
+    /** True when a human/stream frame already reached the selected surface. */
+    readonly rendered = true,
+  ) {
     super(msg);
     this.name = "ChatTurnError";
+  }
+}
+
+/** State-aware meaningful-progress classifier. Keepalives, empty chunks and
+ * replayed metadata cannot extend the hard turn deadline; visible text and
+ * genuine monotonic/state changes can. */
+class StreamProgressTracker {
+  private maxUsageUvt = Number.NEGATIVE_INFINITY;
+  private maxUsageCents = Number.NEGATIVE_INFINITY;
+  private connected = false;
+  private projectDone = false;
+  private readonly seenStateFrames = new Set<string>();
+  private static readonly MAX_STATE_FRAMES = 4096;
+
+  meaningful(frame: StreamFrame): boolean {
+    switch (frame.type) {
+      case "open":
+      case "ping":
+      case "notice":
+      case "done":
+      case "error":
+        return false;
+      case "delta":
+      case "reasoning":
+        return sanitizeServerText(frame.text).trim().length > 0;
+      case "progress":
+        return this.nonEmptyOnce("progress:", frame.text ?? "");
+      case "usage": {
+        if (!Number.isFinite(frame.uvt) || !Number.isFinite(frame.cents)) return false;
+        const advanced = frame.uvt > this.maxUsageUvt || frame.cents > this.maxUsageCents;
+        this.maxUsageUvt = Math.max(this.maxUsageUvt, frame.uvt);
+        this.maxUsageCents = Math.max(this.maxUsageCents, frame.cents);
+        return advanced;
+      }
+      case "connected":
+        if (this.connected) return false;
+        this.connected = true;
+        return true;
+      case "project_done":
+        if (this.projectDone) return false;
+        this.projectDone = true;
+        return true;
+      case "task_progress":
+        return this.once(
+          `task_progress:${frame.taskId}:${sanitizeServerText(frame.delta ?? "")}:${frame.uvt ?? ""}:${frame.cents ?? ""}`,
+        );
+      case "tool_call":
+        return this.once(`tool_call:${frame.toolCallId}`);
+      case "tool_result_ack":
+        return this.once(`tool_result_ack:${frame.toolCallId}`);
+      case "session":
+        return this.once(`session:${frame.sessionId}:${frame.protocolVersion}`);
+      case "custody":
+        return this.once(`custody:${String(frame.custody["order_id"] ?? "")}`);
+      case "task_start":
+        return this.once(`task_start:${frame.taskId ?? ""}:${frame.label ?? ""}`);
+      case "task_done":
+        return this.once(`task_done:${frame.taskId ?? ""}`);
+      case "task_failed":
+        return this.once(`task_failed:${frame.taskId ?? ""}:${frame.msg ?? ""}`);
+      case "task_blocked":
+        return this.once(`task_blocked:${frame.taskId ?? ""}:${frame.msg ?? ""}`);
+      case "memory":
+        return this.once(`memory:${frame.subtype}:${frame.text ?? ""}:${frame.narrative ?? ""}`);
+      case "workflow_start":
+        return this.once(`workflow_start:${frame.workflow_id}`);
+      case "phase_start":
+        return this.once(`phase_start:${frame.phase_n}:${frame.phase_type}`);
+      case "phase_done":
+        return this.once(`phase_done:${frame.phase_n}:${frame.artifact_summary}`);
+      case "agent_spawn":
+        return this.once(`agent_spawn:${frame.agent_id}:${frame.phase_n}`);
+      case "agent_progress":
+        return this.nonEmptyOnce(`agent_progress:${frame.agent_id}:`, frame.delta);
+      case "agent_done":
+        return this.once(`agent_done:${frame.agent_id}:${frame.phase_n}`);
+      case "workflow_done":
+        return this.once(`workflow_done:${frame.total_phases}:${frame.total_agents}`);
+    }
+  }
+
+  private once(key: string): boolean {
+    if (this.seenStateFrames.has(key)) return false;
+    if (this.seenStateFrames.size >= StreamProgressTracker.MAX_STATE_FRAMES) return false;
+    this.seenStateFrames.add(key);
+    return true;
+  }
+
+  private nonEmptyOnce(prefix: string, value: string): boolean {
+    const safe = sanitizeServerText(value).trim();
+    return safe.length > 0 && this.once(prefix + safe);
+  }
+}
+
+/** Local brains use the same bounded, replay-resistant notion of progress as
+ * hosted streams. A cycle of previously-seen status/stage frames is liveness,
+ * not evidence that the user's turn is advancing. */
+class LocalBrainProgressTracker {
+  private readonly seen = new Set<string>();
+  private static readonly MAX_KEYS = 4096;
+  private static readonly MAX_KEY_LENGTH = 512;
+
+  meaningful(event: BrainEvent): boolean {
+    switch (event.type) {
+      case "done":
+      case "error":
+        return false;
+      case "stage":
+        return this.nonEmptyOnce("stage:", event.name);
+      case "monologue":
+        return this.nonEmptyOnce(`monologue:${event.depth}:`, event.text);
+      case "skill":
+        return this.once(`skill:${event.name}:${event.reason}`);
+      case "turn":
+        return this.once(`turn:${event.n}:${event.toolCalls}:${event.malformed}:${event.invented}:${event.noCall}:${event.failCount ?? ""}`);
+      case "tool_call":
+        return this.once(`tool:${event.id}`);
+      case "telemetry":
+        return this.once(`telemetry:${event.tokens}:${event.ctxUsed}:${event.ctxCap}`);
+      case "status":
+        return this.once(`status:${event.phase}:${event.poolUsed}:${event.poolCap}`);
+      case "checkpoint":
+        return this.once(`checkpoint:${event.gitSha}`);
+      case "memory":
+        return this.once(`memory:${event.subtype}:${event.text ?? ""}:${event.narrative ?? ""}:${event.afterTokens ?? ""}`);
+      case "workflow_start":
+        return this.once(`workflow:${event.workflowId}`);
+      case "phase_start":
+        return this.once(`phase-start:${event.phaseN}:${event.phaseType}`);
+      case "phase_done":
+        return this.once(`phase-done:${event.phaseN}:${event.artifactSummary}`);
+      case "agent_spawn":
+        return this.once(`agent-spawn:${event.agentId}:${event.phaseN}`);
+      case "agent_progress":
+        return this.nonEmptyOnce(`agent-progress:${event.agentId}:`, event.delta);
+      case "agent_done":
+        return this.once(`agent-done:${event.agentId}:${event.phaseN}`);
+      case "workflow_done":
+        return this.once(`workflow-done:${event.totalPhases}:${event.totalAgents}`);
+      case "routing_drift":
+        return this.once(`routing-drift:${event.requested}:${event.resolved}:${event.status}:${event.fatal}`);
+    }
+  }
+
+  private once(key: string): boolean {
+    const bounded = key.slice(0, LocalBrainProgressTracker.MAX_KEY_LENGTH);
+    if (this.seen.has(bounded) || this.seen.size >= LocalBrainProgressTracker.MAX_KEYS) return false;
+    this.seen.add(bounded);
+    return true;
+  }
+
+  private nonEmptyOnce(prefix: string, raw: string): boolean {
+    const value = sanitizeServerText(raw).trim();
+    return value.length > 0 && this.once(prefix + value);
+  }
+}
+
+function signalReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new DOMException("turn cancelled", "AbortError");
+}
+
+/** Bound iterator, confirmation, and tool promises by one meaningful-progress
+ * clock. Late settlement is observed but cannot re-enter the completed turn. */
+function boundedLocalOperation<T>(
+  work: () => T | PromiseLike<T>,
+  signal: AbortSignal,
+  timeoutMs: number,
+  lastMeaningfulAt: number,
+  onTimeout: (error: MeaningfulProgressTimeoutError) => void,
+): Promise<T> {
+  const pending = Promise.resolve().then(work);
+  if (signal.aborted) {
+    pending.catch(() => {});
+    return Promise.reject(signalReason(signal));
+  }
+  if (timeoutMs <= 0) return pending;
+  const remaining = timeoutMs - (Date.now() - lastMeaningfulAt);
+  if (remaining <= 0) {
+    const error = new MeaningfulProgressTimeoutError(timeoutMs);
+    onTimeout(error);
+    pending.catch(() => {});
+    return Promise.reject(error);
+  }
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (fn: (value: never) => void, value: unknown): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      fn(value as never);
+    };
+    const onAbort = (): void => finish(reject, signalReason(signal));
+    const timer = setTimeout(() => {
+      if (settled) return;
+      const error = new MeaningfulProgressTimeoutError(timeoutMs);
+      onTimeout(error);
+      finish(reject, error);
+    }, Math.max(1, remaining));
+    signal.addEventListener("abort", onAbort, { once: true });
+    pending.then(
+      (value) => finish(resolve as (value: never) => void, value),
+      (error: unknown) => finish(reject, error),
+    );
+  });
+}
+
+const TURN_OUTCOME = Symbol("aether.turn.outcome");
+type ErrorWithTurnOutcome = Error & { [TURN_OUTCOME]?: TurnOutcome };
+
+function attachTurnOutcome(error: unknown, outcome: TurnOutcome): unknown {
+  if (!(error instanceof Error)) return new ChatTurnError(errorMessage(error), outcome, false);
+  Object.defineProperty(error, TURN_OUTCOME, { value: outcome, configurable: false, enumerable: false });
+  return error;
+}
+
+function turnOutcomeForError(error: unknown): TurnOutcome | undefined {
+  return error instanceof ChatTurnError
+    ? error.outcome
+    : error instanceof Error
+      ? (error as ErrorWithTurnOutcome)[TURN_OUTCOME]
+      : undefined;
+}
+
+function finalizeThrownTurn(
+  lifecycle: TurnLifecycle,
+  err: unknown,
+  baseUrl: string,
+  partialOutput = false,
+): TurnOutcome {
+  const settled = lifecycle.outcome;
+  if (settled) return settled;
+  const message = errorMessage(err);
+  if (isAbortError(err)) {
+    return lifecycle.finalize("cancelled", {
+      message: "turn cancelled",
+      retryable: true,
+      partialOutput,
+    });
+  }
+  if (err instanceof StreamTimeoutError) {
+    return lifecycle.finalize("timed_out", {
+      message,
+      hint: errorHint(err, baseUrl),
+      retryable: true,
+      partialOutput,
+    });
+  }
+  if (err instanceof StreamIncompleteError) {
+    return lifecycle.finalize("incomplete", {
+      message,
+      hint: errorHint(err, baseUrl),
+      retryable: true,
+      partialOutput,
+    });
+  }
+  const hint = errorHint(err, baseUrl);
+  return lifecycle.finalize("failed", {
+    message,
+    hint,
+    retryable:
+      hint !== null ||
+      (err instanceof HttpError && (err.status === 402 || err.status === 429 || err.status >= 500)),
+    partialOutput,
+  });
+}
+
+function beginConnecting(lifecycle: TurnLifecycle): void {
+  if (lifecycle.state === "idle") lifecycle.transition("submitted");
+  if (lifecycle.state === "submitted") lifecycle.transition("connecting");
+}
+
+function noteStreamingActivity(lifecycle: TurnLifecycle): void {
+  if (lifecycle.state === "connecting" || lifecycle.state === "waiting_for_tool") {
+    lifecycle.transition("streaming");
+  } else if (lifecycle.state === "streaming") {
+    lifecycle.meaningfulActivity();
+  }
+}
+
+function noteWaitingForTool(lifecycle: TurnLifecycle): void {
+  if (lifecycle.state === "connecting" || lifecycle.state === "streaming") {
+    lifecycle.transition("waiting_for_tool");
+  } else if (lifecycle.state === "waiting_for_tool") {
+    lifecycle.meaningfulActivity();
   }
 }
 
@@ -115,75 +422,83 @@ export async function runTurn(
   onFrame?: (f: StreamFrame) => void,
   onPulsePaint?: () => void,
   skillOpts: TurnSkillOptions = {},
-): Promise<void> {
-  const backend = await resolveBackend(ctx);
-  // The same seam `aether agent` uses (commands/code.ts). Opened per turn, not
-  // per session, because automatic skill selection reads THIS prompt — a turn
-  // that says "the CI is failing" should pull the CI skill and the next one
-  // should not inherit it.
-  const opened = openRunSession({
-    projectRoot: ctx.flags.cwd,
-    prompt,
-    ...(skillOpts.explicitSkill ? { explicitSkill: skillOpts.explicitSkill } : {}),
-    ...(skillOpts.noSkills ? { noSkills: true } : {}),
-  });
-  if (!opened.ok) {
-    // Painted here, then thrown as a ChatTurnError — the caller's contract is
-    // that a ChatTurnError has already been rendered (see cmdChat), so this
-    // must not be left for printError to duplicate.
-    for (const line of opened.lines) process.stderr.write(errTheme.red(line) + "\n");
-    throw new ChatTurnError(opened.refusal.code + ": " + opened.refusal.detail);
-  }
-  const run = opened.run;
-  // Only say something when something was loaded, and only when it CHANGED.
-  // A REPL re-opens its run session every turn (automatic selection reads the
-  // prompt), so reprinting an identical five-line header on every turn would
-  // bury the answers it sits above. A change — a skill matched, a rules file
-  // was edited mid-session — still prints, which is the case worth seeing.
-  // A notice is the whole point of this header: an untrusted skill, a manifest
-  // that would not index, a rules file dropped for an unparsable scope. Those
-  // can all occur with NOTHING composed — no rules, no skill body, zero context
-  // tokens — so gating the header on composed size alone silently swallowed
-  // exactly the cases the header exists to report.
-  if (run.contextTokens > 0 || run.session.notices.length > 0 || run.hasWarnings) {
-    const header = run.headerLines.join("\n");
-    if (header !== lastTurnHeader) {
-      lastTurnHeader = header;
-      for (const line of run.headerLines) process.stderr.write(errTheme.dim("  " + line) + "\n");
+): Promise<TurnOutcome> {
+  const lifecycle = new TurnLifecycle(prompt);
+  lifecycle.transition("submitted");
+  try {
+    const backend = await resolveBackend(ctx);
+    // The same seam `aether agent` uses (commands/code.ts). Opened per turn, not
+    // per session, because automatic skill selection reads THIS prompt — a turn
+    // that says "the CI is failing" should pull the CI skill and the next one
+    // should not inherit it.
+    const opened = openRunSession({
+      projectRoot: ctx.flags.cwd,
+      prompt,
+      ...(skillOpts.explicitSkill ? { explicitSkill: skillOpts.explicitSkill } : {}),
+      ...(skillOpts.noSkills ? { noSkills: true } : {}),
+    });
+    if (!opened.ok) {
+      // Painted here, then thrown as a ChatTurnError — the caller's contract is
+      // that a ChatTurnError has already been rendered (see cmdChat), so this
+      // must not be left for printError to duplicate.
+      if (!ctx.flags.json) {
+        for (const line of opened.lines) process.stderr.write(errTheme.red(line) + "\n");
+      }
+      const message = opened.refusal.code + ": " + opened.refusal.detail;
+      const outcome = lifecycle.finalize("failed", { message });
+      throw new ChatTurnError(message, outcome, !ctx.flags.json);
     }
-  } else {
-    lastTurnHeader = null;
-  }
-  const brief = run.brief(prompt);
+    const run = opened.run;
+    // Only say something when something was loaded, and only when it CHANGED.
+    // A REPL re-opens its run session every turn (automatic selection reads the
+    // prompt), so reprinting an identical five-line header on every turn would
+    // bury the answers it sits above. A change — a skill matched, a rules file
+    // was edited mid-session — still prints, which is the case worth seeing.
+    // A notice is the whole point of this header: an untrusted skill, a manifest
+    // that would not index, a rules file dropped for an unparsable scope. Those
+    // can all occur with NOTHING composed — no rules, no skill body, zero context
+    // tokens — so gating the header on composed size alone silently swallowed
+    // exactly the cases the header exists to report.
+    if (run.contextTokens > 0 || run.session.notices.length > 0 || run.hasWarnings) {
+      const header = run.headerLines.join("\n");
+      if (header !== lastTurnHeader) {
+        lastTurnHeader = header;
+        for (const line of run.headerLines) process.stderr.write(errTheme.dim("  " + line) + "\n");
+      }
+    } else {
+      lastTurnHeader = null;
+    }
+    const brief = run.brief(prompt);
 
-  if (backend === "local") {
-    // Aether meters nothing on a local brain, so the session is unmetered
-    // rather than "zero spend so far".
-    getRegistry().markLocalUnmetered();
-    // The signal used to be dropped here, so the REPL Ctrl+C controller could
-    // not reach a local turn at all: the abort fired and nothing observed it.
-    await runLocalTurn(ctx, brief, signal, {}, run.guard);
-    return;
+    if (backend === "local") {
+      // Aether meters nothing on a local brain, so the session is unmetered
+      // rather than "zero spend so far".
+      getRegistry().markLocalUnmetered();
+      // The signal used to be dropped here, so the REPL Ctrl+C controller could
+      // not reach a local turn at all: the abort fired and nothing observed it.
+      return await runLocalTurn(ctx, brief, signal, { lifecycle }, run.guard);
+    }
+    // The cloud REPL turn streams from /agent/chat/stream, where the SERVER runs
+    // the tools. This host executes nothing on that path, so it can enforce
+    // nothing on it either. Say so rather than let the Policy line above read as
+    // a guarantee it is not: a narrowing the host cannot check is not in force.
+    if (run.policies.length > 0) {
+      process.stderr.write(
+        errTheme.dim(
+          "  " +
+            "Policy".padEnd(10) +
+            "! NOT ENFORCED on this turn — a cloud chat turn runs its tools server-side, " +
+            "so the host cannot refuse them. Use `aether agent` for a host-enforced run.",
+        ) + "\n",
+      );
+    }
+    return await runCloudTurn(ctx, brief, lifecycle, signal, onFrame, onPulsePaint);
+  } catch (err) {
+    const outcome = finalizeThrownTurn(lifecycle, err, ctx.cfg.baseUrl);
+    if (err instanceof ChatTurnError) throw err;
+    throw attachTurnOutcome(err, outcome);
   }
-  // The cloud REPL turn streams from /agent/chat/stream, where the SERVER runs
-  // the tools. This host executes nothing on that path, so it can enforce
-  // nothing on it either. Say so rather than let the Policy line above read as
-  // a guarantee it is not: a narrowing the host cannot check is not in force.
-  if (run.policies.length > 0) {
-    process.stderr.write(
-      errTheme.dim(
-        "  " +
-          "Policy".padEnd(10) +
-          "! NOT ENFORCED on this turn — a cloud chat turn runs its tools server-side, " +
-          "so the host cannot refuse them. Use `aether agent` for a host-enforced run.",
-      ) + "\n",
-    );
-  }
-  await runCloudTurn(ctx, brief, signal, onFrame, onPulsePaint);
 }
-
-/** Monotonic per-process turn id, so a settled turn can be recognised on replay. */
-let cloudTurnCounter = 0;
 
 /** Last skill/rules header printed, so an unchanged one is not reprinted per turn. */
 let lastTurnHeader: string | null = null;
@@ -193,24 +508,27 @@ let lastTurnHeader: string | null = null;
 async function runCloudTurn(
   ctx: AppContext,
   prompt: string,
+  lifecycle: TurnLifecycle,
   signal?: AbortSignal,
   onFrame?: (f: StreamFrame) => void,
   onPulsePaint?: () => void,
-): Promise<void> {
+): Promise<TurnOutcome> {
+  beginConnecting(lifecycle);
   const reg = getRegistry();
   // The operator's session cap is checked BEFORE a billable turn starts. It is
   // a local circuit breaker, not a billing control: it stops this terminal
   // from starting more work, and changes nothing about the account.
   const cap = reg.checkUvtCap();
   if (cap.capped) {
-    throw new ChatTurnError(
+    const message =
       `session UVT cap reached — ${cap.observed} of ${cap.cap} observed. ` +
-        "No further turns will start. This is a local stop only; your plan and " +
-        "balance are unchanged. Raise it with /limit <amount>, or /limit off.",
-    );
+      "No further turns will start. This is a local stop only; your plan and " +
+      "balance are unchanged. Raise it with /limit <amount>, or /limit off.";
+    if (!ctx.flags.json) process.stderr.write(formatErrorLine(message));
+    const outcome = lifecycle.finalize("failed", { message, retryable: true });
+    throw new ChatTurnError(message, outcome, !ctx.flags.json);
   }
-  const turnId = `turn-${++cloudTurnCounter}`;
-  reg.beginTurn(turnId);
+  reg.beginTurn(lifecycle.id);
   const req = buildChatRequest({
     prompt,
     model: resolveHostedModel(ctx.flags.model, ctx.cfg.defaultModel),
@@ -236,35 +554,90 @@ async function runCloudTurn(
     onPaint: onPulsePaint,
   });
   pulse.start();
-  let sawError: string | null = null;
-  // Whether a terminal `done` or `error` frame was actually observed. decodeSse's
-  // for-await loop exits normally (no throw) once the underlying byte stream
-  // ends — including a premature-but-clean close (proxy/load-balancer time-box,
-  // etc.) that never sent either. Without this, such a close renders whatever
-  // partial output arrived and returns as if the turn completed successfully
-  // (LOOP-06 round 3).
-  let sawTerminal = false;
+  let partialOutput = false;
+  let streamedError: ChatTurnError | null = null;
+  const progressTimeoutMs = defaultStreamTimeoutMs();
+  const streamController = new AbortController();
+  const forwardAbort = (): void => streamController.abort(signal?.reason);
+  if (signal?.aborted) forwardAbort();
+  else signal?.addEventListener("abort", forwardAbort, { once: true });
+  let progressTimer: ReturnType<typeof setTimeout> | null = null;
+  const progress = new StreamProgressTracker();
+  const armProgressTimeout = (): void => {
+    if (progressTimer) clearTimeout(progressTimer);
+    if (progressTimeoutMs === 0 || streamController.signal.aborted) return;
+    progressTimer = setTimeout(
+      () => streamController.abort(new MeaningfulProgressTimeoutError(progressTimeoutMs)),
+      progressTimeoutMs,
+    );
+    progressTimer.unref?.();
+  };
   try {
-    const stream = await ctx.api.stream(CHAT_STREAM_PATH, req, signal);
+    const stream = await ctx.api.stream(CHAT_STREAM_PATH, req, {
+      signal: streamController.signal,
+      timeoutMs: progressTimeoutMs,
+    });
+    armProgressTimeout();
     for await (const frame of decodeSse(stream)) {
       // open/ping are handshake/keepalive — they render nothing. Stopping on
       // them re-created the dead air on keepalive-happy servers; only frames
       // that produce visible output own the line.
       if (frame.type !== "open" && frame.type !== "ping") pulse.stop();
+      if (progress.meaningful(frame)) armProgressTimeout();
       // The server signs each turn and returns it; persist the signed receipt
       // locally (best-effort, never breaks the chat).
       // The terminal frame carries the turn's authoritative cost. Settled by
       // turn id so a reconnect replaying it cannot count the same turn twice,
       // and only from the server's own number — never estimated from tokens.
-      if (frame.type === "done") getRegistry().settleTurn(turnId, frame.uvt);
+      if (frame.type === "done") getRegistry().settleTurn(lifecycle.id, frame.uvt);
       if (frame.type === "custody") appendCustody(frame.custody);
-      if (frame.type === "error") sawError = frame.msg;
-      if (frame.type === "error" || frame.type === "done") sawTerminal = true;
+
+      if (frame.type === "tool_call") {
+        noteWaitingForTool(lifecycle);
+      } else if (frame.type !== "open" && frame.type !== "ping" && frame.type !== "done" && frame.type !== "error") {
+        noteStreamingActivity(lifecycle);
+        if (frame.type === "delta" && frame.text.length > 0) partialOutput = true;
+      } else if (frame.type === "done" && lifecycle.state !== "completing") {
+        lifecycle.transition("completing");
+      }
+
       onFrame?.(frame);
+
+      if (frame.type === "error") {
+        const failure = describeStreamFailure({ message: frame.msg, errorCode: frame.errorCode });
+        const renderedError: Extract<StreamFrame, { type: "error" }> = {
+          ...frame,
+          msg: failure.hint ? `${failure.message} — ${failure.hint}` : failure.message,
+          ...(failure.errorCode ? { errorCode: failure.errorCode } : {}),
+        };
+        renderer.frame(renderedError);
+        const outcome = lifecycle.finalize("failed", {
+          message: failure.message,
+          hint: failure.hint,
+          retryable: failure.retryable,
+          partialOutput,
+        });
+        streamedError = new ChatTurnError(failure.message, outcome);
+        break;
+      }
+
       renderer.frame(frame);
+      if (frame.type === "done") {
+        return lifecycle.finalize("succeeded", {
+          message: "turn completed",
+          partialOutput,
+        });
+      }
     }
-    if (sawError) throw new ChatTurnError(sawError);
-    if (!sawTerminal) throw new StreamIncompleteError();
+    if (streamedError) throw streamedError;
+    const incomplete = new StreamIncompleteError();
+    lifecycle.finalize("incomplete", {
+      message: incomplete.message,
+      hint: errorHint(incomplete, ctx.cfg.baseUrl),
+      retryable: true,
+      partialOutput,
+    });
+    throw incomplete;
   } catch (err) {
     if (err instanceof StreamUnavailableError) {
       // Contract fail-soft: fall back to the non-streaming request/response.
@@ -273,16 +646,34 @@ async function runCloudTurn(
       // into stream()'s own generous bound instead of request()'s 30s
       // metadata-call default (LOOP-01/LOOP-06 round-1) — otherwise a
       // perfectly healthy but slow completion would be killed early.
+      lifecycle.transition("completing");
       const r = await ctx.api.postJson<ChatJsonResponse>(CHAT_PATH, req, signal, defaultStreamTimeoutMs());
       pulse.stop();
-      process.stdout.write((r.response ?? "") + "\n");
-      if (ctx.flags.audit && r.commitment_hash) {
-        process.stderr.write(`  signed ✓ ${r.commitment_hash}\n`);
+      const response = r?.response ?? "";
+      if (!response.trim()) {
+        const incomplete = new StreamIncompleteError();
+        lifecycle.finalize("incomplete", {
+          message: incomplete.message,
+          hint: errorHint(incomplete, ctx.cfg.baseUrl),
+          retryable: true,
+        });
+        throw incomplete;
       }
-      return;
+      renderer.frame({ type: "delta", text: response });
+      renderer.frame({ type: "done", uvt: 0, cents: 0, usageKnown: false });
+      if (ctx.flags.audit && r?.commitment_hash) {
+        process.stderr.write(`  signed ✓ ${sanitizeServerText(r.commitment_hash)}\n`);
+      }
+      return lifecycle.finalize("succeeded", {
+        message: "turn completed",
+        partialOutput: response.length > 0,
+      });
     }
+    finalizeThrownTurn(lifecycle, err, ctx.cfg.baseUrl, partialOutput);
     throw err;
   } finally {
+    if (progressTimer) clearTimeout(progressTimer);
+    signal?.removeEventListener("abort", forwardAbort);
     pulse.stop();
   }
 }
@@ -295,7 +686,14 @@ async function runCloudTurn(
  */
 export interface LocalTurnDeps {
   brain?: Brain;
-  exec?: { executeAsync(name: string, args: Record<string, unknown>): Promise<ToolResult> };
+  exec?: {
+    executeAsync(name: string, args: Record<string, unknown>, options?: RunOptions): Promise<ToolResult>;
+  };
+  /** Reuse runTurn's lifecycle; direct callers get a fresh one automatically. */
+  lifecycle?: TurnLifecycle;
+  /** Explicit 0 is a test/embed escape hatch; production uses the finite
+   * stream deadline and cannot disable it through environment configuration. */
+  meaningfulProgressTimeoutMs?: number;
 }
 
 export async function runLocalTurn(
@@ -304,7 +702,9 @@ export async function runLocalTurn(
   signal?: AbortSignal,
   deps: LocalTurnDeps = {},
   skillGuard?: (tool: string) => SkillRefusal | null,
-): Promise<void> {
+): Promise<TurnOutcome> {
+  const lifecycle = deps.lifecycle ?? new TurnLifecycle(prompt);
+  beginConnecting(lifecycle);
   const cwd = ctx.flags.cwd;
   const model = resolveLocalModel(ctx.flags.model, ctx.cfg.localModel ?? "", {
     allowBareExplicit: ctx.flags.local === true,
@@ -333,20 +733,62 @@ export async function runLocalTurn(
     poolGb: 5,
     model,
   };
-  let sawError: string | null = null;
-  // close() is what unblocks a loop parked on a tool result, so an abort that
-  // arrives mid-turn is observed rather than waiting out the whole turn.
-  // Registered before the loop starts so an already-aborted signal still fires.
-  const onAbort = (): void => brain.close();
-  if (signal?.aborted) brain.close();
-  signal?.addEventListener("abort", onAbort, { once: true });
+  let partialOutput = false;
+  let terminalError: ChatTurnError | null = null;
+  const timeoutMs = deps.meaningfulProgressTimeoutMs ?? defaultStreamTimeoutMs();
+  const controller = new AbortController();
+  const forwardAbort = (): void => controller.abort(signal?.reason ?? new DOMException("turn cancelled", "AbortError"));
+  const closeBrain = (): void => {
+    try { brain.close(); } catch { /* cleanup cannot replace the primary outcome */ }
+  };
+  const onAbort = (): void => closeBrain();
+  if (signal?.aborted) forwardAbort();
+  else signal?.addEventListener("abort", forwardAbort, { once: true });
+  controller.signal.addEventListener("abort", onAbort, { once: true });
+  const progress = new LocalBrainProgressTracker();
+  let lastMeaningfulAt = Date.now();
+  let iterator: AsyncIterator<BrainEvent> | null = null;
+  const timeout = (error: MeaningfulProgressTimeoutError): void => {
+    if (!controller.signal.aborted) controller.abort(error);
+  };
   try {
-    for await (const ev of brain.run(task)) {
-      if (signal?.aborted) break;
-      renderer.event(ev);
-      if (ev.type === "error") sawError = ev.msg;
-      if (ev.type === "done" && !ev.ok) sawError = ev.result || ev.reason || "turn did not complete";
+    iterator = brain.run(task)[Symbol.asyncIterator]();
+    for (;;) {
+      const next = await boundedLocalOperation(
+        () => iterator!.next(),
+        controller.signal,
+        timeoutMs,
+        lastMeaningfulAt,
+        timeout,
+      );
+      if (next.done) break;
+      const ev = next.value;
+      if (progress.meaningful(ev)) lastMeaningfulAt = Date.now();
+      if (ev.type === "done") {
+        renderer.event(ev);
+        lifecycle.transition("completing");
+        if (ev.ok) {
+          lifecycle.finalize("succeeded", {
+            message: ev.result || "turn completed",
+            partialOutput,
+          });
+        } else {
+          const message = sanitizeServerText(ev.result || ev.reason || "turn did not complete") || "turn did not complete";
+          const outcome = lifecycle.finalize("failed", { message, partialOutput });
+          terminalError = new ChatTurnError(message, outcome);
+        }
+        break;
+      }
+      if (ev.type === "error") {
+        renderer.event(ev);
+        const message = sanitizeServerText(ev.msg) || "turn failed";
+        const outcome = lifecycle.finalize("failed", { message, partialOutput });
+        terminalError = new ChatTurnError(message, outcome);
+        break;
+      }
       if (ev.type === "tool_call") {
+        noteWaitingForTool(lifecycle);
+        renderer.event(ev);
         // Same ordering as hostLoop (commands/code.ts): the skill narrowing is
         // checked first and refuses without executing or prompting; the
         // operator gate then decides about whatever survived. A skill can only
@@ -356,25 +798,66 @@ export async function runLocalTurn(
           brain.sendToolResult(ev.id, refusalToolResult(refusal));
         } else {
           // executeAsync so the two web tools (web_search/web_fetch) work too.
-          const approved = await approveTool(ev.name, ev.args);
+          const approved = await boundedLocalOperation(
+            () => approveTool(ev.name, ev.args),
+            controller.signal,
+            timeoutMs,
+            lastMeaningfulAt,
+            timeout,
+          );
+          const remaining = timeoutMs > 0
+            ? Math.max(1, timeoutMs - (Date.now() - lastMeaningfulAt))
+            : undefined;
+          const toolOptions: RunOptions = {
+            signal: controller.signal,
+            ...(remaining === undefined ? {} : { timeoutMs: remaining }),
+          };
           const result = approved
-            ? await exec.executeAsync(ev.name, ev.args)
+            ? await boundedLocalOperation(
+                () => exec.executeAsync(ev.name, ev.args, toolOptions),
+                controller.signal,
+                timeoutMs,
+                lastMeaningfulAt,
+                timeout,
+              )
             : { output: `[tool ${ev.name} blocked: permission denied]`, exitCode: 1 };
           brain.sendToolResult(ev.id, result);
         }
+        lastMeaningfulAt = Date.now();
+        noteStreamingActivity(lifecycle);
+        continue;
       }
+      noteStreamingActivity(lifecycle);
+      partialOutput = true;
+      renderer.event(ev);
     }
+  } catch (err) {
+    const outcome = finalizeThrownTurn(lifecycle, err, ctx.cfg.baseUrl, partialOutput);
+    if (isAbortError(err) && signal?.aborted) return outcome;
+    throw err;
   } finally {
-    signal?.removeEventListener("abort", onAbort);
-    brain.close();
+    signal?.removeEventListener("abort", forwardAbort);
+    controller.signal.removeEventListener("abort", onAbort);
+    closeBrain();
+    // A non-compliant iterator may park forever or throw synchronously from
+    // return(). Observe both shapes without replacing the real timeout/error.
+    if (iterator?.return) void Promise.resolve().then(() => iterator!.return!()).catch(() => {});
   }
-  // An aborted turn is not a failed one — the user asked for it to stop.
-  if (signal?.aborted) return;
   // Mirror runCloudTurn/CONTRACTS.md invariant 5: a streamed error event is a
   // failed turn, not a silently-successful one — the renderer already painted
   // it, so callers (cmdChat/run.ts) special-case ChatTurnError to avoid a
   // double print.
-  if (sawError) throw new ChatTurnError(sawError);
+  if (terminalError) throw terminalError;
+  const settled = lifecycle.outcome;
+  if (settled) return settled;
+  const incomplete = new StreamIncompleteError();
+  lifecycle.finalize("incomplete", {
+    message: incomplete.message,
+    hint: errorHint(incomplete, ctx.cfg.baseUrl),
+    retryable: true,
+    partialOutput,
+  });
+  throw incomplete;
 }
 
 /** Apply a confirmed model/agent switch: set the new selection, clear the other,
@@ -440,6 +923,27 @@ function previewLine(s: string): string {
   return s.length > 55 ? s.slice(0, 55) + "…" : s;
 }
 
+/** Stable machine terminal record. The prompt itself is deliberately omitted:
+ * automation needs correlation/outcome/retry facts, not a second copy of user
+ * content in every captured JSON log. */
+export function turnOutcomeJson(outcome: TurnOutcome): string {
+  return JSON.stringify({
+    protocol: "aether.turn/1",
+    type: "turn_outcome",
+    turn_id: outcome.turnId,
+    state: outcome.state,
+    exit_code: outcome.exitCode,
+    message: outcome.message,
+    hint: outcome.hint,
+    retryable: outcome.retryable,
+    partial_output: outcome.partialOutput,
+    started_at: outcome.startedAt,
+    finished_at: outcome.finishedAt,
+    last_meaningful_activity_at: outcome.lastMeaningfulActivityAt,
+    prompt_preserved: true,
+  });
+}
+
 // A trailing partial escape sequence (CSI/SS3/OSC intro with no final byte) —
 // held back until the next stdin chunk so markers/arrows split across chunk
 // boundaries reassemble instead of degrading into garbage or a stuck paste.
@@ -454,13 +958,21 @@ export async function cmdChat(
 ): Promise<number> {
   if (prompt.trim()) {
     try {
-      await runTurn(ctx, prompt, undefined, undefined, undefined, skillOpts);
-      return 0;
+      const outcome = await runTurn(ctx, prompt, undefined, undefined, undefined, skillOpts);
+      if (ctx.flags.json) process.stdout.write(turnOutcomeJson(outcome) + "\n");
+      return outcome.exitCode;
     } catch (err) {
-      // ChatTurnError: the Renderer already painted "✗ <msg>" for the
-      // server's error frame — printError would double it.
-      if (!(err instanceof ChatTurnError)) printError(err, ctx.cfg.baseUrl);
-      return 1;
+      if (err instanceof ChatTurnError) {
+        if (ctx.flags.json && err.outcome) process.stdout.write(turnOutcomeJson(err.outcome) + "\n");
+        else if (!err.rendered) {
+          process.stderr.write(formatErrorLine(err.outcome?.message ?? err.message, { hint: err.outcome?.hint ?? null }));
+        }
+        return err.outcome?.exitCode ?? 1;
+      }
+      const outcome = turnOutcomeForError(err);
+      if (ctx.flags.json && outcome) process.stdout.write(turnOutcomeJson(outcome) + "\n");
+      else printError(err, ctx.cfg.baseUrl);
+      return outcome?.exitCode ?? 1;
     }
   }
   return repl(ctx, skillOpts);
@@ -476,21 +988,23 @@ async function repl(ctx: AppContext, skillOpts: TurnSkillOptions = {}): Promise<
         allowBareExplicit: ctx.flags.local === true,
       }))
     : resolveHostedModel(ctx.flags.model, ctx.cfg.defaultModel) || "auto";
-  process.stdout.write(
-    renderSplash({
-      version: VERSION,
-      model: model || "auto",
-      effort: ctx.cfg.defaultEffort || "default",
-      // Single additive field (lane AA-CONT-04): passing the workspace turns on
-      // the PROJECT CONTINUITY block in ui/splash.ts. Omitting it renders the
-      // splash exactly as before, and reads nothing from disk.
-      cwd: ctx.flags.cwd,
-    }) + "\n\n",
-  );
-  // One-line dim banner: which brain serves turns this session (local-first).
-  const where = backend === "local" ? "local Ollama (offline)" : "cloud (Aether API)";
-  process.stdout.write(theme.dim(`backend: ${where}`) + "\n");
-  process.stdout.write("Type a prompt, or /help for commands. /exit to quit.\n\n");
+  if (!ctx.flags.json) {
+    process.stdout.write(
+      renderSplash({
+        version: VERSION,
+        model: model || "auto",
+        effort: ctx.cfg.defaultEffort || "default",
+        // Single additive field (lane AA-CONT-04): passing the workspace turns on
+        // the PROJECT CONTINUITY block in ui/splash.ts. Omitting it renders the
+        // splash exactly as before, and reads nothing from disk.
+        cwd: ctx.flags.cwd,
+      }) + "\n\n",
+    );
+    // One-line dim banner: which brain serves turns this session (local-first).
+    const where = backend === "local" ? "local Ollama (offline)" : "cloud (Aether API)";
+    process.stdout.write(theme.dim(`backend: ${where}`) + "\n");
+    process.stdout.write("Type a prompt, or /help for commands. /exit to quit.\n\n");
+  }
   if (!process.stdin.isTTY) return replLines(ctx, skillOpts);
   void primeCatalog(ctx); // non-blocking warm; first /models is then instant
 
@@ -557,7 +1071,7 @@ async function repl(ctx: AppContext, skillOpts: TurnSkillOptions = {}): Promise<
   const queue: string[] = [];
   let steering: string | null = null;
   const btwNotes: string[] = [];
-  let turnAbort: AbortController | null = null; // live while a cloud turn streams
+  let turnAbort: AbortController | null = null; // live while a local/cloud turn runs
   // Live while a slash command (e.g. /audit, /doctor) is in flight — kept
   // separate from turnAbort so Ctrl+C cancels only the network call actually
   // running, not a chat turn that isn't (fixes: Ctrl+C during a slow slash
@@ -593,8 +1107,8 @@ async function repl(ctx: AppContext, skillOpts: TurnSkillOptions = {}): Promise<
       resolve(code);
     };
 
-    /** Run one turn. Returns true when the user aborted it (Ctrl+C). */
-    const runQueuedTurn = async (text: string): Promise<boolean> => {
+    /** Run one turn without sacrificing an existing type-ahead draft. */
+    const runQueuedTurn = async (text: string): Promise<"completed" | "aborted" | "failed"> => {
       const built = buildPromptContext(text, steering, btwNotes);
       steering = built.steering;
       btwNotes.length = 0;
@@ -603,7 +1117,7 @@ async function repl(ctx: AppContext, skillOpts: TurnSkillOptions = {}): Promise<
       viewerLastLines = 0;
       turnAbort = new AbortController();
       try {
-        await runTurn(ctx, built.prompt, turnAbort.signal, (f) => {
+        const outcome = await runTurn(ctx, built.prompt, turnAbort.signal, (f) => {
           switch (f.type) {
             case "workflow_start":
               viewerState = applyViewerFrame(viewerState, { type: "workflow_start", workflowId: f.workflow_id, phases: f.phases, totalAgents: f.total_agents });
@@ -654,20 +1168,45 @@ async function repl(ctx: AppContext, skillOpts: TurnSkillOptions = {}): Promise<
               break;
           }
         }, redrawInput, skillOpts);
-        return false;
+        if (ctx.flags.json) process.stdout.write(turnOutcomeJson(outcome) + "\n");
+        if (outcome.state === "cancelled") {
+          queue.length = 0;
+          if (!ctx.flags.json) process.stdout.write("\n" + theme.dim("✗ turn aborted") + "\n");
+          return "aborted";
+        }
+        return "completed";
       } catch (err) {
         if (isAbortError(err)) {
           // User said stop: drop the queued follow-ups too.
           queue.length = 0;
-          process.stdout.write("\n" + theme.dim("✗ turn aborted") + "\n");
-          return true;
+          const outcome = turnOutcomeForError(err);
+          if (ctx.flags.json && outcome) process.stdout.write(turnOutcomeJson(outcome) + "\n");
+          else process.stdout.write("\n" + theme.dim("✗ turn aborted") + "\n");
+          return "aborted";
         }
         // ChatTurnError means the Renderer already painted "✗ <msg>" for the
         // server's error frame (frame() runs before runTurn throws) — only
         // genuinely unrendered failures (network, fallback-leg errors) need
         // printError's own "✗" line, or the user sees the error twice.
-        if (!(err instanceof ChatTurnError)) printError(err, ctx.cfg.baseUrl);
-        return false;
+        if (err instanceof ChatTurnError) {
+          if (ctx.flags.json && err.outcome) process.stdout.write(turnOutcomeJson(err.outcome) + "\n");
+          else if (!err.rendered) {
+            process.stderr.write(formatErrorLine(err.outcome?.message ?? err.message, { hint: err.outcome?.hint ?? null }));
+          }
+        } else {
+          const outcome = turnOutcomeForError(err);
+          if (ctx.flags.json && outcome) process.stdout.write(turnOutcomeJson(outcome) + "\n");
+          else printError(err, ctx.cfg.baseUrl);
+        }
+        // commit() clears the submitted line before the request starts. Put it
+        // back only when the user has not typed ahead; otherwise preserve their
+        // newer draft and leave the failed submission in history for recall.
+        const recovered = recoverSubmittedPrompt(text, buf.value);
+        if (recovered !== buf.value) {
+          buf.clear();
+          buf.insert(recovered);
+        }
+        return "failed";
       } finally {
         turnAbort = null;
       }
@@ -807,11 +1346,11 @@ async function repl(ctx: AppContext, skillOpts: TurnSkillOptions = {}): Promise<
         getRegistry().startAgentTimer();
         // An aborted turn skips the drain entirely — even an item that slipped
         // into the queue during abort teardown must not auto-run.
-        let aborted = await runQueuedTurn(t);
-        while (!aborted && queue.length > 0) {
+        let result = await runQueuedTurn(t);
+        while (result === "completed" && queue.length > 0) {
           const next = queue.shift()!;
           process.stdout.write(`\n→ Queued: "${previewLine(next)}"\n`);
-          aborted = await runQueuedTurn(next);
+          result = await runQueuedTurn(next);
         }
       } finally {
         busy = false;
@@ -1059,14 +1598,16 @@ async function repl(ctx: AppContext, skillOpts: TurnSkillOptions = {}): Promise<
  *  SIGINT delivered normally since readline isn't in terminal mode here). */
 async function replLines(ctx: AppContext, skillOpts: TurnSkillOptions = {}): Promise<number> {
   const rl = createInterface({ input: process.stdin });
-  const p = promptPrefix(userInfo().username || "you");
+  const p = ctx.flags.json ? "" : promptPrefix(userInfo().username || "you");
   let inflight: AbortController | null = null;
-  process.on("SIGINT", () => inflight?.abort());
-  process.stdout.write(p);
-  for await (const line of rl) {
+  const onSigint = (): void => inflight?.abort();
+  process.on("SIGINT", onSigint);
+  try {
+    if (p) process.stdout.write(p);
+    for await (const line of rl) {
     const t = line.trim();
     if (!t) {
-      process.stdout.write(p);
+      if (p) process.stdout.write(p);
       continue;
     }
     if (historyEnabled()) appendHistory(t, historyPath(ctx.flags.cwd));
@@ -1088,29 +1629,44 @@ async function replLines(ctx: AppContext, skillOpts: TurnSkillOptions = {}): Pro
       } finally {
         inflight = null;
       }
-      process.stdout.write(p);
+      if (p) process.stdout.write(p);
       continue;
     }
     inflight = new AbortController();
     let printed = false; // printError already ends with a blank line
     try {
-      await runTurn(ctx, t, inflight.signal, undefined, undefined, skillOpts);
+      const outcome = await runTurn(ctx, t, inflight.signal, undefined, undefined, skillOpts);
+      if (ctx.flags.json) process.stdout.write(turnOutcomeJson(outcome) + "\n");
     } catch (err) {
       if (isAbortError(err)) {
-        process.stderr.write("\n" + errTheme.dim("✗ canceled — turn discarded") + "\n");
-      } else if (!(err instanceof ChatTurnError)) {
-        // ChatTurnError: Renderer already painted the "✗ <msg>" error line.
-        printError(err, ctx.cfg.baseUrl);
+        const outcome = turnOutcomeForError(err);
+        if (ctx.flags.json && outcome) process.stdout.write(turnOutcomeJson(outcome) + "\n");
+        else process.stderr.write("\n" + errTheme.dim("✗ canceled — turn discarded") + "\n");
+      } else if (err instanceof ChatTurnError) {
+        if (ctx.flags.json && err.outcome) {
+          process.stdout.write(turnOutcomeJson(err.outcome) + "\n");
+          printed = true;
+        } else if (!err.rendered) {
+          process.stderr.write(formatErrorLine(err.outcome?.message ?? err.message, { hint: err.outcome?.hint ?? null }));
+          printed = true;
+        }
+      } else {
+        const outcome = turnOutcomeForError(err);
+        if (ctx.flags.json && outcome) process.stdout.write(turnOutcomeJson(outcome) + "\n");
+        else printError(err, ctx.cfg.baseUrl);
         printed = true;
       }
     } finally {
       inflight = null;
     }
-    process.stdout.write((printed ? "" : "\n") + p);
+    if (p) process.stdout.write((printed ? "" : "\n") + p);
+    }
+    return 0;
+  } finally {
+    process.off("SIGINT", onSigint);
+    rl.close();
+    if (p) process.stdout.write("\n");
   }
-  rl.close();
-  process.stdout.write("\n");
-  return 0;
 }
 
 function printError(err: unknown, baseUrl: string): void {

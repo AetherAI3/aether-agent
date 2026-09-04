@@ -2658,6 +2658,165 @@ export const COMMAND_MANIFEST_SOURCE: readonly CommandManifestEntry[] = [
     }
   },
   {
+    "key": "shell:settings",
+    "surface": "shell",
+    "name": "settings",
+    "aliases": [],
+    "compatibilityAliases": [],
+    "deprecatedAliases": [],
+    "args": "[list [section]|show <id|section>|get <id>|set <id> <value> [--scope global|project]|unset <id> [--scope global|project]|reset <section> [--scope global|project] [--preview]|doctor [section]|export --redacted|import <file> --preview]",
+    "summary": "inspect, validate, stage, and apply typed developer settings",
+    "detailedHelp": "aether settings [list [section]|show <id|section>|get <id>|set <id> <value> [--scope global|project]|unset <id> [--scope global|project]|reset <section> [--scope global|project] [--preview]|doctor [section]|export --redacted|import <file> --preview]\ninspect, validate, stage, and apply typed developer settings",
+    "section": "System",
+    "hidden": false,
+    "permissionClass": "local-write",
+    "availability": {
+      "state": "runtime-dependent",
+      "capabilityRequirements": []
+    },
+    "telemetryName": "shell.settings",
+    "acceptedGlobalFlags": [
+      "agent",
+      "all",
+      "apply",
+      "audit",
+      "available",
+      "ci",
+      "cwd",
+      "effort",
+      "help",
+      "interactive",
+      "json",
+      "junit",
+      "license-key",
+      "local",
+      "model",
+      "no-browser",
+      "no-log",
+      "no-skills",
+      "out",
+      "password",
+      "pool",
+      "quiet",
+      "repo",
+      "resume",
+      "scope",
+      "skill",
+      "swarm",
+      "test-cmd",
+      "token",
+      "username",
+      "version",
+      "with-token",
+      "worktree",
+      "yes"
+    ],
+    "ownedFlags": {
+      "redacted": {
+        "type": "boolean",
+        "default": false
+      },
+      "preview": {
+        "type": "boolean",
+        "default": false
+      }
+    },
+    "handler": {
+      "id": "handler:shell:settings",
+      "kind": "lazy",
+      "module": "src/commands/cli_registry.ts",
+      "symbol": "DISPATCH_COMMANDS"
+    },
+    "docs": {
+      "kind": "manifest",
+      "module": "src/commands/command_manifest_data.ts",
+      "symbol": "COMMAND_MANIFEST_SOURCE",
+      "target": "settings",
+      "usage": "aether settings [list [section]|show <id|section>|get <id>|set <id> <value> [--scope global|project]|unset <id> [--scope global|project]|reset <section> [--scope global|project] [--preview]|doctor [section]|export --redacted|import <file> --preview]",
+      "visible": true,
+      "disposition": "generated"
+    },
+    "release": {
+      "disposition": "new",
+      "note": "Adds the typed terminal settings control center with scoped plans, redacted exports, doctors, and explicit unavailable states."
+    }
+  },
+  {
+    "key": "shell:voice",
+    "surface": "shell",
+    "name": "voice",
+    "aliases": [],
+    "compatibilityAliases": [],
+    "deprecatedAliases": [],
+    "args": "[status|on|off|toggle|test|doctor|settings]",
+    "summary": "inspect or control capability-aware Aether Voice",
+    "detailedHelp": "aether voice [status|on|off|toggle|test|doctor|settings]\ninspect or control capability-aware Aether Voice",
+    "section": "System",
+    "hidden": false,
+    "permissionClass": "network",
+    "availability": {
+      "state": "runtime-dependent",
+      "capabilityRequirements": []
+    },
+    "telemetryName": "shell.voice",
+    "acceptedGlobalFlags": [
+      "agent",
+      "all",
+      "apply",
+      "audit",
+      "available",
+      "ci",
+      "cwd",
+      "effort",
+      "help",
+      "interactive",
+      "json",
+      "junit",
+      "license-key",
+      "local",
+      "model",
+      "no-browser",
+      "no-log",
+      "no-skills",
+      "out",
+      "password",
+      "pool",
+      "quiet",
+      "repo",
+      "resume",
+      "scope",
+      "skill",
+      "swarm",
+      "test-cmd",
+      "token",
+      "username",
+      "version",
+      "with-token",
+      "worktree",
+      "yes"
+    ],
+    "ownedFlags": {},
+    "handler": {
+      "id": "handler:shell:voice",
+      "kind": "lazy",
+      "module": "src/commands/cli_registry.ts",
+      "symbol": "DISPATCH_COMMANDS"
+    },
+    "docs": {
+      "kind": "manifest",
+      "module": "src/commands/command_manifest_data.ts",
+      "symbol": "COMMAND_MANIFEST_SOURCE",
+      "target": "voice",
+      "usage": "aether voice [status|on|off|toggle|test|doctor|settings]",
+      "visible": true,
+      "disposition": "generated"
+    },
+    "release": {
+      "disposition": "new",
+      "note": "Adds a default-off Voice status and diagnostic rail over the Cloud-pinned portable contract; unsupported standalone audio remains explicit."
+    }
+  },
+  {
     "key": "slash:help",
     "surface": "slash",
     "name": "help",
@@ -3022,6 +3181,86 @@ export const COMMAND_MANIFEST_SOURCE: readonly CommandManifestEntry[] = [
     "release": {
       "disposition": "existing",
       "note": null
+    }
+  },
+  {
+    "key": "slash:settings",
+    "surface": "slash",
+    "name": "settings",
+    "aliases": [],
+    "compatibilityAliases": [],
+    "deprecatedAliases": [],
+    "args": "[section]",
+    "summary": "open or inspect typed developer settings",
+    "detailedHelp": "/settings [section]\nopen or inspect typed developer settings",
+    "section": "Session",
+    "hidden": false,
+    "permissionClass": "local-write",
+    "availability": {
+      "state": "runtime-dependent",
+      "capabilityRequirements": []
+    },
+    "telemetryName": "slash.settings",
+    "acceptedGlobalFlags": [],
+    "ownedFlags": {},
+    "handler": {
+      "id": "handler:slash:settings",
+      "kind": "host",
+      "module": "src/commands/slash.ts",
+      "symbol": "handleSlash"
+    },
+    "docs": {
+      "kind": "manifest",
+      "module": "src/commands/command_manifest_data.ts",
+      "symbol": "COMMAND_MANIFEST_SOURCE",
+      "target": "settings",
+      "usage": "/settings [section]",
+      "visible": true,
+      "disposition": "generated"
+    },
+    "release": {
+      "disposition": "new",
+      "note": "Adds the in-session entry point for the typed settings view."
+    }
+  },
+  {
+    "key": "slash:voice",
+    "surface": "slash",
+    "name": "voice",
+    "aliases": [],
+    "compatibilityAliases": [],
+    "deprecatedAliases": [],
+    "args": "[on|off|toggle|test|doctor|settings]",
+    "summary": "inspect or control capability-aware Aether Voice",
+    "detailedHelp": "/voice [on|off|toggle|test|doctor|settings]\ninspect or control capability-aware Aether Voice",
+    "section": "Session",
+    "hidden": false,
+    "permissionClass": "network",
+    "availability": {
+      "state": "runtime-dependent",
+      "capabilityRequirements": []
+    },
+    "telemetryName": "slash.voice",
+    "acceptedGlobalFlags": [],
+    "ownedFlags": {},
+    "handler": {
+      "id": "handler:slash:voice",
+      "kind": "host",
+      "module": "src/commands/slash.ts",
+      "symbol": "handleSlash"
+    },
+    "docs": {
+      "kind": "manifest",
+      "module": "src/commands/command_manifest_data.ts",
+      "symbol": "COMMAND_MANIFEST_SOURCE",
+      "target": "voice",
+      "usage": "/voice [on|off|toggle|test|doctor|settings]",
+      "visible": true,
+      "disposition": "generated"
+    },
+    "release": {
+      "disposition": "new",
+      "note": "Adds the in-session Voice status and diagnostics entry point."
     }
   },
   {

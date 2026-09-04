@@ -5,14 +5,26 @@
 // arrow-key menu. All terminal I/O flows through MenuIO so the screen logic
 // is fully testable with scripted keys.
 
-import type { Writable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 import type { AppContext } from "../core/context.js";
 import type { Key } from "./chat.js";
 import { decodeKey } from "./chat.js";
 import { McpClient } from "../core/mcp.js";
 import type { McpProvider, McpConnection, StartOAuthResponse } from "../core/mcp.js";
 import { LocalMcpStore, sanityCheckUrl } from "../core/mcp_store.js";
-import { collectMcpDiagnostics, renderMcpDiagnostics } from "../core/mcp_diagnostics.js";
+import {
+  collectMcpDiagnostics,
+  redactMcpUrl,
+  renderMcpDiagnostics,
+  type McpDiagnosticOptions,
+} from "../core/mcp_diagnostics.js";
+import {
+  McpOperationCancelledError,
+  McpOperationSupervisor,
+  McpOperationTimeoutError,
+  probeLocalMcpServer,
+  type LocalMcpReachability,
+} from "../core/mcp_lifecycle.js";
 import { errorMessage } from "../core/errors.js";
 import { SelectMenu, renderMenu } from "../ui/menu.js";
 import type { MenuItem } from "../ui/menu.js";
@@ -27,6 +39,9 @@ export interface MenuIO {
   readLine(prompt: string, mask?: boolean): Promise<string>;
   openUrl(url: string): void;
   sleep(ms: number): Promise<void>;
+  /** Active operations subscribe without consuming ordinary queued keys. */
+  subscribeCancel?(cancel: () => void): () => void;
+  isClosed?(): boolean;
 }
 
 interface Snapshot {
@@ -34,14 +49,59 @@ interface Snapshot {
   connections: McpConnection[] | null; // null → broker unavailable
 }
 
-async function loadSnapshot(client: McpClient): Promise<Snapshot> {
+export interface McpMenuOptions {
+  operationTimeoutMs?: number;
+  oauthTimeoutMs?: number;
+  localProbe?: (url: string, signal: AbortSignal) => Promise<LocalMcpReachability>;
+}
+
+async function boundedMenuOperation<T>(
+  supervisor: McpOperationSupervisor,
+  io: MenuIO,
+  operation: string,
+  timeoutMs: number,
+  work: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  return supervisor.run(operation, work, {
+    timeoutMs,
+    ...(io.subscribeCancel
+      ? { subscribeCancel: (cancel: () => void) => io.subscribeCancel!(cancel) }
+      : {}),
+  });
+}
+
+function rethrowCancellation(error: unknown): void {
+  if (error instanceof McpOperationCancelledError) throw error;
+}
+
+function safeMcpFailure(error: unknown): string {
+  if (error instanceof McpOperationTimeoutError || error instanceof McpOperationCancelledError) {
+    return error.message;
+  }
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === "number" ? `request failed (HTTP ${status})` : "request failed";
+}
+
+async function loadSnapshot(
+  client: McpClient,
+  io: MenuIO,
+  supervisor: McpOperationSupervisor,
+  timeoutMs: number,
+): Promise<Snapshot> {
   try {
-    const [providers, connections] = await Promise.all([
-      client.listProviders(),
-      client.listConnections(),
-    ]);
+    const [providers, connections] = await boundedMenuOperation(
+      supervisor,
+      io,
+      "broker discovery",
+      timeoutMs,
+      (signal) => Promise.all([
+        client.listProviders({ signal, timeoutMs }),
+        client.listConnections({ signal, timeoutMs }),
+      ]),
+    );
     return { providers, connections };
-  } catch {
+  } catch (error) {
+    rethrowCancellation(error);
     return { providers: [], connections: null };
   }
 }
@@ -58,7 +118,7 @@ function mainItems(snap: Snapshot, store: LocalMcpStore): MenuItem[] {
       const connected = snap.connections.some((c) => c.provider_id === p.provider_id);
       items.push({
         id: `b:${p.provider_id}`,
-        label: p.display_name,
+        label: sanitizeTerm(p.display_name),
         glyph: connected ? "✔" : "○",
         hint: connected ? "connected" : p.flow === "pat_paste" ? "needs API key" : "needs OAuth",
       });
@@ -68,7 +128,12 @@ function mainItems(snap: Snapshot, store: LocalMcpStore): MenuItem[] {
   if (local.length > 0) {
     items.push({ id: "_sep", label: "── custom servers ──", disabled: true });
     for (const s of local) {
-      items.push({ id: `l:${s.name}`, label: s.name, glyph: "●", hint: s.url });
+      items.push({
+        id: `l:${s.name}`,
+        label: sanitizeTerm(s.name),
+        glyph: "●",
+        hint: sanitizeTerm(redactMcpUrl(s.url)),
+      });
     }
   }
   return items;
@@ -85,8 +150,11 @@ async function pickFromMenu(
   items: MenuItem[],
   footer: string,
   allowAdd: boolean,
+  initialId?: string,
 ): Promise<MenuPick> {
   const menu = new SelectMenu(items);
+  const initial = initialId == null ? -1 : items.findIndex((item) => item.id === initialId && !item.disabled);
+  if (initial >= 0) menu.cursor = initial;
   for (;;) {
     io.out.write("\x1b[2J\x1b[H" + renderMenu(title, menu, footer));
     const k = await io.nextKey();
@@ -109,42 +177,79 @@ async function pickFromMenu(
 }
 
 function note(io: MenuIO, msg: string): void {
-  io.out.write(theme.dim(sanitizeTerm(msg)) + "\n");
+  if (io.isClosed?.()) return;
+  io.out.write(theme.dim(sanitizeTerm(msg).replace(/[\r\n]/g, " ")) + "\n");
 }
 
-async function authenticate(client: McpClient, io: MenuIO, providerId: string): Promise<void> {
+async function authenticate(
+  client: McpClient,
+  io: MenuIO,
+  providerId: string,
+  supervisor: McpOperationSupervisor,
+  operationTimeoutMs: number,
+  oauthTimeoutMs: number,
+): Promise<void> {
+  const safeProviderId = sanitizeTerm(providerId);
   let start: StartOAuthResponse;
   try {
-    start = await client.startOAuth(providerId);
+    start = await boundedMenuOperation(
+      supervisor,
+      io,
+      `authentication start for ${safeProviderId}`,
+      operationTimeoutMs,
+      (signal) => client.startOAuth(providerId, { signal, timeoutMs: operationTimeoutMs }),
+    );
   } catch (e) {
-    note(io, `auth start failed: ${errorMessage(e)}`);
+    rethrowCancellation(e);
+    note(io, `auth start failed: ${safeMcpFailure(e)} — selection preserved; retry or run aether mcp doctor`);
     return;
   }
   if (start.flow === "pat_paste") {
-    const pat = (await io.readLine(`Paste your ${providerId} API key: `, true)).trim();
+    const pat = (await io.readLine(`Paste your ${safeProviderId} API key: `, true)).trim();
     if (!pat) {
       note(io, "cancelled.");
       return;
     }
     try {
-      const r = await client.patStore(providerId, pat);
-      note(io, r.ok ? `✔ ${providerId} connected` : `✖ rejected: ${r.reason ?? "validation failed"}`);
+      const r = await boundedMenuOperation(
+        supervisor,
+        io,
+        `credential validation for ${safeProviderId}`,
+        operationTimeoutMs,
+        (signal) => client.patStore(providerId, pat, { signal, timeoutMs: operationTimeoutMs }),
+      );
+      note(io, r.ok ? `✔ ${safeProviderId} connected` : "✖ credential rejected by the broker");
     } catch (e) {
-      note(io, `✖ store failed: ${errorMessage(e)}`);
+      rethrowCancellation(e);
+      note(io, `✖ credential store failed: ${safeMcpFailure(e)} — retry or re-enter the credential`);
     }
     return;
   }
   if (start.flow === "auth_code_pkce" && start.authorize_url) {
     const urlError = sanityCheckUrl(start.authorize_url);
     if (urlError) { note(io, `auth URL rejected: ${urlError}`); return; }
-    io.out.write(`Opening browser to authorize ${sanitizeTerm(providerId)}…\n${theme.dim(sanitizeTerm(start.authorize_url))}\n`);
+    io.out.write(
+      `Opening browser to authorize ${safeProviderId}…\n` +
+        `${theme.dim(sanitizeTerm(redactMcpUrl(start.authorize_url)) + " (authorization parameters hidden)")}\n`,
+    );
     io.openUrl(start.authorize_url);
     io.out.write("Waiting for authorization…\n");
     try {
-      await client.pollUntilConnected(providerId, io.sleep);
-      note(io, `✔ ${providerId} connected`);
+      await boundedMenuOperation(
+        supervisor,
+        io,
+        `authorization wait for ${safeProviderId}`,
+        oauthTimeoutMs,
+        (signal) => client.pollUntilConnected(providerId, io.sleep, {
+          signal,
+          timeoutSec: Math.ceil(oauthTimeoutMs / 1_000),
+          requestTimeoutMs: operationTimeoutMs,
+        }),
+      );
+      note(io, `✔ ${safeProviderId} connected`);
     } catch (e) {
-      note(io, `✖ ${errorMessage(e)}`);
+      rethrowCancellation(e);
+      note(io, `✖ ${safeMcpFailure(e)} — retry authorization or run aether mcp doctor`);
     }
     return;
   }
@@ -163,6 +268,9 @@ async function manageBackend(
   io: MenuIO,
   snap: Snapshot,
   providerId: string,
+  supervisor: McpOperationSupervisor,
+  operationTimeoutMs: number,
+  oauthTimeoutMs: number,
 ): Promise<void> {
   const connected = !!snap.connections?.some((c) => c.provider_id === providerId);
   const items: MenuItem[] = [
@@ -171,51 +279,94 @@ async function manageBackend(
     ...(connected ? [{ id: "del", label: "Disconnect", glyph: "✖" }] : []),
     { id: "back", label: "Back", glyph: "←" },
   ];
-  const r = await pickFromMenu(io, `MCP · ${providerId}`, items, FOOT_SUB, false);
+  const safeProviderId = sanitizeTerm(providerId);
+  const r = await pickFromMenu(io, `MCP · ${safeProviderId}`, items, FOOT_SUB, false);
   if (r.action !== "select") return;
   switch (r.item.id) {
     case "auth":
-      await authenticate(client, io, providerId);
+      await authenticate(client, io, providerId, supervisor, operationTimeoutMs, oauthTimeoutMs);
       break;
     case "test":
       try {
-        const tools = await client.listTools(providerId);
-        note(io, `✔ ${providerId}: ${tools.length} tools available`);
+        const tools = await boundedMenuOperation(
+          supervisor,
+          io,
+          `tool catalog for ${safeProviderId}`,
+          operationTimeoutMs,
+          (signal) => client.listTools(providerId, { signal, timeoutMs: operationTimeoutMs }),
+        );
+        note(io, `✔ ${safeProviderId}: ${tools.length} tools available`);
       } catch (e) {
-        note(io, `✖ test failed: ${errorMessage(e)} — try Re-authenticate`);
+        rethrowCancellation(e);
+        note(io, `✖ test failed: ${safeMcpFailure(e)} — selection preserved; try Re-authenticate`);
       }
       break;
     case "del":
-      if (await confirmChar(io, `Disconnect ${providerId}? [y/N] `)) {
+      if (await confirmChar(io, `Disconnect ${safeProviderId}? [y/N] `)) {
         try {
-          await client.disconnect(providerId);
-          note(io, `✔ disconnected ${providerId}`);
+          await boundedMenuOperation(
+            supervisor,
+            io,
+            `disconnect for ${safeProviderId}`,
+            operationTimeoutMs,
+            (signal) => client.disconnect(providerId, { signal, timeoutMs: operationTimeoutMs }),
+          );
+          note(io, `✔ disconnected ${safeProviderId}`);
         } catch (e) {
-          note(io, `✖ ${errorMessage(e)}`);
+          rethrowCancellation(e);
+          note(io, `✖ disconnect failed: ${safeMcpFailure(e)} — connection state was not changed locally`);
         }
       }
       break;
   }
 }
 
-async function manageLocal(store: LocalMcpStore, io: MenuIO, name: string): Promise<void> {
+async function manageLocal(
+  store: LocalMcpStore,
+  io: MenuIO,
+  name: string,
+  supervisor: McpOperationSupervisor,
+  operationTimeoutMs: number,
+  localProbe: (url: string, signal: AbortSignal) => Promise<LocalMcpReachability>,
+): Promise<void> {
   const items: MenuItem[] = [
-    { id: "test", label: "Test (sanity check URL)", glyph: "⟳" },
+    { id: "test", label: "Test reachability", glyph: "⟳" },
     { id: "edit", label: "Edit URL / token", glyph: "✎" },
     { id: "del", label: "Delete", glyph: "✖" },
     { id: "back", label: "Back", glyph: "←" },
   ];
-  const r = await pickFromMenu(io, `MCP · ${name} (local)`, items, FOOT_SUB, false);
+  const r = await pickFromMenu(io, `MCP · ${sanitizeTerm(name)} (local HTTP/SSE)`, items, FOOT_SUB, false);
   if (r.action !== "select") return;
   const current = store.list().find((s) => s.name === name);
   switch (r.item.id) {
     case "test": {
       const err = current ? sanityCheckUrl(current.url) : "server missing";
-      note(io, err ? `✖ ${err}` : "✔ URL shape OK — stored locally, not yet forwarded to agent chats");
+      if (err || !current) {
+        note(io, `✖ ${err ?? "server missing"}`);
+        break;
+      }
+      try {
+        const result = await boundedMenuOperation(
+          supervisor,
+          io,
+          `local reachability test for ${sanitizeTerm(name)}`,
+          operationTimeoutMs,
+          (signal) => localProbe(current.url, signal),
+        );
+        note(io, `${result.serviceHealthy ? "✔" : "✖"} ${result.detail}`);
+      } catch (error) {
+        rethrowCancellation(error);
+        note(
+          io,
+          `✖ ${safeMcpFailure(error)}; no stored credential was sent — selection preserved; ` +
+            "retry or run aether mcp doctor",
+        );
+      }
       break;
     }
     case "edit": {
-      const url = (await io.readLine(`URL [${current?.url ?? ""}]: `)).trim();
+      const shownUrl = current ? redactMcpUrl(current.url) : "";
+      const url = (await io.readLine(`URL [${sanitizeTerm(shownUrl)}]: `)).trim();
       const tok = (await io.readLine("Auth token (blank = keep): ", true)).trim();
       try {
         store.update(name, {
@@ -229,7 +380,7 @@ async function manageLocal(store: LocalMcpStore, io: MenuIO, name: string): Prom
       break;
     }
     case "del":
-      if (await confirmChar(io, `Delete ${name}? [y/N] `)) {
+      if (await confirmChar(io, `Delete ${sanitizeTerm(name)}? [y/N] `)) {
         store.remove(name);
         note(io, `✔ deleted ${name}`);
       }
@@ -258,69 +409,131 @@ export async function runMcpMenu(
   client: McpClient,
   store: LocalMcpStore,
   io: MenuIO,
+  options: McpMenuOptions = {},
 ): Promise<void> {
-  for (;;) {
-    const snap = await loadSnapshot(client);
-    const r = await pickFromMenu(io, "MCP Servers", mainItems(snap, store), FOOT_MAIN, true);
-    if (r.action === "quit") return;
-    if (r.action === "add") {
-      await addLocal(store, io);
-      continue;
+  const operationTimeoutMs = options.operationTimeoutMs ?? 10_000;
+  const oauthTimeoutMs = options.oauthTimeoutMs ?? 180_000;
+  const localProbe = options.localProbe ?? probeLocalMcpServer;
+  const supervisor = new McpOperationSupervisor();
+  let selectedId: string | undefined;
+  try {
+    for (;;) {
+      const snap = await loadSnapshot(client, io, supervisor, operationTimeoutMs);
+      const r = await pickFromMenu(
+        io,
+        "MCP Servers",
+        mainItems(snap, store),
+        FOOT_MAIN,
+        true,
+        selectedId,
+      );
+      if (r.action === "quit") return;
+      if (r.action === "add") {
+        await addLocal(store, io);
+        continue;
+      }
+      selectedId = r.item.id;
+      const kind = r.item.id.slice(0, 1);
+      const id = r.item.id.slice(2);
+      if (kind === "b") {
+        await manageBackend(
+          client,
+          io,
+          snap,
+          id,
+          supervisor,
+          operationTimeoutMs,
+          oauthTimeoutMs,
+        );
+      } else if (kind === "l") {
+        await manageLocal(store, io, id, supervisor, operationTimeoutMs, localProbe);
+      }
     }
-    const kind = r.item.id.slice(0, 1);
-    const id = r.item.id.slice(2);
-    if (kind === "b") await manageBackend(client, io, snap, id);
-    else if (kind === "l") await manageLocal(store, io, id);
+  } catch (error) {
+    if (!(error instanceof McpOperationCancelledError)) throw error;
+    note(io, error.message);
+  } finally {
+    supervisor.dispose();
   }
 }
 
 // ── Real-terminal IO + entry points ─────────────────────────────────────────
 
-function makeRealIO(): MenuIO & { close(): void } {
+export function createMcpMenuIO(
+  input: Readable = process.stdin,
+  output: Writable = process.stdout,
+): MenuIO & { close(): void } {
   const pending: Array<(k: Key) => void> = [];
   const queue: Key[] = [];
+  const cancellationListeners = new Set<() => void>();
+  let closed = false;
   const onData = (chunk: Buffer): void => {
+    if (closed) return;
     const k = decodeKey(chunk.toString("utf8"));
+    if (k.kind === "interrupt" && cancellationListeners.size > 0) {
+      for (const cancel of [...cancellationListeners]) {
+        try { cancel(); } catch { /* one defective subscriber must not strand the others */ }
+      }
+      return;
+    }
     const w = pending.shift();
     if (w) w(k);
     else queue.push(k);
   };
-  process.stdin.on("data", onData);
+  input.on("data", onData);
   const io: MenuIO & { close(): void } = {
-    out: process.stdout,
+    out: output,
     nextKey(): Promise<Key> {
+      if (closed) return Promise.resolve({ kind: "eof" });
       const q = queue.shift();
       if (q) return Promise.resolve(q);
       return new Promise((res) => pending.push(res));
     },
     async readLine(prompt: string, mask?: boolean): Promise<string> {
-      process.stdout.write(prompt);
+      output.write(sanitizeTerm(prompt));
       let acc = "";
       for (;;) {
         const k = await io.nextKey();
         if (k.kind === "submit") {
-          process.stdout.write("\n");
+          if (!closed) output.write("\n");
           return acc;
         }
         if (k.kind === "interrupt" || k.kind === "eof") {
-          process.stdout.write("\n");
+          if (!closed) output.write("\n");
           return "";
         }
         if (k.kind === "backspace") {
           if (acc) {
             acc = acc.slice(0, -1);
-            process.stdout.write("\b \b");
+            output.write("\b \b");
           }
         } else if (k.kind === "char") {
           acc += k.value;
-          process.stdout.write(mask ? "*" : k.value);
+          output.write(mask ? "*" : sanitizeTerm(k.value));
         }
       }
     },
     openUrl: (u: string) => openBrowser(u),
     sleep: (ms: number) => new Promise((r) => setTimeout(r, ms)),
+    subscribeCancel(cancel: () => void): () => void {
+      if (closed) {
+        cancel();
+        return () => {};
+      }
+      cancellationListeners.add(cancel);
+      return () => cancellationListeners.delete(cancel);
+    },
+    isClosed: () => closed,
     close(): void {
-      process.stdin.removeListener("data", onData);
+      if (closed) return;
+      closed = true;
+      input.removeListener("data", onData);
+      queue.length = 0;
+      for (const cancel of [...cancellationListeners]) {
+        try { cancel(); } catch { /* cleanup continues for every subscriber */ }
+      }
+      cancellationListeners.clear();
+      for (const resolve of pending.splice(0)) resolve({ kind: "eof" });
     },
   };
   return io;
@@ -328,7 +541,7 @@ function makeRealIO(): MenuIO & { close(): void } {
 
 /** REPL entry: stdin is already in raw mode (chat.ts owns it). */
 export async function mcpFromRepl(ctx: AppContext): Promise<void> {
-  const io = makeRealIO();
+  const io = createMcpMenuIO();
   try {
     await runMcpMenu(new McpClient(ctx.api), new LocalMcpStore(), io);
   } finally {
@@ -342,6 +555,8 @@ export interface McpCommandOptions {
   out?: Writable;
   client?: McpClient;
   store?: LocalMcpStore;
+  diagnosticOptions?: McpDiagnosticOptions;
+  menuOptions?: McpMenuOptions;
 }
 
 export async function cmdMcp(
@@ -355,7 +570,11 @@ export async function cmdMcp(
   const store = options.store ?? new LocalMcpStore();
 
   if (sub === "list" || sub === "doctor") {
-    const report = await collectMcpDiagnostics(client, store, { includeToolCounts: true });
+    const report = await collectMcpDiagnostics(client, store, {
+      includeToolCounts: true,
+      includeLocalReachability: sub === "doctor",
+      ...options.diagnosticOptions,
+    });
     out.write(ctx.flags.json ? JSON.stringify(report) + "\n" : renderMcpDiagnostics(report));
     return sub === "doctor" && report.checks.some((check) => check.status === "fail") ? 1 : 0;
   }
@@ -390,9 +609,9 @@ export async function cmdMcp(
   }
   process.stdin.setRawMode(true);
   process.stdin.resume();
-  const io = makeRealIO();
+  const io = createMcpMenuIO(process.stdin, out);
   try {
-    await runMcpMenu(client, store, io);
+    await runMcpMenu(client, store, io, options.menuOptions);
     return 0;
   } finally {
     io.close();

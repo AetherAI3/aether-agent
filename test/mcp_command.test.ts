@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runMcpMenu } from "../src/commands/mcp.js";
+import { PassThrough } from "node:stream";
+import { createMcpMenuIO, runMcpMenu } from "../src/commands/mcp.js";
 import type { MenuIO } from "../src/commands/mcp.js";
 import { LocalMcpStore } from "../src/core/mcp_store.js";
 import { McpClient } from "../src/core/mcp.js";
@@ -126,4 +127,153 @@ test("pat auth flow stores PAT via broker", async () => {
   await runMcpMenu(new McpClient(api), store, io);
   assert.deepEqual(patBody, { provider_id: "fal.ai", pat: "fal-secret-key", metadata: {} });
   assert.match(out.join(""), /connected/i);
+});
+
+test("a hanging broker tool test fails visibly, preserves selection, and ignores late completion", async () => {
+  let resolveTools: ((value: Array<{ name: string }>) => void) | undefined;
+  let toolSignal: AbortSignal | undefined;
+  const tools = new Promise<Array<{ name: string }>>((resolve) => { resolveTools = resolve; });
+  const client = {
+    async listProviders() {
+      return [
+        { provider_id: "first", display_name: "First", flow: "pat_paste" as const },
+        { provider_id: "second", display_name: "Second", flow: "pat_paste" as const },
+      ];
+    },
+    async listConnections() {
+      return [
+        { provider_id: "first", created_at: "t", updated_at: "t" },
+        { provider_id: "second", created_at: "t", updated_at: "t" },
+      ];
+    },
+    async listTools(_providerId: string, options?: { signal?: AbortSignal }) {
+      toolSignal = options?.signal;
+      return tools;
+    },
+  } as unknown as McpClient;
+  const dir = mkdtempSync(join(tmpdir(), "aether-mcpcmd-hang-"));
+  const { io, out } = makeIO([
+    { kind: "down" },
+    { kind: "submit" },
+    { kind: "down" },
+    { kind: "submit" },
+    "q",
+  ]);
+  await runMcpMenu(client, new LocalMcpStore(join(dir, "mcp.json")), io, {
+    operationTimeoutMs: 10,
+  });
+  const beforeLateCompletion = out.join("");
+  assert.equal(toolSignal?.aborted, true);
+  assert.match(beforeLateCompletion, /stalled for 10ms/i);
+  assert.match(beforeLateCompletion, /request was cancelled/i);
+  assert.match(beforeLateCompletion, /safe to retry/i);
+  const lastFrame = beforeLateCompletion.slice(beforeLateCompletion.lastIndexOf("MCP Servers"));
+  assert.match(lastFrame, /❯\s+✔\s+Second/);
+
+  resolveTools?.([{ name: "late" }]);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(out.join(""), beforeLateCompletion, "late provider completion must not write after exit");
+});
+
+test("a hanging local HTTP/SSE reachability test is bounded and sends no credential", async () => {
+  const { client, store } = deps({});
+  store.add({
+    name: "docs",
+    url: "https://mcp.example.test/sse?token=must-not-render",
+    transport: "http",
+    authToken: "SENTINEL-local-auth-never-send",
+  });
+  let probeSignal: AbortSignal | undefined;
+  const { io, out } = makeIO([{ kind: "submit" }, { kind: "submit" }, "q"]);
+  await runMcpMenu(client, store, io, {
+    operationTimeoutMs: 10,
+    localProbe: async (_url, signal) => {
+      probeSignal = signal;
+      return new Promise(() => {});
+    },
+  });
+  const rendered = out.join("");
+  assert.equal(probeSignal?.aborted, true);
+  assert.match(rendered, /local reachability test.*stalled/i);
+  assert.match(rendered, /no stored credential was sent/i);
+  assert.equal(rendered.includes("must-not-render"), false);
+  assert.equal(rendered.includes("SENTINEL-local-auth-never-send"), false);
+});
+
+test("Ctrl+C cancels an in-flight MCP operation and restores the terminal loop", async () => {
+  let cancelListener: (() => void) | undefined;
+  let subscriptions = 0;
+  let toolSignal: AbortSignal | undefined;
+  const keyQueue: Key[] = [
+    { kind: "submit" },
+    { kind: "down" },
+    { kind: "submit" },
+  ];
+  const chunks: string[] = [];
+  const io: MenuIO = {
+    out: { write: (value: string) => (chunks.push(value), true) } as unknown as MenuIO["out"],
+    async nextKey() { return keyQueue.shift() ?? { kind: "eof" }; },
+    async readLine() { return ""; },
+    openUrl() {},
+    async sleep() {},
+    subscribeCancel(cancel) {
+      subscriptions++;
+      cancelListener = cancel;
+      return () => { subscriptions--; };
+    },
+  };
+  const client = {
+    async listProviders() {
+      return [{ provider_id: "docs", display_name: "Docs", flow: "pat_paste" as const }];
+    },
+    async listConnections() {
+      return [{ provider_id: "docs", created_at: "t", updated_at: "t" }];
+    },
+    async listTools(_provider: string, options?: { signal?: AbortSignal }) {
+      toolSignal = options?.signal;
+      queueMicrotask(() => cancelListener?.());
+      return new Promise<Array<{ name: string }>>(() => {});
+    },
+  } as unknown as McpClient;
+  await runMcpMenu(client, new LocalMcpStore(join(mkdtempSync(join(tmpdir(), "aether-mcpcancel-")), "mcp.json")), io);
+  assert.equal(toolSignal?.aborted, true);
+  assert.equal(subscriptions, 0);
+  assert.match(chunks.join(""), /was cancelled/i);
+  assert.match(chunks.join(""), /terminal is ready/i);
+});
+
+test("100 MCP menu IO mount/dispose cycles leave no data listeners or pending readers", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const baseline = input.listenerCount("data");
+  for (let index = 0; index < 100; index++) {
+    const io = createMcpMenuIO(input, output);
+    assert.equal(input.listenerCount("data"), baseline + 1);
+    const pending = io.nextKey();
+    io.close();
+    io.close();
+    assert.deepEqual(await pending, { kind: "eof" });
+    assert.equal(input.listenerCount("data"), baseline);
+  }
+  const writtenBefore = output.readableLength;
+  input.write("q");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(output.readableLength, writtenBefore, "closed MCP IO must not write after disposal");
+  input.destroy();
+  output.destroy();
+});
+
+test("MCP menu IO close is exception-safe and does not write after resolving a pending read", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const io = createMcpMenuIO(input, output);
+  io.subscribeCancel?.(() => { throw new Error("defective cancel hook"); });
+  const pendingLine = io.readLine("value: ");
+  const beforeClose = output.readableLength;
+  assert.doesNotThrow(() => io.close());
+  assert.equal(await pendingLine, "");
+  assert.equal(output.readableLength, beforeClose, "EOF cleanup must not append a post-close newline");
+  assert.equal(input.listenerCount("data"), 0);
+  input.destroy();
+  output.destroy();
 });

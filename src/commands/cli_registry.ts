@@ -88,6 +88,21 @@ export const GLOBAL_FLAGS: FlagTable = {
  */
 export const SHELL_RUNTIME_HANDLERS: Array<Pick<DispatchedCommand, "name" | "load">> = [
   {
+    name: "settings",
+    load: async () => {
+      const { runSettingsCommand, settingsOptionsFromFlags } = await import("./settings.js");
+      return (ctx, argv, flags) =>
+        runSettingsCommand(ctx, argv, settingsOptionsFromFlags(flags, ctx.flags.scope));
+    },
+  },
+  {
+    name: "voice",
+    load: async () => {
+      const { cmdVoice } = await import("./voice.js");
+      return (ctx, argv, flags) => cmdVoice(ctx, argv, flags);
+    },
+  },
+  {
     name: "exec",
     load: async () => {
       const { cmdExec } = await import("./exec.js");

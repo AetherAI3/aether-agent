@@ -42,42 +42,51 @@ export interface ToolDescriptor {
 export interface PollOpts {
   intervalSec?: number;
   timeoutSec?: number;
+  signal?: AbortSignal;
+  requestTimeoutMs?: number;
+}
+
+export interface McpRequestOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 export class McpClient {
   constructor(private readonly api: ApiClient) {}
 
-  listProviders(): Promise<McpProvider[]> {
-    return this.api.getJson<McpProvider[]>(MCP_PROVIDERS_PATH);
+  listProviders(options: McpRequestOptions = {}): Promise<McpProvider[]> {
+    return this.api.getJson<McpProvider[]>(MCP_PROVIDERS_PATH, options.signal, options.timeoutMs);
   }
 
-  listConnections(): Promise<McpConnection[]> {
-    return this.api.getJson<McpConnection[]>(MCP_CONNECTIONS_PATH);
+  listConnections(options: McpRequestOptions = {}): Promise<McpConnection[]> {
+    return this.api.getJson<McpConnection[]>(MCP_CONNECTIONS_PATH, options.signal, options.timeoutMs);
   }
 
-  startOAuth(providerId: string): Promise<StartOAuthResponse> {
+  startOAuth(providerId: string, options: McpRequestOptions = {}): Promise<StartOAuthResponse> {
     return this.api.postJson<StartOAuthResponse>(MCP_OAUTH_START_PATH, {
       provider_id: providerId,
-    });
+    }, options.signal, options.timeoutMs);
   }
 
-  patStore(providerId: string, pat: string): Promise<PatStoreResult> {
+  patStore(providerId: string, pat: string, options: McpRequestOptions = {}): Promise<PatStoreResult> {
     return this.api.postJson<PatStoreResult>(MCP_PAT_STORE_PATH, {
       provider_id: providerId,
       pat,
       metadata: {},
-    });
+    }, options.signal, options.timeoutMs);
   }
 
-  disconnect(providerId: string): Promise<{ ok: boolean }> {
+  disconnect(providerId: string, options: McpRequestOptions = {}): Promise<{ ok: boolean }> {
     return this.api.postJson<{ ok: boolean }>(MCP_DISCONNECT_PATH, {
       provider_id: providerId,
-    });
+    }, options.signal, options.timeoutMs);
   }
 
-  listTools(providerId: string): Promise<ToolDescriptor[]> {
+  listTools(providerId: string, options: McpRequestOptions = {}): Promise<ToolDescriptor[]> {
     return this.api.getJson<ToolDescriptor[]>(
       `${MCP_TOOLS_PATH}/${encodeURIComponent(providerId)}`,
+      options.signal,
+      options.timeoutMs,
     );
   }
 
@@ -90,12 +99,21 @@ export class McpClient {
   ): Promise<McpConnection> {
     const intervalMs = (opts.intervalSec ?? 2) * 1000;
     const deadline = Date.now() + (opts.timeoutSec ?? 180) * 1000;
+    const signal = opts.signal;
     while (Date.now() < deadline) {
-      await sleep(intervalMs);
+      await abortableSleep(sleep, Math.min(intervalMs, Math.max(0, deadline - Date.now())), signal);
+      if (signal?.aborted) throw abortError();
       let conns: McpConnection[];
       try {
-        conns = await this.listConnections();
-      } catch {
+        conns = await this.listConnections({
+          signal,
+          timeoutMs: Math.max(
+            1,
+            Math.min(opts.requestTimeoutMs ?? 10_000, Math.max(1, deadline - Date.now())),
+          ),
+        });
+      } catch (error) {
+        if (signal?.aborted) throw error;
         continue; // transient — retry until deadline
       }
       const hit = conns.find((c) => c.provider_id === providerId);
@@ -103,4 +121,37 @@ export class McpClient {
     }
     throw new Error(`timed out waiting for ${providerId} authorization`);
   }
+}
+
+function abortError(): Error {
+  const error = new Error("MCP operation aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+async function abortableSleep(
+  sleep: (ms: number) => Promise<void>,
+  ms: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (signal?.aborted) throw abortError();
+  if (!signal) {
+    await sleep(ms);
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: unknown): void => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onAbort = (): void => finish(abortError());
+    signal.addEventListener("abort", onAbort, { once: true });
+    Promise.resolve()
+      .then(() => sleep(ms))
+      .then(() => finish(), (error: unknown) => finish(error));
+  });
 }

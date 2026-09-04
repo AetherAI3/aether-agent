@@ -50,6 +50,18 @@ test("corrupt reads are non-mutating and mutators fail closed", () => {
   assert.equal(readFileSync(file, "utf8"), raw);
 });
 
+test("unsupported stdio child-server entries fail closed instead of spawning an unowned process", () => {
+  const { store, file } = freshStore();
+  const raw = JSON.stringify({
+    servers: [{ name: "child", transport: "stdio", command: "missing-mcp-executable" }],
+  });
+  writeFileSync(file, raw, "utf8");
+  const inspected = store.inspect();
+  assert.equal(inspected.status, "corrupt");
+  assert.deepEqual(inspected.servers, []);
+  assert.equal(readFileSync(file, "utf8"), raw);
+});
+
 test("repair is explicit, backup-first, and resets only after preserving bytes", () => {
   const { store, file } = freshStore();
   const raw = "{not json";

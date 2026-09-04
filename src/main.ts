@@ -120,6 +120,7 @@ export async function main(argv: string[]): Promise<number> {
     testCmd: sf(values["test-cmd"]),
     resume: sf(values["resume"]),
     ...(typeof values["out"] === "string" ? { out: values["out"] as string } : {}),
+    ...(typeof values["scope"] === "string" ? { scope: values["scope"] as string } : {}),
     cwd: typeof values["cwd"] === "string" ? (values["cwd"] as string) : process.cwd(),
   };
   // y/N confirmation for destructive prompts (e.g. switching model mid-session).

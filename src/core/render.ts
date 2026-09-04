@@ -151,7 +151,11 @@ export class Renderer {
     const rest = this.md.flush();
     if (rest) this.out.write(rest);
     this.out.write("\n");
-    this.err.write(`— ${f.uvt} UVT · ${f.cents.toFixed(2)}¢\n`);
+    this.err.write(
+      f.usageKnown === false
+        ? "— UVT usage unknown · non-streaming response\n"
+        : `— ${f.uvt} UVT · ${f.cents.toFixed(2)}¢\n`,
+    );
   }
 
   private error(f: Extract<StreamFrame, { type: "error" }>): void {

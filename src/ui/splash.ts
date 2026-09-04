@@ -20,6 +20,15 @@ import { composeBrand } from "./logo.js";
 import { sanitizeTerm } from "./text.js";
 import { entriesForWorkspace, syncSessionIndex, type SessionIndexEntry } from "../core/session_index.js";
 import { getRegistry } from "../core/context_registry.js";
+import { detectTerminalCapabilities, type TerminalCapabilities } from "../core/terminal_capabilities.js";
+import {
+  DEFAULT_VOICE_SETTINGS,
+  initialVoiceMachine,
+  terminalVoiceState,
+  type TerminalVoiceState,
+  type VoiceSettings,
+} from "../core/voice.js";
+import { voicePromoLines } from "./voice_promo.js";
 
 export interface SplashInfo {
   version: string;
@@ -29,6 +38,11 @@ export interface SplashInfo {
    *  block — and no disk read at all, which is what keeps this renderer usable
    *  from a unit test and from any caller that has no project. */
   cwd?: string;
+  /** Embedders inject proven host facts. Standalone callers omit this and the
+   * detector deliberately reports no audio adapter. */
+  terminalCapabilities?: TerminalCapabilities;
+  voiceSettings?: VoiceSettings;
+  voiceState?: TerminalVoiceState;
 }
 
 /** Rotating power-feature tips — one shows per launch. Exported for tests. */
@@ -204,5 +218,9 @@ export function readContinuity(cwd: string): ContinuityFacts | null {
 export function renderSplash(info: SplashInfo, tipSlot?: number): string {
   const facts = info.cwd ? readContinuity(info.cwd) : null;
   const continuity = facts ? [...continuityLines(facts), ""] : [];
-  return [...composeBrand(), "", ...continuity, ...statusLines(info, tipSlot)].join("\n");
+  const capabilities = info.terminalCapabilities ?? detectTerminalCapabilities();
+  const voiceSettings = info.voiceSettings ?? { ...DEFAULT_VOICE_SETTINGS };
+  const voiceState = info.voiceState ?? terminalVoiceState(initialVoiceMachine, voiceSettings, capabilities);
+  const voice = voicePromoLines({ capabilities, settings: voiceSettings, state: voiceState });
+  return [...composeBrand(), "", ...voice, "", ...continuity, ...statusLines(info, tipSlot)].join("\n");
 }

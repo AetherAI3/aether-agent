@@ -10,7 +10,7 @@
 import type { AppContext } from "../core/context.js";
 import type { Brain, TaskCommand } from "../core/brain.js";
 import type { BrainEvent } from "../core/brain_protocol.js";
-import type { ToolResult } from "../core/tool_executor.js";
+import type { RunOptions, ToolResult } from "../core/tool_executor.js";
 import { LocalBrain } from "../core/brain_local.js";
 import { OllamaBrain } from "../core/brain_ollama.js";
 import { resolveHostedModel, resolveLocalModelSelection } from "../core/local_ollama.js";
@@ -21,7 +21,7 @@ import { defaultRunner } from "../core/worktree.js";
 import { isCurrentWorkspace } from "../core/workspace_scope.js";
 import { HostRenderer, routingDriftLines } from "../ui/host_render.js";
 import { SessionLog } from "../core/session_log.js";
-import { finalVerify, type BrainDone } from "../core/verify_gate.js";
+import { finalVerify, type BrainDone, type VerifyOutcome } from "../core/verify_gate.js";
 import { StatusRenderer } from "../ui/status_renderer.js";
 import { AnimationController } from "../ui/animations.js";
 import { HeartbeatIndicator } from "../ui/heartbeat.js";
@@ -47,6 +47,18 @@ import { openRunSession, refusalToolResult } from "../core/skills/run_session.js
 import type { SessionContext } from "../core/session_resume.js";
 import type { SkillSessionProvenance } from "../core/skills/skill_session.js";
 import type { SkillRefusal } from "../core/skills/skill_errors.js";
+import {
+  TurnLifecycle,
+  type TurnLifecycleOptions,
+  type TurnOutcome,
+} from "../core/turn_lifecycle.js";
+import {
+  MeaningfulProgressTimeoutError,
+  errorMessage,
+  isAbortError,
+} from "../core/errors.js";
+import { sanitizeServerText } from "../core/transport.js";
+import { turnOutcomeJson } from "./chat.js";
 
 export { prepareWorkspace } from "./code_support.js";
 
@@ -64,6 +76,29 @@ export { prepareWorkspace } from "./code_support.js";
  * will produce the same answer.
  */
 export const EXIT_ROUTING_REFUSED = 3;
+
+/**
+ * A coding brain may keep its transport alive indefinitely with duplicate
+ * status/telemetry frames. This deadline is about useful progress, not socket
+ * traffic. It intentionally matches the terminal event adapter's hard bound.
+ */
+export const DEFAULT_CODE_MEANINGFUL_PROGRESS_TIMEOUT_MS = 120_000;
+export const CODE_MEANINGFUL_PROGRESS_TIMEOUT_ENV = "AETHER_AGENT_PROGRESS_TIMEOUT_MS";
+
+/** Parse the coding-turn progress deadline without allowing a malformed or
+ * negative environment value to disable the production bound accidentally.
+ * An explicit 0 remains available to embedders/tests through HostLoopOptions,
+ * but the CLI itself always has a finite default. */
+export function codeMeaningfulProgressTimeoutMs(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): number {
+  const raw = env[CODE_MEANINGFUL_PROGRESS_TIMEOUT_ENV]?.trim();
+  if (!raw) return DEFAULT_CODE_MEANINGFUL_PROGRESS_TIMEOUT_MS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.max(1, Math.trunc(parsed))
+    : DEFAULT_CODE_MEANINGFUL_PROGRESS_TIMEOUT_MS;
+}
 
 /** Approve (or refuse) one brain-emitted tool call before the host executes it. */
 export type ToolGate = (call: { name: string; args: Record<string, unknown> }) => Promise<boolean>;
@@ -119,6 +154,299 @@ export function applyEventToStatus(
   } else if (ev.type === "telemetry") {
     sr.setStreamed(ev.tokens);
   }
+}
+
+/** Bounded de-duplication for the coding host's progress deadline. */
+class CodeProgressTracker {
+  private readonly seen = new Set<string>();
+  private highestTokens = 0;
+  private static readonly MAX_KEYS = 256;
+  private static readonly MAX_KEY_LENGTH = 512;
+
+  meaningful(ev: BrainEvent): boolean {
+    switch (ev.type) {
+      case "done":
+      case "error":
+        return false;
+      case "stage": {
+        const next = sanitizeServerText(ev.name).trim();
+        return next.length > 0 && this.once(`stage:${next}`);
+      }
+      case "monologue":
+        return this.nonEmptyOnce(`monologue:${ev.depth}:`, ev.text);
+      case "skill":
+        return this.once(`skill:${ev.name}:${ev.reason}`);
+      case "turn": {
+        const next = `${ev.n}:${ev.toolCalls}:${ev.malformed}:${ev.invented}:${ev.noCall}:${ev.failCount ?? ""}`;
+        return this.once(`turn:${next}`);
+      }
+      case "tool_call":
+        return this.once(`tool:${ev.id}`);
+      case "telemetry": {
+        if (!Number.isFinite(ev.tokens) || ev.tokens <= this.highestTokens) return false;
+        this.highestTokens = ev.tokens;
+        return true;
+      }
+      case "status": {
+        // Pool/cap oscillation is presentation telemetry. Only a previously
+        // unseen, non-empty phase can establish semantic progress.
+        const phase = sanitizeServerText(ev.phase).trim();
+        return phase.length > 0 && this.once(`status:${phase}`);
+      }
+      case "checkpoint":
+        return this.once(`checkpoint:${ev.gitSha}`);
+      case "memory":
+        return this.once(
+          `memory:${ev.subtype}:${ev.text ?? ""}:${ev.narrative ?? ""}:${ev.factCount ?? ""}:${ev.afterTokens ?? ""}`,
+        );
+      case "workflow_start":
+        return this.once(`workflow:${ev.workflowId}`);
+      case "phase_start":
+        return this.once(`phase-start:${ev.phaseN}:${ev.phaseType}`);
+      case "phase_done":
+        return this.once(`phase-done:${ev.phaseN}:${ev.artifactSummary}`);
+      case "agent_spawn":
+        return this.once(`agent-spawn:${ev.agentId}:${ev.phaseN}`);
+      case "agent_progress":
+        return this.nonEmptyOnce(`agent-progress:${ev.agentId}:`, ev.delta);
+      case "agent_done":
+        return this.once(`agent-done:${ev.agentId}:${ev.phaseN}`);
+      case "workflow_done":
+        return this.once(`workflow-done:${ev.totalPhases}:${ev.totalAgents}`);
+      case "routing_drift":
+        return this.once(`routing-drift:${ev.requested}:${ev.resolved}:${ev.status}:${ev.fatal}`);
+    }
+  }
+
+  private once(key: string): boolean {
+    const bounded = key.length <= CodeProgressTracker.MAX_KEY_LENGTH
+      ? key
+      : key.slice(0, CodeProgressTracker.MAX_KEY_LENGTH);
+    if (this.seen.has(bounded) || this.seen.size >= CodeProgressTracker.MAX_KEYS) return false;
+    this.seen.add(bounded);
+    return true;
+  }
+
+  private nonEmptyOnce(prefix: string, value: string): boolean {
+    const text = sanitizeServerText(value).trim();
+    return text.length > 0 && this.once(prefix + text);
+  }
+}
+
+export interface CodeTurnObservation {
+  /** False after the first brain terminal frame; late frames are ignored. */
+  accepted: boolean;
+  meaningful: boolean;
+}
+
+/**
+ * The production `aether agent` lifecycle adapter. A brain terminal frame is
+ * deliberately only advisory: this object cannot enter `succeeded` until the
+ * host verification result is supplied to settle().
+ */
+export class CodeTurnLifecycle {
+  readonly lifecycle: TurnLifecycle;
+
+  private readonly progress = new CodeProgressTracker();
+  private terminalFrameSeen = false;
+  private eofBeforeTerminal = false;
+  private thrown: unknown = null;
+  private partialOutput = false;
+  private brainError = "";
+  private done: BrainDone | null = null;
+  private fatal: Extract<BrainEvent, { type: "routing_drift" }> | null = null;
+
+  constructor(prompt: string, opts: TurnLifecycleOptions = {}) {
+    this.lifecycle = new TurnLifecycle(prompt, opts);
+    this.lifecycle.transition("submitted");
+    this.lifecycle.transition("connecting");
+  }
+
+  get turnId(): string {
+    return this.lifecycle.id;
+  }
+
+  get outcome(): TurnOutcome | null {
+    return this.lifecycle.outcome;
+  }
+
+  get lastDone(): BrainDone | null {
+    return this.done ? { ...this.done } : null;
+  }
+
+  get sawError(): boolean {
+    return this.brainError.length > 0;
+  }
+
+  get fatalDrift(): Extract<BrainEvent, { type: "routing_drift" }> | null {
+    return this.fatal ? { ...this.fatal } : null;
+  }
+
+  get hasTerminalFrame(): boolean {
+    return this.terminalFrameSeen;
+  }
+
+  observe(ev: BrainEvent): CodeTurnObservation {
+    if (this.terminalFrameSeen || this.lifecycle.outcome) {
+      return { accepted: false, meaningful: false };
+    }
+
+    const meaningful = this.progress.meaningful(ev);
+    if (meaningful && ev.type !== "status" && ev.type !== "telemetry" && ev.type !== "turn") {
+      this.partialOutput = true;
+    }
+
+    if (ev.type === "done") {
+      this.done = { ok: ev.ok, remaining: ev.remaining, reason: sanitizeServerText(ev.reason) };
+      this.terminalFrameSeen = true;
+      this.toCompleting();
+      return { accepted: true, meaningful: false };
+    }
+    if (ev.type === "error") {
+      this.brainError = sanitizeServerText(ev.msg).trim() || "the coding brain reported an error";
+      this.terminalFrameSeen = true;
+      this.toCompleting();
+      return { accepted: true, meaningful: false };
+    }
+    if (ev.type === "routing_drift" && ev.fatal) {
+      this.fatal = ev;
+      this.terminalFrameSeen = true;
+      this.toCompleting();
+      return { accepted: true, meaningful };
+    }
+
+    if (meaningful) this.noteActive(ev.type === "tool_call");
+    return { accepted: true, meaningful };
+  }
+
+  /** Called only after hostLoop reaches iterator EOF without done/error. */
+  noteIncompleteEof(): void {
+    if (this.terminalFrameSeen || this.lifecycle.outcome) return;
+    this.eofBeforeTerminal = true;
+    this.terminalFrameSeen = true;
+    this.toCompleting();
+  }
+
+  noteThrown(error: unknown): void {
+    if (this.lifecycle.outcome) return;
+    this.thrown = error;
+    this.terminalFrameSeen = true;
+    this.toCompleting();
+  }
+
+  /** Exactly-once terminal reduction. Repeated cleanup paths receive the first
+   * immutable outcome rather than attempting a second finalization. */
+  settle(verification: VerifyOutcome | null): TurnOutcome {
+    const settled = this.lifecycle.outcome;
+    if (settled) return settled;
+    this.toCompleting();
+
+    if (this.thrown instanceof MeaningfulProgressTimeoutError) {
+      return this.lifecycle.finalize("timed_out", {
+        message: sanitizeServerText(this.thrown.message),
+        hint: "retry the prompt or run `aether doctor` to inspect connectivity",
+        retryable: true,
+        partialOutput: this.partialOutput,
+      });
+    }
+    if (isAbortError(this.thrown)) {
+      return this.lifecycle.finalize("cancelled", {
+        message: "coding turn cancelled",
+        retryable: true,
+        partialOutput: this.partialOutput,
+      });
+    }
+    if (this.fatal) {
+      return this.lifecycle.finalize("failed", {
+        message: "coding transport was refused before local execution",
+        hint: sanitizeServerText(this.fatal.remediation),
+        partialOutput: this.partialOutput,
+      });
+    }
+    if (this.thrown !== null) {
+      return this.lifecycle.finalize("failed", {
+        message: "coding turn failed before final verification",
+        retryable: false,
+        partialOutput: this.partialOutput,
+      });
+    }
+    if (this.eofBeforeTerminal) {
+      return this.lifecycle.finalize("incomplete", {
+        message: "connection ended before the coding brain delivered a terminal frame",
+        hint: "the prompt is safe to retry; run `aether doctor` to inspect connectivity",
+        retryable: true,
+        partialOutput: this.partialOutput,
+      });
+    }
+    if (this.brainError) {
+      return this.lifecycle.finalize("failed", {
+        message: this.brainError,
+        partialOutput: this.partialOutput,
+      });
+    }
+    if (!verification) {
+      return this.lifecycle.finalize("failed", {
+        message: "host final verification did not complete",
+        partialOutput: this.partialOutput,
+      });
+    }
+    if (verification.status === "ok") {
+      return this.lifecycle.finalize("succeeded", {
+        message: "host verification passed",
+        partialOutput: this.partialOutput,
+      });
+    }
+    if (verification.status === "unverified") {
+      return this.lifecycle.finalize("incomplete", {
+        message: "coding turn completed without host verification",
+        hint: "re-run with --test-cmd so the host can establish a green result",
+        retryable: false,
+        partialOutput: this.partialOutput,
+      });
+    }
+    if (verification.status === "error" || verification.status === "failed") {
+      return this.lifecycle.finalize("failed", {
+        message: "coding turn or host verification failed",
+        partialOutput: this.partialOutput,
+      });
+    }
+    const count = verification.remaining > 0 ? ` (${verification.remaining} remaining)` : "";
+    return this.lifecycle.finalize("incomplete", {
+      message: `host verification did not pass${count}`,
+      partialOutput: this.partialOutput,
+    });
+  }
+
+  private noteActive(waitingForTool: boolean): void {
+    if (this.lifecycle.state === "connecting") {
+      this.lifecycle.transition(waitingForTool ? "waiting_for_tool" : "streaming");
+    } else if (this.lifecycle.state === "streaming" && waitingForTool) {
+      this.lifecycle.transition("waiting_for_tool");
+    } else if (this.lifecycle.state === "waiting_for_tool" && !waitingForTool) {
+      this.lifecycle.transition("streaming");
+    } else if (this.lifecycle.state === "streaming" || this.lifecycle.state === "waiting_for_tool") {
+      this.lifecycle.meaningfulActivity();
+    }
+  }
+
+  private toCompleting(): void {
+    if (
+      this.lifecycle.state === "connecting" ||
+      this.lifecycle.state === "streaming" ||
+      this.lifecycle.state === "waiting_for_tool"
+    ) {
+      this.lifecycle.transition("completing");
+    }
+  }
+}
+
+/** Append the shared headless terminal record exactly once at the command edge. */
+export function emitCodeTurnOutcome(
+  outcome: TurnOutcome,
+  json: boolean,
+  write: (line: string) => unknown = (line) => process.stdout.write(line),
+): void {
+  if (json) write(turnOutcomeJson(outcome) + "\n");
 }
 
 export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Promise<number> {
@@ -359,14 +687,29 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
         nowIso(),
       );
 
-  // Ctrl-C prints the exact command to re-enter this session. Registered BEFORE
-  // the renderer's own SIGINT handler so this fires first.
-  if (log) {
-    process.once("SIGINT", () => {
+  // One command-owned cancellation authority spans the brain loop AND the host
+  // verification process. Signal handlers never call process.exit(): doing so
+  // could strand a shell/test descendant and skip the lifecycle's sole final
+  // outcome. The ToolExecutor receives this signal and does not resolve until
+  // the process tree has been reaped.
+  const commandAbort = new AbortController();
+  let signalExitCode: 130 | 143 | null = null;
+  let resumePrinted = false;
+  const abortForSignal = (name: "SIGINT" | "SIGTERM", exitCode: 130 | 143): void => {
+    if (!resumePrinted && log) {
+      resumePrinted = true;
       process.stderr.write("\n" + resumeHint(log.sessionId) + "\n");
-      process.exit(130);
-    });
-  }
+    }
+    if (commandAbort.signal.aborted) return;
+    signalExitCode = exitCode;
+    commandAbort.abort(new DOMException(`coding turn interrupted by ${name}`, "AbortError"));
+  };
+  const onSigint = (): void => abortForSignal("SIGINT", 130);
+  const onSigterm = (): void => abortForSignal("SIGTERM", 143);
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
+
+  try {
 
   const taskCmd: TaskCommand = {
     type: "task",
@@ -392,6 +735,11 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     model: localSelection?.tag ?? (resolvedHostedModel || undefined),
     testCmd: opts.testCmd,
   };
+
+  // One correlation identity owns the production run. A brain `done` event is
+  // advisory; the lifecycle remains completing until host verification below.
+  const turn = new CodeTurnLifecycle(task || label);
+  const progressTimeoutMs = codeMeaningfulProgressTimeoutMs();
 
   const interactive = Boolean(opts.interactive) && Boolean(process.stdin.isTTY);
   const onToolResult = (id: string, result: ToolResult): void => log?.toolResult(id, result, nowIso());
@@ -444,23 +792,8 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   let onEvent: (ev: BrainEvent) => void | Promise<void>;
   let teardown = (): void => {};
 
-  // Capture the brain's terminal event — advisory input to the host verify gate.
-  // `done` (the brain finished its loop): its breaker reason enriches a red result
-  // but never upgrades a red run to "ok". `error` (the brain CRASHED mid-run): the
-  // run is untrustworthy, so a coincidentally-green tree is reported "error", not "ok".
-  let lastDone: BrainDone | null = null;
-  let sawError = false;
-  // A refused transport downgrade (brain_cloud). Captured on BOTH presentation
-  // paths so the process exit code cannot depend on whether a TTY was attached.
-  let fatalDrift: Extract<BrainEvent, { type: "routing_drift" }> | null = null;
-  const captureDone = (ev: BrainEvent): void => {
-    if (ev.type === "done") lastDone = { ok: ev.ok, remaining: ev.remaining, reason: ev.reason };
-    else if (ev.type === "error") sawError = true;
-    else if (ev.type === "routing_drift" && ev.fatal) fatalDrift = ev;
-  };
-
   if (animated) {
-    const sr = new StatusRenderer({ mode: brainKind === "local" ? "local" : "api" });
+    const sr = new StatusRenderer({ mode: brainKind === "local" ? "local" : "api", ownsProcess: false });
     sr.start();
     replay((line) => sr.log(line));
     const anim = new AnimationController({
@@ -474,9 +807,16 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
       },
     });
     const source = new LocalAgentSource();
-    bindEventSource(source, sr, anim, { hb, heartbeatTimeoutMs: 5000 });
+    const unbindSource = bindEventSource(source, sr, anim, {
+      hb,
+      heartbeatTimeoutMs: 5000,
+      meaningfulProgressTimeoutMs: progressTimeoutMs,
+      ownsSource: true,
+    });
     let tick = 0;
     onEvent = async (ev: BrainEvent): Promise<void> => {
+      const observation = turn.observe(ev);
+      if (!observation.accepted) return;
       if (ev.type === "memory") {
         log?.event(ev, nowIso());
         sr.memoryEvent(ev);
@@ -487,7 +827,6 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
         // drift banner would exist only for piped runs — invisible to exactly
         // the user sitting at the terminal it was written for.
         log?.event(ev, nowIso());
-        captureDone(ev);
         for (const line of routingDriftLines(ev)) sr.log(line);
         return;
       }
@@ -495,7 +834,6 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
       applyEventToStatus(sr, ev, tick++);
       applyToLedger(ledger, ev);
       trackWrites(ev);
-      captureDone(ev);
       // Intercept the whole-file write to render a live green/red diff into
       // scrollback — the old file is still on disk because hostLoop runs onEvent
       // BEFORE exec.execute. Skip feedBrain for it so we don't ALSO print the
@@ -521,7 +859,9 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
         sr.log("");
         for (const line of recap) sr.log(line);
       }
-      source.close();
+      // Retaining the disposer is essential on host-loop throws: it detaches
+      // the subscription and clears both watchdogs before the renderer ends.
+      unbindSource();
       anim.stop();
       hb.stop();
       sr.end();
@@ -530,6 +870,8 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     const renderer = new HostRenderer({ poolGb, quiet: opts.quiet, json: ctx.flags.json });
     replay((line) => process.stdout.write(line + "\n"));
     onEvent = async (ev: BrainEvent): Promise<void> => {
+      const observation = turn.observe(ev);
+      if (!observation.accepted) return;
       applyToLedger(ledger, ev);
       trackWrites(ev);
       // Same diff interception for the non-animated path (pipes / NO_ANIM /
@@ -544,16 +886,29 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
       // End-of-run checklist recap (writeLines is a no-op under --json).
       if (ev.type === "done") renderer.writeLines(ledger.panel(cols));
       log?.event(ev, nowIso());
-      captureDone(ev);
       if (interactive && ev.type === "stage") await stageGate(brain, io, ev.name);
       if (interactive && ev.type === "monologue") await answerAgentQuestionIfPresent(brain, io, ev.text);
     };
   }
 
   const startedAt = Date.now();
-  let code: number;
+  let loopError: unknown = null;
+  let incompleteEof = false;
   try {
-    code = await hostLoop(brain, exec, onEvent, taskCmd, onToolResult, gate, run.guard);
+    await hostLoop(brain, exec, onEvent, taskCmd, onToolResult, gate, run.guard, {
+      meaningfulProgressTimeoutMs: progressTimeoutMs,
+      signal: commandAbort.signal,
+    });
+    if (!turn.hasTerminalFrame) {
+      incompleteEof = true;
+      turn.noteIncompleteEof();
+    }
+  } catch (err) {
+    loopError = err;
+    turn.noteThrown(err);
+    if (!ctx.flags.json) {
+      process.stderr.write(`\n✗ ${sanitizeServerText(errorMessage(err))}\n`);
+    }
   } finally {
     // A brain that throws mid-run must still clear the pinned status line and
     // print the ledger recap — otherwise stale animation sits over the error.
@@ -564,11 +919,12 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   // Returning BEFORE finalVerify is the point: the gate would run the project's
   // test command and report on a tree no brain ever touched, dressing a refusal
   // up as a red (or, on a green tree, a passing) run.
-  if (fatalDrift) {
+  if (turn.fatalDrift) {
     // No second copy of the remediation: the ROUTING_DRIFT banner already
     // carried it (host_render.routingDriftLines prints it on a fatal drift),
     // on this path and on the animated one alike.
     log?.close("incomplete", nowIso(), 0);
+    emitCodeTurnOutcome(turn.settle(null), ctx.flags.json);
     if (log) process.stderr.write(`  ⤷ log: ${log.dir}\n`);
     return EXIT_ROUTING_REFUSED;
   }
@@ -577,12 +933,44 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
   // The host re-runs the test command ITSELF and derives finalStatus from the real
   // exit code (verify_gate.ts). The brain's `done` is advisory — it only enriches a
   // red result with its breaker reason and can never upgrade a red run to "ok".
-  const { status: finalStatus, remaining, exitCode: verifyExit } = await finalVerify(
-    exec,
-    opts.testCmd,
-    lastDone,
-    sawError,
-  );
+  let verification: VerifyOutcome | null = null;
+  const loopWasInterrupted =
+    commandAbort.signal.aborted || loopError instanceof MeaningfulProgressTimeoutError || isAbortError(loopError);
+  if (!loopWasInterrupted) {
+    try {
+      verification = await finalVerify(
+        exec,
+        opts.testCmd,
+        turn.lastDone,
+        turn.sawError || loopError !== null || incompleteEof,
+        { signal: commandAbort.signal, timeoutMs: progressTimeoutMs },
+      );
+      // ToolExecutor reports a killed process as a structured result so callers
+      // can distinguish operator cancellation from a clock expiry. Feed that
+      // distinction back into the lifecycle instead of flattening either into
+      // an ordinary red test run.
+      if (verification.exitCode === 130 || commandAbort.signal.aborted) {
+        const interrupted = codeSignalReason(commandAbort.signal);
+        loopError = interrupted;
+        turn.noteThrown(interrupted);
+      } else if (verification.exitCode === 124) {
+        const timedOut = new MeaningfulProgressTimeoutError(progressTimeoutMs);
+        loopError = timedOut;
+        turn.noteThrown(timedOut);
+      }
+    } catch (err) {
+      loopError = err;
+      turn.noteThrown(err);
+      if (!ctx.flags.json) {
+        process.stderr.write(`\n✗ final verification failed: ${sanitizeServerText(errorMessage(err))}\n`);
+      }
+    }
+  }
+  const outcome = turn.settle(verification);
+  emitCodeTurnOutcome(outcome, ctx.flags.json);
+  const finalStatus = verification?.status ?? "error";
+  const remaining = verification?.remaining ?? turn.lastDone?.remaining ?? 0;
+  const verifyExit = verification?.exitCode ?? 1;
   log?.close(finalStatus, nowIso(), remaining);
   // The verdict line — printed even with --no-log (which used to end with
   // NOTHING); suppressed under --json (frames already carry the data). Surfaces
@@ -608,14 +996,16 @@ export async function cmdCode(ctx: AppContext, task: string, opts: CodeOpts): Pr
     const { offerShip } = await import("./ship.js");
     await offerShip(ctx, process.stderr, repoSpec, worktree.dir, worktree.branch);
   }
-  // Process exit follows the HOST: 0 only on a verified-green run. With no gate
-  // ("unverified") there is no ground truth, so the loop's own code stands.
-  // Any other status (incomplete, a breaker reason, or a brain crash) always
-  // fails the process even if the loop's own code was 0 — a green exit code
-  // must never paper over red tests.
-  if (finalStatus === "ok") return 0;
-  if (finalStatus === "unverified") return code;
-  return verifyExit !== 0 ? verifyExit : 1;
+  // Process exit follows the centralized terminal contract. Success is only a
+  // host-verified green result; EOF, no verification, timeouts, and brain
+  // failures remain non-zero even if the brain previously claimed `ok`.
+  if (outcome.state === "succeeded") return 0;
+  if (outcome.state === "cancelled") return signalExitCode ?? 130;
+  return verifyExit > 0 ? verifyExit : outcome.exitCode;
+  } finally {
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigterm);
+  }
 }
 
 /**
@@ -685,6 +1075,13 @@ export function contextDrift(
  * manifest can add a tool, add a permission, or skip a confirmation, because
  * nothing a manifest says is ever consulted after this point.
  */
+export interface HostLoopOptions {
+  /** 0 disables the bound for a deliberate library embed; the CLI never does. */
+  meaningfulProgressTimeoutMs?: number;
+  /** Command-owned cancellation authority, shared with host verification. */
+  signal?: AbortSignal;
+}
+
 export async function hostLoop(
   brain: Brain,
   exec: ToolExecutor,
@@ -693,11 +1090,37 @@ export async function hostLoop(
   onToolResult?: (id: string, result: ToolResult) => void,
   gate?: ToolGate,
   skillGuard?: (tool: string) => SkillRefusal | null,
+  options: HostLoopOptions = {},
 ): Promise<number> {
   let code = 0;
+  let iterator: AsyncIterator<BrainEvent> | null = null;
+  const progress = new CodeProgressTracker();
+  const timeoutMs = options.meaningfulProgressTimeoutMs ?? DEFAULT_CODE_MEANINGFUL_PROGRESS_TIMEOUT_MS;
+  const signal = options.signal;
+  let lastMeaningfulAt = Date.now();
+  let brainClosed = false;
+  const closeBrain = (): void => {
+    if (brainClosed) return;
+    brainClosed = true;
+    brain.close();
+  };
+  const closeOnAbort = (): void => closeBrain();
+  signal?.addEventListener("abort", closeOnAbort, { once: true });
   try {
-    for await (const ev of brain.run(task)) {
-      await onEvent(ev);
+    if (signal?.aborted) throw codeSignalReason(signal);
+    iterator = brain.run(task)[Symbol.asyncIterator]();
+    for (;;) {
+      const next = await boundedCodeOperation(
+        () => iterator!.next(),
+        timeoutMs,
+        lastMeaningfulAt,
+        signal,
+      );
+      if (next.done) break;
+      const ev = next.value;
+      await boundedCodeOperation(() => onEvent(ev), timeoutMs, lastMeaningfulAt, signal);
+      if (progress.meaningful(ev)) lastMeaningfulAt = Date.now();
+      let terminal = false;
       switch (ev.type) {
         case "tool_call": {
           // The host owns execution + the path-guard. A tool call is gated FIRST
@@ -717,28 +1140,125 @@ export async function hostLoop(
             const denied: ToolResult = refusalToolResult(refusal);
             onToolResult?.(ev.id, denied);
             brain.sendToolResult(ev.id, denied);
+            lastMeaningfulAt = Date.now();
             break;
           }
-          const approved = gate ? await gate({ name: ev.name, args: ev.args }) : true;
+          const approved = gate
+            ? await boundedCodeOperation(
+                () => gate({ name: ev.name, args: ev.args }),
+                timeoutMs,
+                lastMeaningfulAt,
+                signal,
+              )
+            : true;
+          const remaining = remainingCodeProgressMs(timeoutMs, lastMeaningfulAt);
+          const runOptions: RunOptions = {
+            ...(signal ? { signal } : {}),
+            ...(timeoutMs > 0 ? { timeoutMs: Math.max(1, remaining) } : {}),
+          };
           const result: ToolResult = approved
-            ? await exec.executeAsync(ev.name, ev.args)
+            ? await boundedCodeOperation(
+                () => exec.executeAsync(ev.name, ev.args, runOptions),
+                timeoutMs,
+                lastMeaningfulAt,
+                signal,
+              )
             : { output: `[denied: ${ev.name} not approved by user]`, exitCode: 1 };
+          if (signal?.aborted) throw codeSignalReason(signal);
           onToolResult?.(ev.id, result);
           brain.sendToolResult(ev.id, result);
+          lastMeaningfulAt = Date.now();
           break;
         }
         case "done":
           // A prior error event keeps its exit code — a later done ok:true
           // must never launder a failed run back to success.
           if (!ev.ok) code = 1;
+          terminal = true;
           break;
         case "error":
           code = 1;
+          terminal = true;
+          break;
+        case "routing_drift":
+          terminal = ev.fatal;
           break;
       }
+      // A terminal frame ends host authority immediately. A broken source that
+      // emits more frames cannot execute a late tool or rewrite the verdict.
+      if (terminal) break;
     }
   } finally {
-    brain.close();
+    signal?.removeEventListener("abort", closeOnAbort);
+    try {
+      closeBrain();
+    } finally {
+      // Do not await return(): a timed-out iterator is allowed to be parked in
+      // an adapter promise forever. close() is the cancellation authority, and
+      // this best-effort return still lets well-behaved generators run finally.
+      const activeIterator = iterator;
+      if (activeIterator?.return) {
+        void Promise.resolve()
+          .then(() => activeIterator.return!())
+          .catch(() => {});
+      }
+    }
   }
   return code;
+}
+
+function remainingCodeProgressMs(timeoutMs: number, lastMeaningfulAt: number): number {
+  return timeoutMs <= 0 ? 0 : timeoutMs - (Date.now() - lastMeaningfulAt);
+}
+
+function codeSignalReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new DOMException("coding turn cancelled", "AbortError");
+}
+
+/** Bound every awaitable host seam—not just iterator.next(). A renderer,
+ * permission prompt, fake executor, or network-backed tool that never settles
+ * therefore cannot strand a coding turn. Synchronous throws are captured into
+ * the same promise path, which also keeps cleanup from replacing the primary
+ * timeout/cancellation reason. */
+function boundedCodeOperation<T>(
+  work: () => T | PromiseLike<T>,
+  timeoutMs: number,
+  lastMeaningfulAt: number,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (signal?.aborted) return Promise.reject(codeSignalReason(signal));
+  if (timeoutMs <= 0 && !signal) return Promise.resolve().then(work);
+  const remaining = remainingCodeProgressMs(timeoutMs, lastMeaningfulAt);
+  if (remaining <= 0) return Promise.reject(new MeaningfulProgressTimeoutError(timeoutMs));
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const cleanup = (): void => {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const fail = (error: unknown): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onAbort = (): void => fail(codeSignalReason(signal!));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    const timer = timeoutMs > 0
+      ? setTimeout(() => fail(new MeaningfulProgressTimeoutError(timeoutMs)), Math.max(1, remaining))
+      : null;
+    timer?.unref?.();
+    Promise.resolve().then(work).then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      },
+      fail,
+    );
+  });
 }
