@@ -31,3 +31,9 @@ updates:
       time: '06:15'
       timezone: America/New_York
     open-pull-requests-limit: 5
+    groups:
+      # init and analyze must move together. Split updates leave CodeQL with
+      # incompatible action revisions and fail before analysis can start.
+      codeql-action:
+        patterns:
+          - 'github/codeql-action/*'
