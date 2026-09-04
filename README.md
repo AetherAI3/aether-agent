@@ -190,9 +190,9 @@ The repository and the published package are versioned independently.
 | `main` source build | **0.3.2** | The declared and published base plus the terminal, settings, and voice convergence tracked explicitly as [Unreleased](RELEASE_NOTES.md). |
 
 - **[Release notes](RELEASE_NOTES.md)** — one entry per release, in plain language.
-- **[Patch-note log](docs/releases/README.md)** — one dated file per release day,
-  one sentence per pull request, plus the operator packet that records the exact
-  commit, tarball digest, and evidence behind each tag.
+- **[Release log](docs/releases/README.md)** — dated candidate, publication, and
+  documentation events, plus operator packets that freeze prerelease
+  qualification and link the authoritative tag and registry evidence.
 - **[Releases and tags](https://github.com/AetherAI3/aether-agent/releases)** —
   every published version.
 
