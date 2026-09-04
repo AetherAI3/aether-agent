@@ -106,7 +106,9 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Audit dependencies
-        run: npm audit --audit-level=high
+        # npm's .com registry hostname is a DNS alias for registry.npmjs.org,
+        # but provides an independent CDN route when the default route is degraded.
+        run: npm audit --audit-level=high --registry=https://registry.npmjs.com
 
       - name: Type-check exact head
         run: npm run typecheck
