@@ -36,7 +36,7 @@ Run these from inside the repository you want Aether to work on:
 ```bash
 npm install -g aether-agents@latest --ignore-scripts
 aether auth login
-aether agent --test-cmd "npm test" "fix the failing test"
+aether
 ```
 
 That last line is the whole idea: **one task, one way to prove it worked.**
