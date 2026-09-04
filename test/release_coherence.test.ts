@@ -241,6 +241,10 @@ test("the v0.3.1 operator packet remains frozen prerelease evidence for its publ
   const index = read("docs", "releases", "README.md");
   assert.match(index, /released \*\*v0\.3\.1\*\*: actionable\r?\n\s+Node\.js-version recovery and browser-login fallback\. Frozen prerelease packet:/u);
   assert.match(index, /\[2026-08-29\]\(2026-08-29\.md\)/u);
+
+  const publication = read("docs", "releases", "2026-08-29.md");
+  assert.match(publication, /eca608a4d9b0ce286592c3ddd8901588a4e74475/u);
+  assert.match(publication, /sha512-sAErJLskGa6j1CTqzBXXxANlYnkIWMcUJGfKx1HLe0uqYuaXcvNQjgalexdyGgNFlK\+tloMkB7\/hOzOZrWX5pA==/u);
 });
 
 test("the operator packet fails closed on contradictory release-evidence mutations", () => {

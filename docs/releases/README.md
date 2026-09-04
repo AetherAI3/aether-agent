@@ -6,9 +6,10 @@ that date.
 
 For the live command reference, see [COMMANDS.md](../../COMMANDS.md).
 
-Each release also carries an operator packet — `OPERATOR-PACKET-v<version>.md` —
-recording the commit the tag must point at, the packed tarball's digest and file
-manifest, the evidence gathered, and the founder-owned steps that publish it.
+Each release line also carries an operator packet —
+`OPERATOR-PACKET-v<version>.md`. Before publication it records candidate
+qualification and founder-owned publish steps; after publication it is frozen
+as prerelease evidence while the registry and tag remain authoritative.
 
 ## Index
 
