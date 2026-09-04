@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const BULK_URL = new URL("https://registry.npmjs.org/-/npm/v1/security/advisories/bulk");
+const BULK_NETWORK_TIMEOUT_MESSAGE = `network timeout at: ${BULK_URL.href}`;
 const EXACT_SEMVER = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 const NPM_PACKAGE_NAME = /^(?:@[a-z0-9~][a-z0-9._~-]*\/)?[a-z0-9~][a-z0-9._~-]*$/u;
 const BASE64_DIGEST = /^[A-Za-z0-9+/]+={0,2}$/u;
@@ -14,6 +15,14 @@ const MAX_REQUEST_BYTES = 1_000_000;
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasExactKeys(value, expectedKeys) {
+  return (
+    isRecord(value) &&
+    Object.keys(value).length === expectedKeys.length &&
+    expectedKeys.every((key) => Object.hasOwn(value, key))
+  );
 }
 
 function assertRecord(value, label) {
@@ -172,6 +181,17 @@ export function classifyNpmAuditResult(rawOutput, auditStatus) {
     return { disposition: "pass", reason: "npm-audit-report-clean-at-high-threshold" };
   }
   if (auditStatus === 0) return { disposition: "fail", reason: "npm-zero-exit-without-valid-audit-report" };
+
+  if (
+    auditStatus === 1 &&
+    hasExactKeys(decoded, ["message", "error"]) &&
+    decoded.message === BULK_NETWORK_TIMEOUT_MESSAGE &&
+    hasExactKeys(decoded.error, ["summary", "detail"]) &&
+    decoded.error.summary === "" &&
+    decoded.error.detail === ""
+  ) {
+    return { disposition: "retry", reason: "npm-advisory-endpoint-network-timeout" };
+  }
 
   const message = typeof decoded.message === "string" ? decoded.message : "";
   const messageMatch = message.match(
