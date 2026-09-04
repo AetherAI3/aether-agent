@@ -33,6 +33,22 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Enforce and report exact source revision
+        env:
+          AETHER_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          AETHER_JOB: test-${{ matrix.os }}
+        run: >-
+          node -e "const cp=require('node:child_process');const fs=require('node:fs');const actual=cp.execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();const expected=process.env.AETHER_EXPECTED_SHA;if(actual!==expected)throw new Error('checkout mismatch: expected '+expected+', got '+actual);const record={schema:'aether.exact-head-source/v1',expected,actual,job:process.env.AETHER_JOB,os:process.platform};const json=JSON.stringify(record);console.log(json);fs.writeFileSync('aether-exact-head-source.json',json+'\n')"
+
+      - name: Upload exact-source evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aether-exact-head-test-${{ matrix.os }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: aether-exact-head-source.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -63,6 +79,22 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Enforce and report exact source revision
+        env:
+          AETHER_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          AETHER_JOB: supply-chain
+        run: >-
+          node -e "const cp=require('node:child_process');const fs=require('node:fs');const actual=cp.execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();const expected=process.env.AETHER_EXPECTED_SHA;if(actual!==expected)throw new Error('checkout mismatch: expected '+expected+', got '+actual);const record={schema:'aether.exact-head-source/v1',expected,actual,job:process.env.AETHER_JOB,os:process.platform};const json=JSON.stringify(record);console.log(json);fs.writeFileSync('aether-exact-head-source.json',json+'\n')"
+
+      - name: Upload exact-source evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aether-exact-head-supply-chain-${{ github.event.pull_request.head.sha || github.sha }}
+          path: aether-exact-head-source.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -76,11 +108,20 @@ jobs:
       - name: Audit dependencies
         run: npm audit --audit-level=high
 
+      - name: Type-check exact head
+        run: npm run typecheck
+
+      - name: Verify generated documentation
+        run: npm run docs:check
+
       - name: Verify production package and policy
         run: npm run verify:production
 
       - name: Verify live release truth
         run: npm run release:truth
+
+      - name: Dry-run the exact package without lifecycle scripts
+        run: npm pack --dry-run --ignore-scripts
 
       - name: Generate CycloneDX SBOM
         run: npm sbom --sbom-format cyclonedx > aether-agents.cdx.json
@@ -88,7 +129,7 @@ jobs:
       - name: Upload SBOM
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: aether-agents-sbom-${{ github.sha }}
+          name: aether-agents-sbom-${{ github.event.pull_request.head.sha || github.sha }}
           path: aether-agents.cdx.json
           if-no-files-found: error
           retention-days: 90
@@ -102,6 +143,22 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Enforce and report exact source revision
+        env:
+          AETHER_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          AETHER_JOB: pypi-launcher
+        run: >-
+          node -e "const cp=require('node:child_process');const fs=require('node:fs');const actual=cp.execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();const expected=process.env.AETHER_EXPECTED_SHA;if(actual!==expected)throw new Error('checkout mismatch: expected '+expected+', got '+actual);const record={schema:'aether.exact-head-source/v1',expected,actual,job:process.env.AETHER_JOB,os:process.platform};const json=JSON.stringify(record);console.log(json);fs.writeFileSync('aether-exact-head-source.json',json+'\n')"
+
+      - name: Upload exact-source evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aether-exact-head-pypi-launcher-${{ github.event.pull_request.head.sha || github.sha }}
+          path: aether-exact-head-source.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

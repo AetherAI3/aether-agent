@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "runId": "AETHER-AGENT-SOL-ULTRA-01/2026-09-04",
+  "agentBaseSha": "bb000edc4ca5c89891ac7352aaf688916ca58bc7",
+  "agentExactHeadSource": "PR head plus aether.exact-head-source/v1 CI artifact",
+  "evidenceClass": "deterministic-candidate",
+  "scenarios": [
+    {
+      "id": "cross-lane-mixed-lifecycle",
+      "cycles": 100,
+      "terminalOutcomes": 100,
+      "outcomeCounts": {"succeeded": 34, "failed": 33, "cancelled": 33},
+      "voiceStarts": 100,
+      "settingsCancellations": 100,
+      "mcpCancellations": 100,
+      "maxSourceListeners": 1,
+      "listenerDeltas": {"exit": 0, "SIGINT": 0, "SIGTERM": 0, "uncaughtException": 0, "unhandledRejection": 0},
+      "resourceDeltas": {"Timeout": 0, "FSReqCallback": 0, "FileHandle": 0, "ChildProcess": 0, "TCPSocketWrap": 0, "TCPServerWrap": 0},
+      "result": "passed"
+    },
+    {
+      "id": "terminal-mount-dispose",
+      "cycles": 100,
+      "result": "passed",
+      "observedNetListenerGrowth": 0,
+      "limit": "TuiLayout has no proven production caller"
+    },
+    {
+      "id": "voice-start-cancel-or-complete",
+      "cycles": 100,
+      "result": "passed",
+      "ephemeralResourcesAfterEachCycle": 0,
+      "limit": "fake capture/playback/bridge ports; physical OS resources unproven"
+    },
+    {
+      "id": "replayable-terminal-remount",
+      "result": "passed",
+      "evidence": "atomic subscribeAfter replay, gap refusal, deadline preservation, one terminal outcome",
+      "limit": "synthetic source; browser/Electron refresh unproven"
+    },
+    {
+      "id": "windows-atomic-rename-ratchet",
+      "cycles": 5,
+      "testsPerCycle": 14,
+      "result": "passed",
+      "evidence": "bounded transient rename retry; media history file passed five consecutive runs"
+    }
+  ],
+  "unmeasuredResources": [
+    "live Ollama child handles",
+    "physical microphone and speaker handles",
+    "browser MediaStream tracks",
+    "Electron IPC subscriptions",
+    "live reconnect sockets"
+  ],
+  "claim": "Measured deterministic resources have zero net growth; named real-host resources remain unproven."
+}
