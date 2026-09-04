@@ -13,7 +13,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { scanForSecrets, SENSITIVE_KEY } from "./redaction.js";
 import {
@@ -55,6 +55,7 @@ export interface SettingsStoreInspection {
   readonly unknownFields: Readonly<Record<string, unknown>>;
   readonly detail?: string;
   readonly schemaVersion?: number;
+  /** Opaque process-scoped revision token used only for compare-and-swap. */
   readonly digest?: string;
 }
 
@@ -130,14 +131,18 @@ interface SettingsStoreBatch {
 }
 
 let receiptSequence = 0;
+const SETTINGS_REVISION_KEY = randomBytes(32);
 
 function defaultReceiptId(): string {
   receiptSequence += 1;
   return `${Date.now()}-${process.pid}-${receiptSequence}`;
 }
 
-function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
+function revisionDigest(value: string): string {
+  return createHmac("sha256", SETTINGS_REVISION_KEY)
+    .update("aether.settings.revision.v1\0", "utf8")
+    .update(value, "utf8")
+    .digest("hex");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -330,7 +335,7 @@ export class VersionedSettingsStore {
         settings: {},
         unknownFields: {},
         detail: "settings file is not valid JSON",
-        digest: sha256(bytes),
+        digest: revisionDigest(bytes),
       };
     }
     if (!isRecord(raw) || !isRecord(raw["settings"])) {
@@ -341,7 +346,7 @@ export class VersionedSettingsStore {
         settings: {},
         unknownFields: {},
         detail: "settings file must contain an object-valued settings field",
-        digest: sha256(bytes),
+        digest: revisionDigest(bytes),
       };
     }
     const version = raw["schema_version"];
@@ -354,7 +359,7 @@ export class VersionedSettingsStore {
         unknownFields: {},
         detail: `settings schema ${String(version)} is not supported; expected ${SETTINGS_STORE_SCHEMA_VERSION}`,
         ...(typeof version === "number" ? { schemaVersion: version } : {}),
-        digest: sha256(bytes),
+        digest: revisionDigest(bytes),
       };
     }
     const reason = unsafeSecretReason(raw);
@@ -367,7 +372,7 @@ export class VersionedSettingsStore {
         unknownFields: {},
         detail: `settings file contains ${reason}; replace raw credentials with secret_ref`,
         schemaVersion: SETTINGS_STORE_SCHEMA_VERSION,
-        digest: sha256(bytes),
+        digest: revisionDigest(bytes),
       };
     }
     const unknownFields = Object.fromEntries(
@@ -380,7 +385,7 @@ export class VersionedSettingsStore {
       settings: { ...(raw["settings"] as Record<string, unknown>) },
       unknownFields,
       schemaVersion: SETTINGS_STORE_SCHEMA_VERSION,
-      digest: sha256(bytes),
+      digest: revisionDigest(bytes),
     };
   }
 
@@ -418,7 +423,7 @@ export class VersionedSettingsStore {
     if (inspection.status !== "ok" && inspection.status !== "missing") {
       throw new Error(`${scope} settings are ${inspection.status}: ${inspection.detail ?? "repair required"}`);
     }
-    const beforeDigest = inspection.digest ?? sha256("");
+    const beforeDigest = inspection.digest ?? revisionDigest("");
     const settings = { ...inspection.settings };
     const hadBefore = Object.prototype.hasOwnProperty.call(settings, settingId);
     const beforeValue = settings[settingId];
@@ -439,7 +444,7 @@ export class VersionedSettingsStore {
       valueType,
       ...(normalizedValue === undefined ? {} : { value: normalizedValue }),
       beforeDigest,
-      afterDigest: sha256(afterBytes),
+      afterDigest: revisionDigest(afterBytes),
       ...(hadBefore ? { beforeValue } : {}),
       ...(operation === "set" && normalizedValue !== undefined ? { afterValue: normalizedValue } : {}),
       document,
@@ -479,14 +484,14 @@ export class VersionedSettingsStore {
       batch = {
         scope,
         path: inspection.path,
-        beforeDigest: inspection.digest ?? sha256(""),
+        beforeDigest: inspection.digest ?? revisionDigest(""),
         previouslyExisted: inspection.status === "ok",
         unknownFields: { ...inspection.unknownFields },
         settingIds: new Set(),
         plans: new Set(),
         mutations: [],
         settings: { ...baseSettings },
-        afterDigest: inspection.digest ?? sha256(""),
+        afterDigest: inspection.digest ?? revisionDigest(""),
         sealed: false,
       };
       scopes.set(scope, batch);
@@ -503,7 +508,7 @@ export class VersionedSettingsStore {
       schema_version: SETTINGS_STORE_SCHEMA_VERSION,
       settings: { ...batch.settings },
     };
-    const afterDigest = sha256(sourceBytes(document));
+    const afterDigest = revisionDigest(sourceBytes(document));
     const plan: SettingsStorePlan = Object.freeze({
       schemaVersion: SETTINGS_STORE_SCHEMA_VERSION,
       scope,
@@ -550,7 +555,7 @@ export class VersionedSettingsStore {
       if (current.status !== "ok" && current.status !== "missing") {
         throw new Error(`${plan.scope} settings became ${current.status}; refusing stale apply`);
       }
-      const currentDigest = current.digest ?? sha256("");
+      const currentDigest = current.digest ?? revisionDigest("");
       if (currentDigest !== plan.beforeDigest) {
         throw new Error("settings changed after preview; create a new plan");
       }
@@ -571,7 +576,7 @@ export class VersionedSettingsStore {
         settings,
       };
       const bytes = sourceBytes(expectedDocument);
-      if (sourceBytes(plan.document) !== bytes || sha256(bytes) !== plan.afterDigest) {
+      if (sourceBytes(plan.document) !== bytes || revisionDigest(bytes) !== plan.afterDigest) {
         throw new Error("settings plan content or digest mismatch");
       }
 
@@ -580,7 +585,7 @@ export class VersionedSettingsStore {
       let backupPath: string | null = null;
       if (previouslyExisted) {
         const originalRead = readBoundedRegularFile(target, SETTINGS_STORE_MAX_BYTES);
-        if (originalRead.status !== "ok" || sha256(originalRead.bytes) !== currentDigest) {
+        if (originalRead.status !== "ok" || revisionDigest(originalRead.bytes) !== currentDigest) {
           throw new Error("settings changed while preparing rollback; refusing stale apply");
         }
         backupPath = `${target}.bak-${receiptId}`;
@@ -625,7 +630,7 @@ export class VersionedSettingsStore {
       if (current.status !== "ok" && current.status !== "missing") {
         throw new Error(`${batch.scope} settings became ${current.status}; refusing stale apply`);
       }
-      const currentDigest = current.digest ?? sha256("");
+      const currentDigest = current.digest ?? revisionDigest("");
       if (currentDigest !== batch.beforeDigest) {
         throw new Error("settings changed after preview; create a new plan");
       }
@@ -652,7 +657,7 @@ export class VersionedSettingsStore {
         settings,
       };
       const bytes = sourceBytes(expectedDocument);
-      if (sha256(bytes) !== batch.afterDigest) {
+      if (revisionDigest(bytes) !== batch.afterDigest) {
         throw new Error("settings batch content or digest mismatch");
       }
 
@@ -660,7 +665,7 @@ export class VersionedSettingsStore {
       let backupPath: string | null = null;
       if (batch.previouslyExisted) {
         const originalRead = readBoundedRegularFile(target, SETTINGS_STORE_MAX_BYTES);
-        if (originalRead.status !== "ok" || sha256(originalRead.bytes) !== currentDigest) {
+        if (originalRead.status !== "ok" || revisionDigest(originalRead.bytes) !== currentDigest) {
           throw new Error("settings changed while preparing rollback; refusing stale apply");
         }
         backupPath = `${target}.bak-${receiptId}`;
@@ -702,7 +707,7 @@ export class VersionedSettingsStore {
       if (currentRead.status !== "ok") {
         throw new Error("settings target is not a readable regular file; rollback cannot prove current state");
       }
-      if (sha256(currentRead.bytes) !== token.afterDigest) {
+      if (revisionDigest(currentRead.bytes) !== token.afterDigest) {
         throw new Error("settings changed after apply; refusing to overwrite newer state");
       }
 
@@ -710,7 +715,7 @@ export class VersionedSettingsStore {
         if (!token.backupPath) throw new Error("settings rollback backup is missing");
         const backupRead = readBoundedRegularFile(token.backupPath, SETTINGS_STORE_MAX_BYTES);
         if (backupRead.status !== "ok") throw new Error("settings rollback backup is not a readable regular file");
-        if (sha256(backupRead.bytes) !== token.beforeDigest) {
+        if (revisionDigest(backupRead.bytes) !== token.beforeDigest) {
           throw new Error("settings rollback backup digest mismatch");
         }
         durableWrite(target, backupRead.bytes, `${boundedId(this.#nextId())}.rollback`);

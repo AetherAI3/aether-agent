@@ -17,16 +17,18 @@
 | Full `npm test`, first run | 2,089 pass / 4 fail / 9 skip; all four failures classified and repaired |
 | Full `npm test`, second run | 2,091 pass / 1 transient Windows rename failure / 11 explicit platform skips |
 | Affected media history file after bounded rename repair | 14/14, five consecutive runs |
-| `npm test` | 2,103 total / 2,092 passed / 0 failed / 11 explicit platform skips |
+| `npm test` | 2,104 total / 2,093 passed / 0 failed / 11 explicit platform skips |
 | `npm run typecheck` | pass |
 | `npm run docs:check` | pass; 6 generated outputs clean |
-| `npm run verify:production` | pass; 718 packed files / 4,827,888 unpacked bytes / 5 workflows |
+| `npm run verify:production` | pass; 718 packed files / 4,828,406 unpacked bytes / 5 workflows |
 | `NODE_OPTIONS=--use-system-ca npm run release:truth` | pass; 12/12 |
-| `NODE_OPTIONS=--use-system-ca npm audit --audit-level=high` | pass; 0 vulnerabilities |
-| `npm pack --dry-run --ignore-scripts --json` | pass; 718 entries / 1,107,181 packed bytes / 4,827,888 unpacked bytes |
+| `NODE_OPTIONS=--use-system-ca npm audit --audit-level=high` | 0 vulnerabilities on the unchanged lockfile before the security-only repair; two post-repair registry calls timed out, so the subsequent exact-head hosted supply-chain gate is authoritative |
+| `npm pack --dry-run --ignore-scripts --json` | pass; 718 entries / 1,107,310 packed bytes / 4,828,406 unpacked bytes |
 | `git diff --check` | pass |
 
 The two file-symlink subcases skip only when unprivileged Windows returns `EPERM`; Linux CI still executes them. No test is converted to a product PASS when its prerequisite is absent.
+
+The first pushed Agent candidate, `8d5c40f366bb41ebb8a66f8e23e49df99443ac9d`, exposed one high-severity CodeQL finding: its compare-and-swap revision used unkeyed SHA-256 over a settings document containing a structural secret reference. The repaired candidate uses a process-random HMAC revision token and adds cross-store secret-reference rollback coverage; the authoritative hosted result belongs to the subsequent PR head.
 
 ## AETHER-CLOUD
 

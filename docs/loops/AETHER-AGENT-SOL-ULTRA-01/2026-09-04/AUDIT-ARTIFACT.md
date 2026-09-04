@@ -22,13 +22,14 @@ The candidate implements typed chat/code/embedded turn outcomes, bounded transpo
 | ASU-006 | MEDIUM | Workers used logical file leases in one Agent checkout rather than private worktrees | DEVIATION; final actual-diff audit required |
 | ASU-007 | MEDIUM | Cloud PR #1483 required jobs | CLOSED: green at `ee60ab4`, run `33840680420` |
 | ASU-008 | MEDIUM | Deterministic MCP failure/cancellation coverage exists; live OAuth and live Ollama remain absent | MODELED / live paths UNPROVEN |
+| ASU-009 | HIGH | Initial Agent head used an unkeyed settings revision hash over a document containing a structural secret reference | REPAIRED locally with a process-random HMAC and regression; hosted rerun pending |
 
 ## Evidence
 
 - The first complete candidate run reached 2,089 passes, then exposed two Windows file-symlink fixture `EPERM`s and two stale historical-evidence assertions. Those harness defects were repaired; the two link-only subcases now skip explicitly when Windows cannot create file links.
 - A second complete run reached 2,091 passes and exposed one transient Windows atomic-rename `EPERM`. The durable store now retries only `EACCES`/`EBUSY`/`EPERM`, six bounded attempts over at most 75 ms; the affected 14-test file then passed five consecutive runs.
-- The final complete run is clean: 2,103 total, 2,092 passed, 0 failed, and 11 explicit platform skips.
-- Typecheck, generated-doc drift, production verification, release truth (12/12), dependency audit (0 vulnerabilities), package dry-run (718 entries), and `git diff --check` all pass.
+- The final complete run after the CodeQL repair is clean: 2,104 total, 2,093 passed, 0 failed, and 11 explicit platform skips.
+- Typecheck, generated-doc drift, production verification, release truth (12/12), package dry-run (718 entries), and `git diff --check` pass. The unchanged dependency lock reported 0 vulnerabilities before the security-only repair; two post-repair registry calls timed out, so the subsequent exact-head hosted supply-chain gate is authoritative.
 - Focused integrated lifecycle/settings/terminal tests: 88/88.
 - Settings and generated-doc surface: 75 pass, 0 fail, 1 Windows file-link skip.
 - Voice/MCP/bridge/status surface: 67/67.

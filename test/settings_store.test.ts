@@ -188,6 +188,17 @@ test("new writes reject raw credentials and accept structural secret references 
   assert.deepEqual(inspection.settings["auth.api_token"], ref);
 });
 
+test("process-scoped revision MAC preserves secret-reference CAS across store instances", () => {
+  const { paths, store } = fixture();
+  const ref = secretReference("env", "AETHER_API_TOKEN");
+  const receipt = store.apply(store.plan("global", "set", "auth.api_token", "secret_ref", ref));
+  const contender = new VersionedSettingsStore(paths, { nextId: () => "contender-rollback" });
+
+  assert.equal(contender.inspect("global").digest, receipt.rollbackToken.afterDigest);
+  contender.rollback(receipt.rollbackToken);
+  assert.equal(existsSync(paths.global), false);
+});
+
 test("apply reconstructs plans so forged documents cannot drop unknowns or add secrets", () => {
   const { paths, store } = fixture();
   writeFileSync(
