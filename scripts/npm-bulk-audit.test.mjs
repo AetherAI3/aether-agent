@@ -12,6 +12,7 @@ import {
 } from "./npm-bulk-audit.mjs";
 
 const BULK_URI = "https://registry.npmjs.org/-/npm/v1/security/advisories/bulk";
+const BULK_NETWORK_TIMEOUT_MESSAGE = `network timeout at: ${BULK_URI}`;
 const VALID_INTEGRITY = "sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==";
 
 function locked(name, version, overrides = {}) {
@@ -171,6 +172,74 @@ test("retries only a parsed 502-504 from npm's exact bulk endpoint", () => {
   }
 });
 
+test("retries only npm's exact parsed network-timeout envelope for the bulk endpoint", () => {
+  const exactTimeout = {
+    message: BULK_NETWORK_TIMEOUT_MESSAGE,
+    error: { summary: "", detail: "" },
+  };
+  assert.deepEqual(classifyNpmAuditResult(JSON.stringify(exactTimeout), 1), {
+    disposition: "retry",
+    reason: "npm-advisory-endpoint-network-timeout",
+  });
+  assert.deepEqual(
+    classifyNpmAuditResult(
+      JSON.stringify({ error: { detail: "", summary: "" }, message: BULK_NETWORK_TIMEOUT_MESSAGE }),
+      1,
+    ),
+    { disposition: "retry", reason: "npm-advisory-endpoint-network-timeout" },
+  );
+
+  for (const auditStatus of [0, 2, 124, 130, 137, 255]) {
+    assert.equal(classifyNpmAuditResult(JSON.stringify(exactTimeout), auditStatus).disposition, "fail");
+  }
+
+  for (const rejectedEnvelope of [
+    { message: BULK_NETWORK_TIMEOUT_MESSAGE },
+    { error: { summary: "", detail: "" } },
+    { ...exactTimeout, code: "FETCH_ERROR" },
+    { ...exactTimeout, method: "POST" },
+    { ...exactTimeout, uri: BULK_URI },
+    { ...exactTimeout, statusCode: 504 },
+    { message: BULK_NETWORK_TIMEOUT_MESSAGE, error: null },
+    { message: BULK_NETWORK_TIMEOUT_MESSAGE, error: [] },
+    { message: BULK_NETWORK_TIMEOUT_MESSAGE, error: "" },
+    { message: BULK_NETWORK_TIMEOUT_MESSAGE, error: { summary: "" } },
+    { message: BULK_NETWORK_TIMEOUT_MESSAGE, error: { detail: "" } },
+    { message: BULK_NETWORK_TIMEOUT_MESSAGE, error: { summary: "", detail: "", code: "ETIMEDOUT" } },
+    { message: BULK_NETWORK_TIMEOUT_MESSAGE, error: { summary: "timeout", detail: "" } },
+    { message: BULK_NETWORK_TIMEOUT_MESSAGE, error: { summary: "", detail: "timeout" } },
+    { message: BULK_NETWORK_TIMEOUT_MESSAGE, error: { summary: null, detail: "" } },
+    { message: BULK_NETWORK_TIMEOUT_MESSAGE, error: { summary: "", detail: null } },
+  ]) {
+    assert.equal(classifyNpmAuditResult(JSON.stringify(rejectedEnvelope), 1).disposition, "fail");
+  }
+
+  for (const rejectedMessage of [
+    ` ${BULK_NETWORK_TIMEOUT_MESSAGE}`,
+    `${BULK_NETWORK_TIMEOUT_MESSAGE} `,
+    `${BULK_NETWORK_TIMEOUT_MESSAGE}\n`,
+    `network timeout at: http://registry.npmjs.org/-/npm/v1/security/advisories/bulk`,
+    `network timeout at: https://REGISTRY.npmjs.org/-/npm/v1/security/advisories/bulk`,
+    `network timeout at: https://registry.npmjs.com/-/npm/v1/security/advisories/bulk`,
+    `network timeout at: https://registry.npmjs.org/-/npm/v1/security/advisories/bulk/`,
+    `network timeout at: https://registry.npmjs.org/-/npm/v1/security/advisories/bulk?retry=1`,
+    `network timeout at: https://registry.npmjs.org/-/npm/v1/security/advisories/quick`,
+    "request failed, reason: ETIMEDOUT",
+    "getaddrinfo EAI_AGAIN registry.npmjs.org",
+    "unable to verify the first certificate",
+    "read ECONNRESET",
+    `maximum redirect reached at: ${BULK_URI}`,
+  ]) {
+    assert.equal(
+      classifyNpmAuditResult(
+        JSON.stringify({ message: rejectedMessage, error: { summary: "", detail: "" } }),
+        1,
+      ).disposition,
+      "fail",
+    );
+  }
+});
+
 test("sends an identity-encoded exact payload and accepts only an empty HTTP 200 advisory map", async () => {
   const requestBody = JSON.stringify({ lodash: ["4.17.21"] });
   const advisoryPackages = await queryNpmBulkAdvisories({
@@ -240,7 +309,7 @@ test("fails closed on a finding, unknown package, HTTP error, transport error, o
   );
 });
 
-test("the lockfile audit rejects a non-empty official advisory map", async () => {
+test("the lockfile audit accepts only a literal empty official advisory map", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aether-npm-bulk-audit-"));
   const lockfilePath = join(directory, "package-lock.json");
   let report;
@@ -250,17 +319,29 @@ test("the lockfile audit rejects a non-empty official advisory map", async () =>
       JSON.stringify(lockfile({ "node_modules/lodash": locked("lodash", "4.17.19") })),
       "utf8",
     );
-    await assert.rejects(
-      auditLockfile({
-        lockfilePath,
-        fetchImpl: async () => new Response('{"lodash":[{"id":1}]}', { status: 200 }),
-        writeReport: (line) => {
-          report = JSON.parse(line);
-        },
-      }),
-      /returned advisories for 1 package/u,
-    );
-    assert.deepEqual(report.advisory_packages, ["lodash"]);
+    const clean = await auditLockfile({
+      lockfilePath,
+      fetchImpl: async () => new Response("{}", { status: 200 }),
+      writeReport: (line) => {
+        report = JSON.parse(line);
+      },
+    });
+    assert.deepEqual(clean.advisory_packages, []);
+    assert.deepEqual(report.advisory_packages, []);
+
+    for (const advisoryMap of ['{"lodash":[{"id":1}]}', '{"lodash":[]}']) {
+      await assert.rejects(
+        auditLockfile({
+          lockfilePath,
+          fetchImpl: async () => new Response(advisoryMap, { status: 200 }),
+          writeReport: (line) => {
+            report = JSON.parse(line);
+          },
+        }),
+        /returned advisories for 1 package/u,
+      );
+      assert.deepEqual(report.advisory_packages, ["lodash"]);
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
