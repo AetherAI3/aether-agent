@@ -217,6 +217,18 @@ export async function handleSlash(
       await cmdDoctor(ctx, arg.trim() ? arg.trim().split(/\s+/) : [], { out });
       break;
     }
+    case "settings": {
+      const { runSettingsCommand } = await import("./settings.js");
+      const args = arg.trim() ? ["show", arg.trim()] : [];
+      await runSettingsCommand(ctx, args, {}, { out, err: out });
+      break;
+    }
+    case "voice": {
+      const { runVoiceCommand } = await import("./voice.js");
+      const args = arg.trim() ? arg.trim().split(/\s+/) : [];
+      await runVoiceCommand(ctx, args, { out, err: out });
+      break;
+    }
     case "preview": {
       const { cmdPreview } = await import("./preview.js");
       const args = arg.trim() ? arg.trim().split(/\s+/) : ["status"];

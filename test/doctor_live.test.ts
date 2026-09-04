@@ -496,6 +496,44 @@ test("a broker with no doctor-safe tool is reachable but unproven", async () => 
   assert.match(String(mcp.verified.evidence), /readOnly \+ doctorSafe/);
 });
 
+test("a declared doctor-safe MCP tool is still unverified without an invocation route", async () => {
+  const client = {
+    listProviders: async () => [{ provider_id: "docs", display_name: "Docs", flow: "pat_paste" }],
+    listConnections: async () => [{ provider_id: "docs", created_at: "t", updated_at: "t" }],
+    listTools: async () => [{ name: "synthetic-health", readOnly: true, doctorSafe: true }],
+  } as unknown as McpClient;
+  const { ctx } = fakeCtx({ created: { session_id: "s" } });
+  const report = await liveReport(ctx, liveOpts({ mcpClient: client }));
+  const mcp = find(report, "mcp.broker");
+  assert.equal(mcp.reachable.state, "yes");
+  assert.equal(mcp.verified.state, "not-checked");
+  assert.match(String(mcp.verified.evidence), /listing a tool is not execution proof/);
+});
+
+test("a hanging live-doctor MCP provider is aborted at the shared lifecycle bound", async () => {
+  const observed: AbortSignal[] = [];
+  const hang = (options?: { signal?: AbortSignal }): Promise<never> => {
+    const signal = options?.signal;
+    assert.ok(signal, "doctor forwards a cancellation signal into the MCP client");
+    observed.push(signal);
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("SYNTHETIC-SHOULD-NOT-LEAK")), { once: true });
+    });
+  };
+  const client = {
+    listProviders: hang,
+    listConnections: hang,
+    listTools: hang,
+  } as unknown as McpClient;
+  const { ctx } = fakeCtx({ created: { session_id: "s" } });
+  const report = await liveReport(ctx, liveOpts({ mcpClient: client, timeoutMs: 20 }));
+  const mcp = find(report, "mcp.broker");
+  assert.equal(mcp.reachable.state, "no");
+  assert.ok(observed.length >= 2);
+  assert.ok(observed.every((signal) => signal.aborted), "every in-flight MCP request was aborted");
+  assert.doesNotMatch(JSON.stringify(mcp), /SYNTHETIC-SHOULD-NOT-LEAK/);
+});
+
 test("signed out means the agent loop is unproven, not failed", async () => {
   const { ctx, posts } = fakeCtx();
   (ctx as unknown as { tokens: { get: () => Promise<string | null> } }).tokens = {

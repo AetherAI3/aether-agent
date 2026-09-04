@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { runTurn, ChatTurnError, applyRestart, buildPromptContext, repaintString } from "../src/commands/chat.js";
+import { runTurn, cmdChat, ChatTurnError, applyRestart, buildPromptContext, repaintString } from "../src/commands/chat.js";
 import { handleSlash } from "../src/commands/slash.js";
 import { ApiClient } from "../src/core/transport.js";
-import { StreamIncompleteError } from "../src/core/errors.js";
+import { MeaningfulProgressTimeoutError, StreamIncompleteError } from "../src/core/errors.js";
 import type { GlobalFlags, AppContext } from "../src/core/context.js";
 import type { TokenStore } from "../src/core/auth.js";
 
@@ -192,6 +192,171 @@ test("/steer shows handled-in-REPL message", async () => {
   const res = await handleSlash(fakeCtx(), "/steer use typescript", { write: (s: string) => out.push(s) } as never);
   assert.equal(res.exit, false);
   assert.match(out.join(""), /is handled directly in the interactive REPL/i);
+});
+
+test("heartbeat-only SSE is cancelled by the meaningful-progress watchdog", async () => {
+  const real = globalThis.fetch;
+  const previous = process.env["AETHER_STREAM_TIMEOUT_MS"];
+  process.env["AETHER_STREAM_TIMEOUT_MS"] = "20";
+  let returned = false;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    headers: new Headers({ "content-type": "text/event-stream" }),
+    body: (async function* (): AsyncIterable<Uint8Array> {
+      try {
+        for (;;) {
+          yield new TextEncoder().encode('data: {"type":"ping"}\n\n');
+          await new Promise<void>((resolve) => setTimeout(resolve, 2));
+        }
+      } finally {
+        returned = true;
+      }
+    })(),
+  }) as unknown as Response) as typeof globalThis.fetch;
+  try {
+    await assert.rejects(
+      () => runTurn(ctxWith(), "keep this prompt"),
+      (error: unknown) =>
+        error instanceof MeaningfulProgressTimeoutError &&
+        /request was cancelled.*prompt is safe to retry.*aether doctor/i.test(error.message),
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    assert.equal(returned, true, "timeout returns the underlying iterator and releases the stream");
+  } finally {
+    globalThis.fetch = real;
+    if (previous === undefined) delete process.env["AETHER_STREAM_TIMEOUT_MS"];
+    else process.env["AETHER_STREAM_TIMEOUT_MS"] = previous;
+  }
+});
+
+test("empty deltas and unchanged usage cannot evade the meaningful-progress watchdog", async () => {
+  const real = globalThis.fetch;
+  const previous = process.env["AETHER_STREAM_TIMEOUT_MS"];
+  process.env["AETHER_STREAM_TIMEOUT_MS"] = "20";
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    headers: new Headers({ "content-type": "text/event-stream" }),
+    body: (async function* (): AsyncIterable<Uint8Array> {
+      for (;;) {
+        yield new TextEncoder().encode(
+          'data: {"type":"delta","text":""}\n\n' +
+          'data: {"type":"usage","uvt":7,"cents":1}\n\n',
+        );
+        await new Promise<void>((resolve) => setTimeout(resolve, 2));
+      }
+    })(),
+  }) as unknown as Response) as typeof globalThis.fetch;
+  try {
+    const ctx = ctxWith();
+    ctx.flags.json = false;
+    await assert.rejects(() => runTurn(ctx, "preserve me"), MeaningfulProgressTimeoutError);
+  } finally {
+    globalThis.fetch = real;
+    if (previous === undefined) delete process.env["AETHER_STREAM_TIMEOUT_MS"];
+    else process.env["AETHER_STREAM_TIMEOUT_MS"] = previous;
+  }
+});
+
+test("alternating cosmetic progress and regressing usage cannot evade the watchdog", async () => {
+  const real = globalThis.fetch;
+  const previous = process.env["AETHER_STREAM_TIMEOUT_MS"];
+  process.env["AETHER_STREAM_TIMEOUT_MS"] = "20";
+  globalThis.fetch = (async () => ({
+    ok: true,
+    status: 200,
+    headers: new Headers({ "content-type": "text/event-stream" }),
+    body: (async function* (): AsyncIterable<Uint8Array> {
+      let high = false;
+      for (;;) {
+        high = !high;
+        yield new TextEncoder().encode(
+          `data: ${JSON.stringify({ type: "progress", text: high ? "waiting A" : "waiting B" })}\n\n` +
+          `data: ${JSON.stringify({ type: "usage", uvt: high ? 1 : 0, cents: 0 })}\n\n`,
+        );
+        await new Promise<void>((resolve) => setTimeout(resolve, 2));
+      }
+    })(),
+  }) as unknown as Response) as typeof globalThis.fetch;
+  try {
+    await assert.rejects(() => runTurn(ctxWith(), "bounded cosmetic cycle"), MeaningfulProgressTimeoutError);
+  } finally {
+    globalThis.fetch = real;
+    if (previous === undefined) delete process.env["AETHER_STREAM_TIMEOUT_MS"];
+    else process.env["AETHER_STREAM_TIMEOUT_MS"] = previous;
+  }
+});
+
+test("legacy fallback sanitizes TTY output and reports unknown usage truthfully", async () => {
+  const realFetch = globalThis.fetch;
+  const realOut = process.stdout.write.bind(process.stdout);
+  const realErr = process.stderr.write.bind(process.stderr);
+  let calls = 0;
+  let stdout = "";
+  let stderr = "";
+  process.stdout.write = ((chunk: unknown) => (stdout += String(chunk), true)) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: unknown) => (stderr += String(chunk), true)) as typeof process.stderr.write;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    if (calls === 1) {
+      return Response.json({ stream: false });
+    }
+    return Response.json({
+      response: "safe\u001b]52;c;clipboard\u0007 answer",
+      commitment_hash: "hash\u001b[2J",
+    });
+  }) as typeof globalThis.fetch;
+  try {
+    const ctx = ctxWith();
+    ctx.flags.json = false;
+    ctx.flags.audit = true;
+    const outcome = await runTurn(ctx, "hi");
+    assert.equal(outcome.state, "succeeded");
+    assert.match(stdout, /safe answer/);
+    assert.doesNotMatch(stdout + stderr, /[\u001b\u0007]/);
+    assert.match(stderr, /UVT usage unknown/i);
+  } finally {
+    globalThis.fetch = realFetch;
+    process.stdout.write = realOut;
+    process.stderr.write = realErr;
+  }
+});
+
+test("legacy JSON fallback emits only parseable NDJSON frames and a terminal outcome", async () => {
+  const realFetch = globalThis.fetch;
+  const realOut = process.stdout.write.bind(process.stdout);
+  const realErr = process.stderr.write.bind(process.stderr);
+  let calls = 0;
+  let stdout = "";
+  process.stdout.write = ((chunk: unknown) => (stdout += String(chunk), true)) as typeof process.stdout.write;
+  process.stderr.write = (() => true) as typeof process.stderr.write;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return calls === 1
+      ? Response.json({ stream: false })
+      : Response.json({ response: "structured answer" });
+  }) as typeof globalThis.fetch;
+  try {
+    const exit = await cmdChat(ctxWith(), "hi");
+    assert.equal(exit, 0);
+    const frames = stdout.trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert.deepEqual(frames.map((frame) => frame["type"]), ["delta", "done", "turn_outcome"]);
+    assert.equal(frames[1]?.["usageKnown"], false);
+    assert.equal(frames[2]?.["state"], "succeeded");
+  } finally {
+    globalThis.fetch = realFetch;
+    process.stdout.write = realOut;
+    process.stderr.write = realErr;
+  }
+});
+
+test("/voice uses the operator rail and keeps output inside the REPL sink", async () => {
+  const out: string[] = [];
+  const res = await handleSlash(fakeCtx(), "/voice status", { write: (s: string) => out.push(s) } as never);
+  assert.equal(res.exit, false);
+  assert.match(out.join(""), /AETHER VOICE/);
+  assert.match(out.join(""), /default-off/);
 });
 
 // ── /btw passthrough in handleSlash ──

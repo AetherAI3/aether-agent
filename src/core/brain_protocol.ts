@@ -12,6 +12,7 @@
 // (aether_agent/protocol.py) MUST carry the same number; the conformance fixture
 // (test/fixtures/bridge_conformance.json) pins both. Canonical: docs/CONTRACTS.md.
 export const PROTOCOL_VERSION = 3;
+export const MAX_MONOLOGUE_DEPTH = 32;
 
 // --- agent context packet (host -> brain, additive + OPTIONAL) -------------
 // The TYPED channel for skill and instruction context. Additive and optional,
@@ -208,7 +209,13 @@ export const TOOLS = [
 export type ToolName = (typeof TOOLS)[number];
 
 // --- decode (wire object -> BrainEvent) ------------------------------------
-const num = (v: unknown, d = 0): number => (v == null ? d : Number(v));
+const num = (v: unknown, d = 0): number => {
+  const parsed = v == null ? d : Number(v);
+  return Number.isFinite(parsed) ? parsed : d;
+};
+const nonNegativeNum = (v: unknown, d = 0): number => Math.max(0, num(v, d));
+const nonNegativeInt = (v: unknown, d = 0): number => Math.trunc(nonNegativeNum(v, d));
+const monologueDepth = (v: unknown): number => Math.min(MAX_MONOLOGUE_DEPTH, nonNegativeInt(v));
 const str = (v: unknown, d = ""): string => (v == null ? d : String(v));
 // Absent optional wire field -> undefined (not 0/false) — a missing Tier-2/3
 // metric must never be indistinguishable from a real zero (Finding E). A
@@ -218,7 +225,16 @@ const str = (v: unknown, d = ""): string => (v == null ? d : String(v));
 const numOrUndef = (v: unknown): number | undefined => {
   if (v == null) return undefined;
   const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+};
+
+const workflowPhases = (v: unknown): Array<{ n: number; type: string; agents: number }> => {
+  if (!Array.isArray(v)) return [];
+  return v.flatMap((phase) => {
+    if (!phase || typeof phase !== "object" || Array.isArray(phase)) return [];
+    const item = phase as Record<string, unknown>;
+    return [{ n: nonNegativeInt(item["n"]), type: str(item["type"]), agents: nonNegativeInt(item["agents"]) }];
+  });
 };
 
 /** Normalize one parsed wire object into a typed BrainEvent (null = ignore). */
@@ -229,18 +245,18 @@ export function decodeEvent(obj: Record<string, unknown>): BrainEvent | null {
     case "stage":
       return { type: "stage", name: str(obj["name"]), face: str(obj["face"]) };
     case "monologue":
-      return { type: "monologue", text: str(obj["text"]), depth: num(obj["depth"]) };
+      return { type: "monologue", text: str(obj["text"]), depth: monologueDepth(obj["depth"]) };
     case "skill":
       return { type: "skill", name: str(obj["name"]), reason: str(obj["reason"]) };
     case "turn":
       return {
         type: "turn",
-        n: num(obj["n"]),
-        toolCalls: num(obj["tool_calls"]),
-        malformed: num(obj["malformed"]),
-        invented: num(obj["invented"]),
+        n: nonNegativeInt(obj["n"]),
+        toolCalls: nonNegativeInt(obj["tool_calls"]),
+        malformed: nonNegativeInt(obj["malformed"]),
+        invented: nonNegativeInt(obj["invented"]),
         noCall: Boolean(obj["no_call"]),
-        failCount: obj["fail_count"] == null ? null : num(obj["fail_count"]),
+        failCount: obj["fail_count"] == null ? null : nonNegativeInt(obj["fail_count"]),
       };
     case "tool_call":
       return {
@@ -252,18 +268,18 @@ export function decodeEvent(obj: Record<string, unknown>): BrainEvent | null {
     case "telemetry":
       return {
         type: "telemetry",
-        tokens: num(obj["tokens"]),
-        tps: num(obj["tps"]),
-        ctxUsed: num(obj["ctx_used"]),
-        ctxCap: num(obj["ctx_cap"]),
-        vram: num(obj["vram"]),
+        tokens: nonNegativeNum(obj["tokens"]),
+        tps: nonNegativeNum(obj["tps"]),
+        ctxUsed: nonNegativeNum(obj["ctx_used"]),
+        ctxCap: nonNegativeNum(obj["ctx_cap"]),
+        vram: nonNegativeNum(obj["vram"]),
       };
     case "status":
       return {
         type: "status",
         phase: str(obj["phase"]),
-        poolUsed: num(obj["pool_used"]),
-        poolCap: num(obj["pool_cap"]),
+        poolUsed: nonNegativeNum(obj["pool_used"]),
+        poolCap: nonNegativeNum(obj["pool_cap"]),
       };
     case "checkpoint":
       return { type: "checkpoint", gitSha: str(obj["git_sha"]) };
@@ -272,7 +288,7 @@ export function decodeEvent(obj: Record<string, unknown>): BrainEvent | null {
         type: "done",
         ok: Boolean(obj["ok"]),
         result: str(obj["result"]),
-        remaining: num(obj["remaining"]),
+        remaining: nonNegativeInt(obj["remaining"]),
         reason: str(obj["reason"]),
       };
     case "error":
@@ -281,27 +297,27 @@ export function decodeEvent(obj: Record<string, unknown>): BrainEvent | null {
       return {
         type: "workflow_start",
         workflowId: str(obj["workflow_id"]),
-        phases: (Array.isArray(obj["phases"]) ? obj["phases"] : []) as Array<{ n: number; type: string; agents: number }>,
-        totalAgents: num(obj["total_agents"]),
+        phases: workflowPhases(obj["phases"]),
+        totalAgents: nonNegativeInt(obj["total_agents"]),
       };
     case "phase_start":
       return {
         type: "phase_start",
-        phaseN: num(obj["phase_n"]),
+        phaseN: nonNegativeInt(obj["phase_n"]),
         phaseType: str(obj["phase_type"]),
-        agentCount: num(obj["agent_count"]),
+        agentCount: nonNegativeInt(obj["agent_count"]),
       };
     case "phase_done":
       return {
         type: "phase_done",
-        phaseN: num(obj["phase_n"]),
+        phaseN: nonNegativeInt(obj["phase_n"]),
         artifactSummary: str(obj["artifact_summary"]),
       };
     case "agent_spawn":
       return {
         type: "agent_spawn",
         agentId: str(obj["agent_id"]),
-        phaseN: num(obj["phase_n"]),
+        phaseN: nonNegativeInt(obj["phase_n"]),
         brief: str(obj["brief"]),
       };
     case "agent_progress":
@@ -314,7 +330,7 @@ export function decodeEvent(obj: Record<string, unknown>): BrainEvent | null {
       return {
         type: "agent_done",
         agentId: str(obj["agent_id"]),
-        phaseN: num(obj["phase_n"]),
+        phaseN: nonNegativeInt(obj["phase_n"]),
         summary: str(obj["summary"]),
         tokens: numOrUndef(obj["tokens"]),
         toolCalls: numOrUndef(obj["tool_calls"]),
@@ -324,8 +340,8 @@ export function decodeEvent(obj: Record<string, unknown>): BrainEvent | null {
       return {
         type: "workflow_done",
         synthesis: str(obj["synthesis"]),
-        totalPhases: num(obj["total_phases"]),
-        totalAgents: num(obj["total_agents"]),
+        totalPhases: nonNegativeInt(obj["total_phases"]),
+        totalAgents: nonNegativeInt(obj["total_agents"]),
       };
     default:
       return null; // unknown event type — ignore per contract

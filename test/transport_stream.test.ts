@@ -38,6 +38,40 @@ test("ApiClient.stream times out while opening a quiet stream", async () => {
   }
 });
 
+test("ApiClient.stream timeout covers a fail-soft JSON body after headers", async () => {
+  const restore = mockFetch((async () =>
+    new Response(new ReadableStream<Uint8Array>(), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch);
+  try {
+    const api = new ApiClient("https://api.example", new StaticTokenStore(""));
+    await assert.rejects(
+      () => api.stream("/agent/chat/stream", {}, { timeoutMs: 5 }),
+      (err: unknown) => err instanceof StreamTimeoutError,
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("ApiClient.stream timeout covers a non-2xx error body after headers", async () => {
+  const restore = mockFetch((async () =>
+    new Response(new ReadableStream<Uint8Array>(), {
+      status: 402,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch);
+  try {
+    const api = new ApiClient("https://api.example", new StaticTokenStore(""));
+    await assert.rejects(
+      () => api.stream("/agent/chat/stream", {}, { timeoutMs: 5 }),
+      (err: unknown) => err instanceof StreamTimeoutError,
+    );
+  } finally {
+    restore();
+  }
+});
+
 test("ApiClient.stream times out when the SSE body goes quiet", async () => {
   const restore = mockFetch((async () => {
     const body = new ReadableStream<Uint8Array>({
@@ -168,12 +202,10 @@ test("defaultStreamTimeoutMs: unset env falls back to DEFAULT_STREAM_TIMEOUT_MS"
   }
 });
 
-test("defaultStreamTimeoutMs: '0' means disabled, not the 120s default", () => {
-  // Regression guard: normalizeTimeoutMs(0) is falsy, so a naive `|| DEFAULT`
-  // fallback silently turned an explicit opt-out back into the 120s default.
+test("defaultStreamTimeoutMs: production env cannot disable the finite bound", () => {
   const restore = setEnvTimeout("0");
   try {
-    assert.equal(defaultStreamTimeoutMs(), 0);
+    assert.equal(defaultStreamTimeoutMs(), DEFAULT_STREAM_TIMEOUT_MS);
   } finally {
     restore();
   }

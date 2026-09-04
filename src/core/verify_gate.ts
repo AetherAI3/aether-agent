@@ -9,7 +9,7 @@
 //
 // Canonical: specs/aethercode_loop_fixes.md §12.1 (the kill-gate #1 instrument).
 
-import type { ToolResult } from "./tool_executor.js";
+import type { RunOptions, ToolResult } from "./tool_executor.js";
 import type { FinalStatus } from "./session_log.js";
 
 /** The subset of the brain's `done` event the gate consults. Advisory only. */
@@ -25,7 +25,7 @@ export interface VerifyRunner {
   // timeout or Ctrl+C can reap the whole process tree. Naming the async method
   // here is deliberate — a fake that still implements the sync one will fail to
   // compile rather than quietly diverge from what production calls.
-  executeAsync(name: string, args: Record<string, unknown>): Promise<ToolResult>;
+  executeAsync(name: string, args: Record<string, unknown>, options?: RunOptions): Promise<ToolResult>;
 }
 
 export interface VerifyOutcome {
@@ -66,13 +66,14 @@ export async function finalVerify(
   testCmd: string | undefined,
   done: BrainDone | null,
   errored = false,
+  options: RunOptions = {},
 ): Promise<VerifyOutcome> {
   if (!testCmd) {
     return errored
       ? { status: "error", remaining: done?.remaining ?? 0, exitCode: 1 }
       : { status: "unverified", remaining: done?.remaining ?? 0, exitCode: -1 };
   }
-  const verify = await exec.executeAsync("run_tests", { command: testCmd });
+  const verify = await exec.executeAsync("run_tests", { command: testCmd }, options);
   const remaining = parseFailCount(verify.output) ?? done?.remaining ?? 0;
   // A crashed brain is never "ok", even on a green tree; we still run the gate so
   // the failing count (if any) is logged.

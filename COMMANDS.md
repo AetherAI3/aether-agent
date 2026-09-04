@@ -18,14 +18,18 @@ aether                                  # no args = interactive REPL
 <!-- Registry markers are checked against the declarative command registries. -->
 
 <!-- CLI-COMMANDS:START -->
-`help`, `agent`, `exec`, `chat`, `resume`, `sessions`, `run`, `review`, `ship`, `setup`, `local`, `preview`, `models`, `agents`, `auth`,
-`github`, `vault`, `workflow`, `memory`, `skills`, `capabilities`, `image`,
-`video`, `output`, `audit`, `receipt`, `doctor`, `support-bundle`, `mcp`,
-`config`
+`help`, `agent`, `chat`, `resume`, `run`, `models`, `agents`, `auth`, `github`, `vault`, `workflow`, `memory`,
+`skills`, `capabilities`, `image`, `video`, `output`, `audit`, `receipt`, `support-bundle`, `mcp`, `config`, `exec`, `setup`,
+`local`, `preview`, `doctor`, `sessions`, `review`, `ship`, `settings`, `voice`
 <!-- CLI-COMMANDS:END -->
 
 <!-- SLASH-COMMANDS:START -->
-`help`, `models`, `model`, `agent`, `agents`, `tier`, `audit`, `effort`, `doctor`, `preview`, `clear`, `exit`, `mcp`, `autonomous-execution`, `subagent-driven-execution`, `self-review`, `recon`, `plan`, `research`, `project-review`, `code-review`, `writing-skills`, `writing-plans`, `queue`, `steer`, `btw`, `pin`, `drop`, `snapshot`, `limit`, `audit-receipt`, `rollback`, `logs-view`, `goal`, `goals`, `memory`, `workflow`, `workflow-templates`, `workflow-template`, `vault`, `vault-context`, `vault-search`, `vault-recent`, `vault-project`, `vault-tag`, `vault-tree`, `delegate`, `tree`, `broadcast`, `gather`, `scaffold`, `port`, `test-drive`, `bench`, `purge`, `stage-diff`, `review`, `ship`, `revert`, `photogen`, `frame`, `re-frame`, `videogen`, `sequence`, `animate`, `re-cut`, `output`, `storyboard`, `add`, `hud`
+`help`, `models`, `model`, `agent`, `agents`, `tier`, `effort`, `audit`, `doctor`, `settings`, `voice`, `preview`,
+`clear`, `exit`, `mcp`, `autonomous-execution`, `subagent-driven-execution`, `self-review`, `recon`, `plan`, `research`, `project-review`, `code-review`, `writing-skills`,
+`writing-plans`, `queue`, `steer`, `btw`, `pin`, `drop`, `snapshot`, `limit`, `audit-receipt`, `rollback`, `logs-view`, `goal`,
+`goals`, `memory`, `workflow`, `workflow-templates`, `workflow-template`, `vault`, `vault-context`, `vault-search`, `vault-recent`, `vault-project`, `vault-tag`, `vault-tree`,
+`delegate`, `tree`, `broadcast`, `gather`, `scaffold`, `port`, `test-drive`, `bench`, `purge`, `stage-diff`, `review`, `ship`,
+`revert`, `photogen`, `frame`, `re-frame`, `videogen`, `sequence`, `animate`, `re-cut`, `output`, `storyboard`, `add`, `hud`
 <!-- SLASH-COMMANDS:END -->
 
 ## Runtime capability requirements

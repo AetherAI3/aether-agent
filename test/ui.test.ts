@@ -53,6 +53,9 @@ test("renderSplash shows the AETHER wordmark and the cloud", () => {
   assert.match(out, /AETHER|█/);
   assert.match(out, /v1\.2\.3/);
   assert.match(out, /\/model/);
+  assert.match(out, /AETHER VOICE/);
+  assert.match(out, /capture adapter unavailable/);
+  assert.doesNotMatch(out, /hold .* to talk/i);
 });
 
 test("prompt prefix is [user]_:", () => {

@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.aethersystems.net/actions/v1/aether-ci-config.schema.json",
+  "title": ".aether-ci.yml configuration v1",
+  "description": "The YAML data model accepted by desktop/lib/ci/ci-config.cjs. This schema describes configuration only; it does not grant runner-control authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "gates": {
+      "type": ["object", "null"],
+      "default": {
+        "commit": false,
+        "push": false,
+        "agent": false
+      },
+      "additionalProperties": false,
+      "properties": {
+        "commit": { "type": "boolean", "default": false },
+        "push": { "type": "boolean", "default": false },
+        "agent": { "type": "boolean", "default": false }
+      },
+      "x-aether-null-as-missing": true
+    },
+    "checks": {
+      "type": ["array", "null"],
+      "default": [],
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "type", "run"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "\\S",
+            "maxLength": 120,
+            "x-aether-terminal-controls": "forbidden",
+            "x-aether-raw-secrets": "forbidden"
+          },
+          "type": {
+            "enum": [
+              "test",
+              "lint",
+              "typecheck",
+              "build",
+              "format-check",
+              "custom-script"
+            ]
+          },
+          "run": {
+            "type": "string",
+            "pattern": "\\S",
+            "maxLength": 4096,
+            "x-aether-terminal-controls": "forbidden",
+            "x-aether-raw-secrets": "forbidden",
+            "x-aether-normalize": "trim"
+          }
+        }
+      },
+      "x-aether-null-as-missing": true
+    },
+    "project": {
+      "type": ["string", "null"],
+      "default": null,
+      "pattern": "^prj_[0-9a-f]{16}$"
+    }
+  },
+  "x-aether-config-file": ".aether-ci.yml",
+  "x-aether-max-bytes": 65536,
+  "x-aether-authority": "desktop/lib/ci/ci-config.cjs",
+  "x-aether-upstream": {
+    "repository": "AetherAI3/AETHER-CLOUD",
+    "path": "contracts/actions/v1/aether-ci-config.schema.json",
+    "commitSha": "ee60ab47f881b52e1779e7831282525b6c90c84d",
+    "canonicalSha256": "18c718d6359ae421ef18990bd4570af03901b581fe7bb3819c7189945d16d69c"
+  }
+}

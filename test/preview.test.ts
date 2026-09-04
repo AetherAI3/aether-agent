@@ -26,6 +26,26 @@ function context(cwd: string, yes = true): AppContext {
   };
 }
 
+/** Windows file symlinks require Developer Mode or an elevated token. Probe
+ * that host capability so the Linux job still exercises every no-follow race
+ * while an unprivileged Windows checkout does not fail before product code is
+ * reached. Junction tests remain unconditional on Windows. */
+function supportsFileSymlinks(root: string): boolean {
+  const target = join(root, ".aether-file-link-target");
+  const link = join(root, ".aether-file-link-probe");
+  writeFileSync(target, "probe");
+  try {
+    symlinkSync(target, link);
+    return true;
+  } catch (error) {
+    if (process.platform === "win32" && (error as NodeJS.ErrnoException).code === "EPERM") return false;
+    throw error;
+  } finally {
+    if (existsSync(link)) unlinkSync(link);
+    if (existsSync(target)) unlinkSync(target);
+  }
+}
+
 test("preview contract accepts loopback only and strips hostile terminal controls", () => {
   for (const url of ["http://127.0.0.1:3000", "https://localhost:5173/x", "http://[::1]:8080"]) assert.equal(isLoopbackUrl(url), true);
   for (const url of ["http://0.0.0.0:3000", "http://192.168.1.2:3000", "file:///tmp/x", "http://user:pw@localhost:1", "http://localhost:1\nX"]) assert.equal(isLoopbackUrl(url), false);
@@ -85,10 +105,14 @@ test("malformed persisted state fails closed without replacement or launch", asy
   assert.equal(readFileSync(paths.statePath, "utf8"), malformed);
 });
 
-test("project declaration is explicit, bounded, and cannot be a symlink", () => {
+test("project declaration is explicit, bounded, and cannot be a symlink", (t) => {
   const root = tempProject(); mkdirSync(join(root, ".aether"));
   assert.throws(() => resolvePreviewCommand(root, {}), /preview.json is absent/);
   writeFileSync(join(root, ".aether", "declared.json"), JSON.stringify({ version: 1, command: "npm", args: ["run", "dev"] }));
+  if (!supportsFileSymlinks(root)) {
+    t.skip("file symlink creation is unavailable on this Windows host (EPERM)");
+    return;
+  }
   symlinkSync(join(root, ".aether", "declared.json"), join(root, ".aether", "preview.json"));
   assert.throws(() => resolvePreviewCommand(root, {}), /unsafe/);
 });
@@ -141,6 +165,7 @@ test("control client tolerates a slow response and cleans its one-use request", 
 
 test("managed preview detects its URL, reports headless honestly, sanitizes logs, and stops descendants", { timeout: 45_000 }, async (t) => {
   const root = tempProject();
+  const canCreateFileSymlink = supportsFileSymlinks(root);
   const heartbeat = join(root, "heartbeat.txt");
   const secret = "preview-secret-value-12345";
   const envSecret = "preview-env-secret-67890";
@@ -278,32 +303,34 @@ test("managed preview detects its URL, reports headless honestly, sanitizes logs
   assert.doesNotMatch(logs.text(), new RegExp(secret));
   assert.match(logs.text(), /token=\[REDACTED\]/);
 
-  const outsideLog = join(root, "outside-log.txt"); writeFileSync(outsideLog, "SAFE");
-  const ownedLog = join(paths.dir, "owned-preview.log");
-  renameSync(paths.logPath, ownedLog);
-  symlinkSync(outsideLog, paths.logPath);
-  await fetch(`${state.url}/emit`);
-  await new Promise((resolvePromise) => setTimeout(resolvePromise, 150));
-  assert.equal(readFileSync(outsideLog, "utf8"), "SAFE", "child output followed a replaced log symlink");
-  const racedLogs = sink();
-  assert.equal(await cmdPreview(context(root), ["logs"], { out: racedLogs.stream, err: err.stream }), PREVIEW_EXIT.unsafe);
-  unlinkSync(paths.logPath); renameSync(ownedLog, paths.logPath);
-  const redactedLogs = sink();
-  assert.equal(await cmdPreview(context(root), ["logs"], { out: redactedLogs.stream, err: err.stream }), PREVIEW_EXIT.ok);
-  assert.doesNotMatch(redactedLogs.text(), new RegExp(`${secret}|${envSecret}`));
-  assert.match(redactedLogs.text(), /Authorization: \[REDACTED\] \[REDACTED\]/);
-  assert.match(redactedLogs.text(), /https:\/\/\[REDACTED\]@localhost/);
-  const outsideState = join(root, "outside-state.txt"); writeFileSync(outsideState, "SAFE");
-  const ownedState = join(paths.dir, "owned-state.json");
-  renameSync(paths.statePath, ownedState); symlinkSync(outsideState, paths.statePath);
-  const racedStart = sink();
-  assert.equal(await cmdPreview(context(root), ["start"], {
-    command: process.execPath, args: previewArgs, timeoutMs: "8000", noOpen: true,
-    out: racedStart.stream, err: err.stream,
-  }), PREVIEW_EXIT.unsafe);
-  assert.equal(readFileSync(outsideState, "utf8"), "SAFE");
-  assert.doesNotThrow(() => process.kill(state.childPid, 0), "state replacement stopped the original preview");
-  unlinkSync(paths.statePath); renameSync(ownedState, paths.statePath);
+  await t.test("refuses file-symlink replacement races", { skip: !canCreateFileSymlink }, async () => {
+    const outsideLog = join(root, "outside-log.txt"); writeFileSync(outsideLog, "SAFE");
+    const ownedLog = join(paths.dir, "owned-preview.log");
+    renameSync(paths.logPath, ownedLog);
+    symlinkSync(outsideLog, paths.logPath);
+    await fetch(`${state.url}/emit`);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 150));
+    assert.equal(readFileSync(outsideLog, "utf8"), "SAFE", "child output followed a replaced log symlink");
+    const racedLogs = sink();
+    assert.equal(await cmdPreview(context(root), ["logs"], { out: racedLogs.stream, err: err.stream }), PREVIEW_EXIT.unsafe);
+    unlinkSync(paths.logPath); renameSync(ownedLog, paths.logPath);
+    const redactedLogs = sink();
+    assert.equal(await cmdPreview(context(root), ["logs"], { out: redactedLogs.stream, err: err.stream }), PREVIEW_EXIT.ok);
+    assert.doesNotMatch(redactedLogs.text(), new RegExp(`${secret}|${envSecret}`));
+    assert.match(redactedLogs.text(), /Authorization: \[REDACTED\] \[REDACTED\]/);
+    assert.match(redactedLogs.text(), /https:\/\/\[REDACTED\]@localhost/);
+    const outsideState = join(root, "outside-state.txt"); writeFileSync(outsideState, "SAFE");
+    const ownedState = join(paths.dir, "owned-state.json");
+    renameSync(paths.statePath, ownedState); symlinkSync(outsideState, paths.statePath);
+    const racedStart = sink();
+    assert.equal(await cmdPreview(context(root), ["start"], {
+      command: process.execPath, args: previewArgs, timeoutMs: "8000", noOpen: true,
+      out: racedStart.stream, err: err.stream,
+    }), PREVIEW_EXIT.unsafe);
+    assert.equal(readFileSync(outsideState, "utf8"), "SAFE");
+    assert.doesNotThrow(() => process.kill(state.childPid, 0), "state replacement stopped the original preview");
+    unlinkSync(paths.statePath); renameSync(ownedState, paths.statePath);
+  });
 
   const statusCalls = Array.from({ length: 12 }, () => {
     const statusSink = sink();

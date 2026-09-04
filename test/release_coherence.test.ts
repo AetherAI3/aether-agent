@@ -52,8 +52,8 @@ const RECONCILED_BASE_LABEL = "Publication code base";
 const RECONCILED_BASE_VALUE = "`127145725b63c2800bc904ca8908b790238d7fce` (`origin/main`, after #109; #109 changed only the CodeQL workflow)";
 const HOSTED_UBUNTU_LABEL = "GitHub-hosted Ubuntu value";
 const HOSTED_WINDOWS_LABEL = "GitHub-hosted Windows value";
-const LOCAL_WINDOWS_LABEL = "Current local Windows default-checkout measurement";
-const LOCAL_LINUX_LABEL = "Current local Linux/LF checkout measurement";
+const LOCAL_WINDOWS_LABEL = "Publication-base local Windows default-checkout measurement";
+const LOCAL_LINUX_LABEL = "Publication-base local Linux/LF checkout measurement";
 const EXPECTED_UBUNTU_UNPACKED = 3_688_966;
 const EXPECTED_HOSTED_WINDOWS_UNPACKED = 3_690_927;
 const EXPECTED_LOCAL_WINDOWS_UNPACKED = 3_690_927;
@@ -64,8 +64,8 @@ const V032_PACKET = {
   "Proposed tag": "`v0.3.2`",
   "Release line base": "`c4a16242ad117a499f91e3b531baa80f1a3ff0bd` (`v0.3.1`)",
   "Candidate branch": "`fix/reconcile-v031-into-main`",
-  "Archive evidence": "No release archive exists. The current local Windows `npm pack --dry-run --json --ignore-scripts` reported `aether-agents-0.3.2.tgz`, 1,387,500 packed bytes, 4,461,548 unpacked bytes, `shasum` `3e22664fe2bc647efe87a72a4d4fb95cb5566e83`, and integrity `sha512-AKvvYi40h64DvOylTk3qDKbs6k+MLP5kt3tUBtoQUDLcu+nTOiEnPxYDbmcmelynROKZjPVnsKxzlOCFJfodow==`; dry-run metadata is not a release checksum or provenance attestation.",
-  "Package manifest": "The same current local dry run reported 673 entries. Hosted exact-head package evidence remains required before release.",
+  "Archive evidence": "No release archive exists. The recorded reconciliation-candidate Windows `npm pack --dry-run --json --ignore-scripts` reported `aether-agents-0.3.2.tgz`, 1,387,500 packed bytes, 4,461,548 unpacked bytes, `shasum` `3e22664fe2bc647efe87a72a4d4fb95cb5566e83`, and integrity `sha512-AKvvYi40h64DvOylTk3qDKbs6k+MLP5kt3tUBtoQUDLcu+nTOiEnPxYDbmcmelynROKZjPVnsKxzlOCFJfodow==`; dry-run metadata is not a release checksum or provenance attestation and does not describe later source heads.",
+  "Package manifest": "That recorded reconciliation candidate contained 673 entries. Each later convergence head requires independent hosted package evidence before release.",
   "Provenance evidence": "Pending the trusted-publishing workflow — no v0.3.2 provenance attestation exists yet.",
 } as const;
 
@@ -90,7 +90,9 @@ function onlyPacketRow(rows: PacketRows, label: string): string {
 
 function assertV030PacketProvenance(packet: string): PacketRows {
   const rows = parsePacketRows(packet);
-  const baseLabels = [...rows.keys()].filter((label) => /base/i.test(label)).sort();
+  // Base *identity* rows end in "base". Publication-base measurements and
+  // manifests are evidence tied to that identity, not additional base rows.
+  const baseLabels = [...rows.keys()].filter((label) => / base$/i.test(label)).sort();
   assert.deepEqual(
     baseLabels,
     [ORIGINAL_BASE_LABEL, RECONCILED_BASE_LABEL].sort(),
@@ -100,7 +102,7 @@ function assertV030PacketProvenance(packet: string): PacketRows {
   assert.equal(onlyPacketRow(rows, RECONCILED_BASE_LABEL), RECONCILED_BASE_VALUE);
 
   const measurementLabels = [...rows.keys()]
-    .filter((label) => /GitHub-hosted/.test(label) || /^Current local .* measurement$/.test(label))
+    .filter((label) => /GitHub-hosted/.test(label) || /^Publication-base local .* measurement$/.test(label))
     .sort();
   assert.deepEqual(
     measurementLabels,
@@ -255,82 +257,35 @@ test("the operator packet fails closed on contradictory release-evidence mutatio
   }
 });
 
-test(
-  "the v0.3.0 operator packet's final-candidate manifest keeps matching the package membership",
-  { timeout: 120_000 },
-  () => {
-    const packet = read("docs", "releases", "OPERATOR-PACKET-v0.3.0.md");
-    assertV030PacketProvenance(packet);
-    const packed = currentPackReport();
-    const header = /\| Current exact-head dry run \| ([\d,]+) entries \/ ([\d,]+) workflows \|/.exec(packet);
-    assert.ok(header, "the operator packet has no parseable current dry-run summary");
-    const headerEntries = Number.parseInt(header[1]!.replaceAll(",", ""), 10);
-    assert.equal(Number.parseInt(header[2]!, 10), 4, "the current dry run records the wrong workflow count");
-    const manifest = /### Current dry-run packaged file manifest\s+The exact-head candidate dry runs reported ([\d,]+) entries on clean Linux\/LF and\s+Windows\/default checkouts\./.exec(packet);
-    assert.ok(manifest, "the operator packet has no parseable current dry-run manifest summary");
-    const manifestEntries = Number.parseInt(manifest[1]!.replaceAll(",", ""), 10);
+test("the v0.3.0 operator packet keeps an immutable publication-base inventory", () => {
+  const packet = read("docs", "releases", "OPERATOR-PACKET-v0.3.0.md");
+  assertV030PacketProvenance(packet);
+  assert.match(packet, /\| Publication-base exact-head dry run \| 618 entries \/ 4 workflows \|/);
+  assert.match(packet, /### Publication-base packaged file manifest\s+The publication-base exact-head candidate dry runs reported 618 entries/);
 
-    // Fixed byte totals and the tarball digest belong to the recorded
-    // publication-base candidate. They must not chase a later post-publication
-    // README edit into an unpublished 0.3.0 payload. Package membership remains
-    // the portable invariant that every future source head must preserve.
-    assert.equal(headerEntries, packed.entryCount, "the packet header entry count does not match npm pack");
-    assert.equal(manifestEntries, packed.entryCount, "the packet manifest entry count does not match npm pack");
+  const expectedGroups = [
+    ["`COMMANDS.md`, `LICENSE`, `NOTICE.md`, `README.md`, `package.json`", 5],
+    ["`docs/generated/**`, `docs/model-catalogue/**`", 4],
+    ["`dist/src/core/**`", 327],
+    ["`dist/src/ui/**`", 117],
+    ["`dist/src/commands/**`", 132],
+    ["`dist/src/skills/**` (six built-in skills)", 18],
+    ["`dist/src/generated/**`", 3],
+    ["`dist/src/{index,main,types,version}.*`", 12],
+  ] as const;
+  assert.equal(expectedGroups.reduce((total, [, count]) => total + count, 0), 618);
+  for (const [label, count] of expectedGroups) {
+    assert.ok(packet.includes(`| ${label} | ${count} |`), `missing immutable v0.3.0 group ${label}`);
+  }
+  assert.doesNotMatch(packet, /\| `assets\/\*\*` \|/, "later package assets must not be backported into v0.3.0 evidence");
+  assert.match(
+    packet.replace(/\s+/g, " "),
+    /By extension: 197 `\.js`, 197 `\.d\.ts`, 197 `\.js\.map`, 14 `\.json`, 11 `\.md`, 1 `\.html`, 1 extensionless\./,
+  );
 
-    const paths = packed.files.map((file) => file.path.replaceAll("\\", "/"));
-    const count = (predicate: (path: string) => boolean): number => paths.filter(predicate).length;
-    const groups = [
-      ["`COMMANDS.md`, `LICENSE`, `NOTICE.md`, `README.md`, `package.json`", count((path) => !path.includes("/"))],
-      ["`assets/**`", count((path) => path.startsWith("assets/"))],
-      ["`docs/generated/**`, `docs/model-catalogue/**`", count((path) => path.startsWith("docs/"))],
-      ["`dist/src/core/**`", count((path) => path.startsWith("dist/src/core/"))],
-      ["`dist/src/ui/**`", count((path) => path.startsWith("dist/src/ui/"))],
-      ["`dist/src/commands/**`", count((path) => path.startsWith("dist/src/commands/"))],
-      ["`dist/src/skills/**` (six built-in skills)", count((path) => path.startsWith("dist/src/skills/"))],
-      ["`dist/src/generated/**`", count((path) => path.startsWith("dist/src/generated/"))],
-      [
-        "`dist/src/{index,main,types,version}.*`",
-        count((path) => /^dist\/src\/(?:index|main|types|version)\./.test(path)),
-      ],
-    ] as const;
-    assert.equal(
-      groups.reduce((total, [, entries]) => total + entries, 0),
-      packed.entryCount,
-      "the independently derived package groups do not cover the full npm manifest",
-    );
-    for (const [label, entries] of groups) {
-      assert.ok(
-        packet.includes(`| ${label} | ${entries} |`),
-        `the packet has a stale package group count for ${label}`,
-      );
-    }
-
-    const extensionCounts = {
-      js: count((path) => path.endsWith(".js") && !path.endsWith(".js.map")),
-      dts: count((path) => path.endsWith(".d.ts")),
-      map: count((path) => path.endsWith(".js.map")),
-      json: count((path) => path.endsWith(".json")),
-      md: count((path) => path.endsWith(".md")),
-      html: count((path) => path.endsWith(".html")),
-      png: count((path) => path.endsWith(".png")),
-      extensionless: count((path) => !/\.[^/]+$/.test(path)),
-    };
-    const normalizedPacket = packet.replace(/\s+/g, " ");
-    assert.ok(
-      normalizedPacket.includes(
-        `By extension: ${extensionCounts.js} \`.js\`, ${extensionCounts.dts} \`.d.ts\`, `
-        + `${extensionCounts.map} \`.js.map\`, ${extensionCounts.json} \`.json\`, `
-        + `${extensionCounts.md} \`.md\`, ${extensionCounts.html} \`.html\`, `
-        + `${extensionCounts.png} \`.png\`, `
-        + `${extensionCounts.extensionless} extensionless.`,
-      ),
-      "the packet has a stale extension manifest",
-    );
-
-    const historical = /### Historical candidate archive[\s\S]*?"packedFiles":575,"packedBytes":3022168,"workflows":3[\s\S]*?sha256:70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d/.exec(packet);
-    assert.ok(historical, "the historical archive facts are not kept together under their own heading");
-  },
-);
+  const historical = /### Historical candidate archive[\s\S]*?"packedFiles":575,"packedBytes":3022168,"workflows":3[\s\S]*?sha256:70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d/.exec(packet);
+  assert.ok(historical, "the historical archive facts are not kept together under their own heading");
+});
 
 // ── Gate B: the package contains what the notes promise ─────────────────────
 
@@ -345,6 +300,35 @@ test(
  * this gate cannot catch by itself; the row is the contract.
  */
 const FEATURE_MANIFEST: Array<{ claim: string; command?: string; packaged: string[] }> = [
+  {
+    claim: "typed developer settings — `aether settings`",
+    command: "settings",
+    packaged: [
+      "dist/src/commands/settings.js",
+      "dist/src/core/settings_registry.js",
+      "dist/src/core/settings_store.js",
+      "dist/src/core/settings_adapters.js",
+      "dist/src/ui/settings_view.js",
+    ],
+  },
+  {
+    claim: "capability-aware Aether Voice — `aether voice`",
+    command: "voice",
+    packaged: [
+      "dist/src/commands/voice.js",
+      "dist/src/core/voice.js",
+      "dist/src/core/voice_session.js",
+      "dist/src/core/voice_transport.js",
+      "dist/src/core/terminal_capabilities.js",
+      "dist/src/ui/terminal_session.js",
+      "dist/src/ui/voice_promo.js",
+    ],
+  },
+  {
+    claim: "visible terminal outcomes — `aether chat`",
+    command: "chat",
+    packaged: ["dist/src/commands/chat.js", "dist/src/core/turn_lifecycle.js"],
+  },
   {
     claim: "managed localhost previews — `aether preview`",
     command: "preview",

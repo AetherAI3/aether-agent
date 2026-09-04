@@ -196,7 +196,7 @@ test("loginWithPassword: a malicious `plan`/`commitment_hash` on a SUCCESSFUL lo
   }
 });
 
-test("loginWithPassword: AETHER_REQUEST_TIMEOUT_MS=0 disables the timeout (no AbortSignal attached)", async () => {
+test("loginWithPassword: AETHER_REQUEST_TIMEOUT_MS=0 retains the production timeout signal", async () => {
   const realFetch = globalThis.fetch;
   const restoreEnv = setRequestTimeoutMs("0");
   let sawSignal = false;
@@ -211,7 +211,7 @@ test("loginWithPassword: AETHER_REQUEST_TIMEOUT_MS=0 disables the timeout (no Ab
     const store = new StaticTokenStore("");
     const result = await loginWithPassword("https://api.example", store, { username: "u", password: "p" });
     assert.ok(result);
-    assert.equal(sawSignal, false, "0 means disabled — no AbortSignal.timeout(0), which would abort immediately");
+    assert.equal(sawSignal, true, "environment configuration cannot globally remove the request bound");
     assert.equal(await store.get(), "sess_x");
   } finally {
     globalThis.fetch = realFetch;

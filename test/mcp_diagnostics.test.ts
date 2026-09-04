@@ -9,6 +9,7 @@ import type { AppContext } from "../src/core/context.js";
 import type { McpClient } from "../src/core/mcp.js";
 import {
   collectMcpDiagnostics,
+  redactMcpUrl,
   renderMcpDiagnostics,
 } from "../src/core/mcp_diagnostics.js";
 import { LocalMcpStore } from "../src/core/mcp_store.js";
@@ -57,7 +58,7 @@ test("MCP diagnostics report broker, provider tools, URL shape, and redacted aut
   const { store } = fixture();
   store.add({
     name: "local",
-    url: "https://mcp.example.test/sse?token=" + SECRET + "#secret",
+    url: "https://mcp.example.test/sse/" + SECRET + "?token=" + SECRET + "#secret",
     transport: "http",
     authToken: SECRET,
   });
@@ -67,13 +68,86 @@ test("MCP diagnostics report broker, provider tools, URL shape, and redacted aut
   assert.equal(report.brokerStatus, "available");
   assert.equal(report.providers[0]?.toolCount, 2);
   assert.equal(report.localServers[0]?.authConfigured, true);
-  assert.equal(report.localServers[0]?.url.includes("?"), false);
+  assert.equal(report.localServers[0]?.reachable, null);
+  assert.equal(report.localServers[0]?.verified, false);
+  assert.equal(report.localServers[0]?.url, "https://mcp.example.test/[path redacted]");
   assert.equal(JSON.stringify(report).includes(SECRET), false);
   assert.equal(renderMcpDiagnostics(report).includes(SECRET), false);
   assert.match(
     report.checks.find((check) => check.id === "local-url:local")?.detail ?? "",
     /no direct probe/,
   );
+});
+
+test("MCP URL display preserves only the HTTP origin and a fixed redaction marker", () => {
+  assert.equal(
+    redactMcpUrl(`https://user:${SECRET}@mcp.example.test/private/${SECRET}?token=${SECRET}#${SECRET}`),
+    "https://mcp.example.test/[path redacted]",
+  );
+  assert.equal(redactMcpUrl("file:///private/server.sock"), "[invalid URL]");
+});
+
+test("MCP doctor bounds a hanging local endpoint, redacts credentials, and exits nonzero", async () => {
+  const { store } = fixture();
+  store.add({
+    name: "hanging",
+    url: "https://mcp.example.test/sse?token=" + SECRET,
+    transport: "http",
+    authToken: SECRET,
+  });
+  let signal: AbortSignal | undefined;
+  const localProbe = async (_url: string, current: AbortSignal): Promise<never> => {
+    signal = current;
+    return new Promise<never>(() => {});
+  };
+  const report = await collectMcpDiagnostics(client(), store, {
+    timeoutMs: 50,
+    includeLocalReachability: true,
+    localProbe,
+  });
+  assert.equal(signal?.aborted, true);
+  assert.equal(report.localServers[0]?.reachable, false);
+  assert.equal(report.localServers[0]?.verified, false);
+  assert.equal(report.localServers[0]?.lastFailure, "reachability test timed out");
+  assert.equal(
+    report.checks.find((check) => check.id === "local-reachability:hanging")?.status,
+    "fail",
+  );
+  assert.match(renderMcpDiagnostics(report), /request was cancelled/i);
+  assert.equal(JSON.stringify(report).includes(SECRET), false);
+
+  const diagnosed = output();
+  const code = await cmdMcp(context(false, async () => false), ["doctor"], {
+    out: diagnosed.out,
+    store,
+    client: client(),
+    diagnosticOptions: { timeoutMs: 50, localProbe },
+  });
+  assert.equal(code, 1);
+  assert.match(diagnosed.text(), /local-reachability:hanging/);
+  assert.equal(diagnosed.text().includes(SECRET), false);
+});
+
+test("local reachability distinguishes an answered endpoint from MCP verification", async () => {
+  const { store } = fixture();
+  store.add({ name: "local", url: "http://127.0.0.1:9999/mcp", transport: "http" });
+  const report = await collectMcpDiagnostics(client(), store, {
+    includeLocalReachability: true,
+    localProbe: async () => ({
+      reachable: true,
+      verified: false,
+      httpStatus: 405,
+      serviceHealthy: true,
+      detail: "reachable (HTTP 405); MCP protocol and tools not verified",
+    }),
+  });
+  assert.equal(report.localServers[0]?.reachable, true);
+  assert.equal(report.localServers[0]?.verified, false);
+  assert.equal(
+    report.checks.find((check) => check.id === "local-reachability:local")?.status,
+    "pass",
+  );
+  assert.match(renderMcpDiagnostics(report), /not verified/i);
 });
 
 test("broker and provider failures are bounded, fail-soft, and credential-redacted", async () => {

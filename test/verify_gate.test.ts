@@ -89,6 +89,27 @@ test("the gate runs the host's own test command via run_tests", async () => {
   assert.equal(exec.calls[0]?.args["command"], "pytest -q tests/unit");
 });
 
+test("the gate forwards command cancellation and timeout controls to the test process", async () => {
+  const controller = new AbortController();
+  let observed: { signal?: AbortSignal; timeoutMs?: number } | undefined;
+  const exec = {
+    async executeAsync(
+      _name: string,
+      _args: Record<string, unknown>,
+      options?: { signal?: AbortSignal; timeoutMs?: number },
+    ): Promise<ToolResult> {
+      observed = options;
+      return GREEN;
+    },
+  };
+  await finalVerify(exec, "pytest -q", { ok: true, remaining: 0, reason: "" }, false, {
+    signal: controller.signal,
+    timeoutMs: 321,
+  });
+  assert.equal(observed?.signal, controller.signal);
+  assert.equal(observed?.timeoutMs, 321);
+});
+
 // ── brain ERROR is distinct from brain DONE ─────────────────────────────────
 // A `done` event means the brain finished its loop (its self-doubt on a green tree
 // is overruled — that is a genuine success). An `error` event means the brain

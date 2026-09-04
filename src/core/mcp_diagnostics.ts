@@ -1,5 +1,12 @@
 import type { McpClient, McpConnection, McpProvider } from "./mcp.js";
 import { LocalMcpStore, sanityCheckUrl } from "./mcp_store.js";
+import {
+  McpOperationSupervisor,
+  McpOperationTimeoutError,
+  probeLocalMcpServer,
+  type LocalMcpReachability,
+} from "./mcp_lifecycle.js";
+import { sanitizeTerm } from "../ui/text.js";
 
 export type McpCheckStatus = "pass" | "warn" | "fail" | "skip";
 
@@ -14,6 +21,10 @@ export interface RedactedLocalMcpServer {
   url: string;
   transport: "http";
   authConfigured: boolean;
+  /** Null means no network probe was requested. Reachable is not verified. */
+  reachable: boolean | null;
+  verified: false;
+  lastFailure?: string;
 }
 
 export interface McpProviderDiagnostic {
@@ -37,17 +48,18 @@ export interface McpDiagnosticReport {
 export interface McpDiagnosticOptions {
   timeoutMs?: number;
   includeToolCounts?: boolean;
+  includeLocalReachability?: boolean;
+  localProbe?: (url: string, signal: AbortSignal) => Promise<LocalMcpReachability>;
   now?: string;
 }
 
-function redactUrl(value: string): string {
+export function redactMcpUrl(value: string): string {
   try {
     const url = new URL(value);
-    url.username = "";
-    url.password = "";
-    url.search = "";
-    url.hash = "";
-    return url.toString();
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || url.origin === "null") {
+      return "[invalid URL]";
+    }
+    return `${url.origin}/[path redacted]`;
   } catch {
     return "[invalid URL]";
   }
@@ -74,12 +86,15 @@ export async function collectMcpDiagnostics(
   options: McpDiagnosticOptions = {},
 ): Promise<McpDiagnosticReport> {
   const timeoutMs = Math.max(50, Math.min(options.timeoutMs ?? 2000, 10000));
+  const supervisor = new McpOperationSupervisor();
   const inspected = store.inspect();
-  const localServers = inspected.servers.map((server) => ({
+  const localServers: RedactedLocalMcpServer[] = inspected.servers.map((server) => ({
     name: server.name,
-    url: redactUrl(server.url),
+    url: redactMcpUrl(server.url),
     transport: server.transport,
     authConfigured: Boolean(server.authToken),
+    reachable: null,
+    verified: false as const,
   }));
   const checks: McpDiagnosticCheck[] = [
     {
@@ -107,12 +122,53 @@ export async function collectMcpDiagnostics(
     });
   }
 
+  if (options.includeLocalReachability) {
+    const probe = options.localProbe ?? probeLocalMcpServer;
+    const localChecks = await Promise.all(inspected.servers.map(async (server, index) => {
+      const local = localServers[index];
+      if (!local || sanityCheckUrl(server.url)) return null;
+      try {
+        const result = await supervisor.run(
+          `local reachability test for ${server.name}`,
+          (signal) => probe(server.url, signal),
+          { timeoutMs },
+        );
+        local.reachable = true;
+        if (!result.serviceHealthy) local.lastFailure = `service returned HTTP ${result.httpStatus}`;
+        return {
+          id: "local-reachability:" + server.name,
+          status: result.serviceHealthy ? "pass" as const : "fail" as const,
+          detail: result.detail,
+        };
+      } catch (error) {
+        local.reachable = false;
+        local.lastFailure = error instanceof McpOperationTimeoutError
+          ? "reachability test timed out"
+          : "reachability test failed";
+        return {
+          id: "local-reachability:" + server.name,
+          status: "fail" as const,
+          detail: error instanceof McpOperationTimeoutError
+            ? error.message
+            : "reachability probe failed; stored credentials were not sent; run `aether mcp doctor`",
+        };
+      }
+    }));
+    for (const check of localChecks) {
+      if (check) checks.push(check);
+    }
+  }
+
   let providers: McpProvider[] = [];
   let connections: McpConnection[] = [];
   try {
-    [providers, connections] = await bounded(
-      Promise.all([client.listProviders(), client.listConnections()]),
-      timeoutMs,
+    [providers, connections] = await supervisor.run(
+      "broker discovery",
+      (signal) => Promise.all([
+        client.listProviders({ signal, timeoutMs }),
+        client.listConnections({ signal, timeoutMs }),
+      ]),
+      { timeoutMs },
     );
     checks.push({
       id: "broker",
@@ -121,7 +177,7 @@ export async function collectMcpDiagnostics(
     });
   } catch {
     checks.push({ id: "broker", status: "warn", detail: "broker unavailable" });
-    return {
+    const report: McpDiagnosticReport = {
       schemaVersion: 1,
       generatedAt: options.now ?? new Date().toISOString(),
       registryStatus: inspected.status,
@@ -130,6 +186,8 @@ export async function collectMcpDiagnostics(
       providers: [],
       checks,
     };
+    supervisor.dispose();
+    return report;
   }
 
   const includeTools = options.includeToolCounts !== false;
@@ -146,7 +204,11 @@ export async function collectMcpDiagnostics(
         };
       }
       try {
-        const tools = await bounded(client.listTools(provider.provider_id), timeoutMs);
+        const tools = await supervisor.run(
+          `tool catalog for ${provider.provider_id}`,
+          (signal) => client.listTools(provider.provider_id, { signal, timeoutMs }),
+          { timeoutMs },
+        );
         return {
           id: provider.provider_id,
           displayName: provider.display_name,
@@ -176,7 +238,7 @@ export async function collectMcpDiagnostics(
         : "not connected",
     });
   }
-  return {
+  const report: McpDiagnosticReport = {
     schemaVersion: 1,
     generatedAt: options.now ?? new Date().toISOString(),
     registryStatus: inspected.status,
@@ -185,6 +247,12 @@ export async function collectMcpDiagnostics(
     providers: providerReports,
     checks,
   };
+  supervisor.dispose();
+  return report;
+}
+
+function diagnosticLine(value: string): string {
+  return sanitizeTerm(value).replace(/[\r\n]/g, " ");
 }
 
 export function renderMcpDiagnostics(report: McpDiagnosticReport): string {
@@ -195,20 +263,23 @@ export function renderMcpDiagnostics(report: McpDiagnosticReport): string {
   ];
   for (const server of report.localServers) {
     lines.push(
-      "  local " + server.name + ": " + server.url + " (auth " + (server.authConfigured ? "configured" : "none") + ")",
+      "  local " + diagnosticLine(server.name) + ": " + diagnosticLine(server.url) +
+        " (auth " + (server.authConfigured ? "configured" : "none") + ")",
     );
   }
   for (const provider of report.providers) {
     lines.push(
       "  provider " +
-        provider.id +
+        diagnosticLine(provider.id) +
         ": " +
         (provider.connected ? "connected" : "not connected") +
         (provider.toolCount == null ? "" : ", " + provider.toolCount + " tool(s)"),
     );
   }
   for (const check of report.checks) {
-    lines.push("  [" + check.status + "] " + check.id + ": " + check.detail);
+    lines.push(
+      "  [" + check.status + "] " + diagnosticLine(check.id) + ": " + diagnosticLine(check.detail),
+    );
   }
   return lines.join("\n") + "\n";
 }

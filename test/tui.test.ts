@@ -124,7 +124,22 @@ test("mapBrainEvent adapts the bridge vocabulary to the UI slice", () => {
   assert.equal(mapBrainEvent({ type: "telemetry", tokens: 0, tps: 0, ctxUsed: 0, ctxCap: 0, vram: 0 }), null);
 });
 
-test("bindEventSource: watchdog stalls on silence, resumes on the next event", async () => {
+test("mapBrainEvent strips terminal controls from every visible text field", () => {
+  const hostile = "ok\u001b]52;c;clipboard\u0007\u009b2J\nnext";
+  const events = [
+    mapBrainEvent({ type: "stage", name: hostile, face: "" }),
+    mapBrainEvent({ type: "tool_call", id: "c1", name: hostile, args: { path: hostile } }),
+    mapBrainEvent({ type: "checkpoint", gitSha: hostile }),
+    mapBrainEvent({ type: "skill", name: hostile, reason: hostile }),
+    mapBrainEvent({ type: "monologue", text: hostile, depth: 0 }),
+    mapBrainEvent({ type: "error", msg: hostile }),
+  ];
+  const visible = JSON.stringify(events);
+  assert.doesNotMatch(visible, /[\u001b\u0007\u009b]/);
+  assert.doesNotMatch(visible, /\nnext/);
+});
+
+test("bindEventSource: cosmetic heartbeats cannot hide a meaningful-progress stall", async () => {
   const calls: string[] = [];
   const anim = {
     setStage: (s: string) => calls.push("stage:" + s),
@@ -135,14 +150,156 @@ test("bindEventSource: watchdog stalls on silence, resumes on the next event", a
   };
   const ui = { log: () => {}, end: () => {} };
   let handler: (e: AgentEvent) => void = () => {};
-  const fake: AgentSource = { on: (h) => (handler = h), close: () => {} };
+  const fake: AgentSource = {
+    on: (h) => {
+      handler = h;
+    },
+    close: () => {},
+  };
   bindEventSource(fake, ui, anim, { heartbeatTimeoutMs: 20 });
   await delay(40);
   assert.ok(calls.includes("stalled"), "watchdog fires markStalled on silence");
   handler({ type: "heartbeat" });
-  assert.ok(calls.includes("resume"), "next event resumes");
+  assert.equal(calls.includes("resume"), false, "heartbeat alone does not claim progress resumed");
   handler({ type: "stage", stage: "execute" });
+  assert.ok(calls.includes("resume"), "a meaningful event resumes the stalled UI");
   assert.ok(calls.includes("stage:execute"), "stage dispatched after resume");
+});
+
+test("bindEventSource finalizes error once, detaches, and ignores late events", () => {
+  const calls: string[] = [];
+  let handler: (e: AgentEvent) => void = () => {};
+  let detached = 0;
+  let closed = 0;
+  const fake: AgentSource = {
+    on: (next) => {
+      handler = next;
+      return () => detached++;
+    },
+    close: () => closed++,
+  };
+  const unbind = bindEventSource(
+    fake,
+    { log: (line) => calls.push(line), end: () => calls.push("end") },
+    {
+      setStage: (stage) => calls.push(`stage:${stage}`),
+      setProgress: () => {},
+      markStalled: () => {},
+      resume: () => {},
+      stop: () => calls.push("stop"),
+    },
+    { heartbeatTimeoutMs: 1000 },
+  );
+  handler({ type: "error", message: "bounded failure" });
+  handler({ type: "log", line: "late write" });
+  handler({ type: "done" });
+  assert.deepEqual(calls, ["stage:error", "! bounded failure", "stop", "end"]);
+  assert.equal(detached, 1, "terminal events detach immediately");
+  unbind();
+  unbind();
+  assert.equal(detached, 1);
+  assert.equal(closed, 0, "shared sources are detached but not closed by default");
+});
+
+test("bindEventSource terminates a heartbeat-only source after the meaningful-progress bound", async () => {
+  const calls: string[] = [];
+  let handler: (e: AgentEvent) => void = () => {};
+  let closed = 0;
+  const fake: AgentSource = {
+    on: (next) => { handler = next; },
+    close: () => { closed++; },
+  };
+  const unbind = bindEventSource(
+    fake,
+    { log: (line) => calls.push(line), end: () => calls.push("end") },
+    {
+      setStage: (stage) => calls.push(`stage:${stage}`),
+      setProgress: () => {},
+      markStalled: () => calls.push("stalled"),
+      resume: () => calls.push("resume"),
+      stop: () => calls.push("stop"),
+    },
+    { heartbeatTimeoutMs: 5, meaningfulProgressTimeoutMs: 18, ownsSource: true },
+  );
+  const heartbeats = setInterval(() => handler({ type: "heartbeat" }), 2);
+  await delay(35);
+  clearInterval(heartbeats);
+  handler({ type: "log", line: "late" });
+  assert.equal(calls.filter((call) => call === "end").length, 1);
+  assert.equal(calls.filter((call) => call === "stop").length, 1);
+  assert.ok(calls.some((call) => /source was cancelled.*aether doctor/i.test(call)));
+  assert.equal(calls.includes("late"), false);
+  assert.equal(closed, 1);
+  unbind();
+  assert.equal(closed, 1, "unbind is idempotent after timeout-owned closure");
+});
+
+test("bindEventSource ignores alternating stage replays and non-monotonic token cosmetics", async () => {
+  const calls: string[] = [];
+  const meaningful: string[] = [];
+  let handler: (e: AgentEvent) => void = () => {};
+  let detached = 0;
+  let signalTerminal: (() => void) | undefined;
+  const terminal = new Promise<void>((resolve) => { signalTerminal = resolve; });
+  const fake: AgentSource = {
+    on: (next) => {
+      handler = next;
+      return () => { detached++; };
+    },
+    close: () => {},
+  };
+  const unbind = bindEventSource(
+    fake,
+    { log: (line) => calls.push(line), end: () => calls.push("end") },
+    {
+      setStage: () => {},
+      setProgress: () => {},
+      markStalled: () => {},
+      resume: () => {},
+      stop: () => calls.push("stop"),
+    },
+    {
+      heartbeatTimeoutMs: 100,
+      meaningfulProgressTimeoutMs: 20,
+      onMeaningfulEvent: (event) => meaningful.push(
+        event.type === "stage" ? `stage:${event.stage}` :
+        event.type === "token" ? `token:${event.used}` : event.type,
+      ),
+      onTerminal: () => signalTerminal?.(),
+    },
+  );
+  handler({ type: "stage", stage: "prepare" });
+  handler({ type: "token", used: 1, cap: 10 });
+  let alternate = false;
+  const cosmetic = setInterval(() => {
+    alternate = !alternate;
+    handler({ type: "heartbeat" });
+    handler({ type: "stage", stage: alternate ? "prepare" : "execute" });
+    handler({ type: "token", used: 1, cap: alternate ? 10 : 11 });
+    handler({ type: "token", used: 0, cap: 11 });
+  }, 2);
+  let guard: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      terminal,
+      new Promise<never>((_resolve, reject) => {
+        guard = setTimeout(() => reject(new Error("meaningful-progress watchdog did not terminate")), 1_000);
+      }),
+    ]);
+  } catch (error) {
+    unbind();
+    throw error;
+  } finally {
+    clearInterval(cosmetic);
+    if (guard) clearTimeout(guard);
+  }
+
+  assert.deepEqual(meaningful, ["stage:prepare", "token:1", "stage:execute"]);
+  assert.equal(calls.filter((call) => call === "end").length, 1);
+  assert.equal(calls.filter((call) => /no meaningful progress/.test(call)).length, 1);
+  assert.equal(detached, 1);
+  unbind();
+  assert.equal(detached, 1);
 });
 
 test("LocalAgentSource feeds adapted BrainEvents + a synthetic heartbeat", async () => {
@@ -163,6 +320,20 @@ test("computeRegions math", () => {
   assert.equal(r.transHeight, 23);
   assert.equal(r.statusRow, 29);
   assert.equal(r.inputRow, 30);
+});
+
+test("computeRegions deliberately collapses a tall header in a 20x5 emergency terminal", () => {
+  const r = computeRegions(5, 9);
+  assert.deepEqual(r, {
+    headerTop: 1,
+    headerBottom: 2,
+    transTop: 3,
+    transBottom: 3,
+    transHeight: 1,
+    statusRow: 4,
+    inputRow: 5,
+  });
+  assert.ok(Object.values(r).every((value) => value >= 1), "no terminal region uses row zero");
 });
 
 test("pager preserves position when new output arrives while scrolled up", () => {
@@ -268,6 +439,25 @@ test("pager re-wraps on resize so all content stays reachable", () => {
   }
 });
 
+test("pager preserves a stable logical entry/offset anchor across rewrap", () => {
+  const t = new TuiLayout({ mode: "api", cols: 24, rows: 8 });
+  t.tty = true;
+  const real = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (() => true) as typeof process.stdout.write;
+  try {
+    t.log("before");
+    t.log("x".repeat(96));
+    for (let i = 0; i < 7; i++) t.log(`after-${i}`);
+    t.scrollUp(5);
+    const before = t.viewportAnchor();
+    assert.equal(before?.entryId, "entry:2");
+    t.handleResize(12, 8);
+    assert.deepEqual(t.viewportAnchor(), before, "same logical content remains at the top after rewrap");
+  } finally {
+    process.stdout.write = real;
+  }
+});
+
 test("status row is clamped to the terminal width", () => {
   const t = new TuiLayout({ mode: "api", cols: 30, rows: 10, now: () => 0 });
   t.tty = true;
@@ -297,6 +487,132 @@ test("unmount removes the resize listener", () => {
     t.unmount();
     assert.equal(process.stdout.listenerCount("resize"), before, "listener detached");
   } finally {
+    process.stdout.write = real;
+  }
+});
+
+test("TuiLayout clamps hostile status metrics before formatting or drawing bars", () => {
+  const t = new TuiLayout({ mode: "api", cols: 100, rows: 10, now: () => 0 });
+  t.tty = true;
+  const out: string[] = [];
+  const real = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: unknown) => (out.push(String(chunk)), true)) as typeof process.stdout.write;
+  try {
+    t.setStreamed(Number.POSITIVE_INFINITY);
+    t.setUvt(-1, 10);
+    const normalized = stripAnsi(out[out.length - 1] ?? "");
+    assert.match(normalized, /UVT 0\/10/);
+    assert.doesNotMatch(normalized, /Infinity|NaN/);
+    assert.doesNotThrow(() => t.setUvt(Number.MAX_VALUE, Number.MIN_VALUE));
+  } finally {
+    process.stdout.write = real;
+  }
+});
+
+test("TuiLayout requires explicit mouse attestation", () => {
+  const out: string[] = [];
+  const real = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: unknown) => (out.push(String(chunk)), true)) as typeof process.stdout.write;
+  try {
+    const defaultLayout = new TuiLayout({ cols: 40, rows: 10 });
+    defaultLayout.tty = true;
+    defaultLayout.mount();
+    defaultLayout.dispose();
+    assert.doesNotMatch(out.join(""), /\?1000h|\?1006h/, "TTY presence alone never enables mouse capture");
+
+    out.length = 0;
+    const attestedLayout = new TuiLayout({ cols: 40, rows: 10, mouse: true });
+    attestedLayout.tty = true;
+    attestedLayout.mount();
+    attestedLayout.dispose();
+    assert.match(out.join(""), /\?1000h/);
+    assert.match(out.join(""), /\?1006h/);
+  } finally {
+    process.stdout.write = real;
+  }
+});
+
+test("unmounted and disposed layouts cannot repaint from late events or resize", async () => {
+  const t = new TuiLayout({ mode: "api", cols: 40, rows: 10 });
+  t.tty = true;
+  const out: string[] = [];
+  const real = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: unknown) => (out.push(String(chunk)), true)) as typeof process.stdout.write;
+  try {
+    t.mount();
+    process.stdout.emit("resize"); // queued resize must be cancelled by unmount
+    t.unmount();
+    const afterUnmount = out.join("").length;
+    t.log("late line");
+    t.setHeartbeat("late");
+    t.setVerb("late", "late");
+    t.setInput("late", 2);
+    t.handleResize(20, 5);
+    t.renderAll();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(out.join("").length, afterUnmount, "no callback writes after unmount");
+
+    t.mount();
+    t.dispose();
+    const afterDispose = out.join("").length;
+    t.mount();
+    t.log("later still");
+    t.handleResize(80, 24);
+    assert.equal(out.join("").length, afterDispose, "dispose is a permanent write barrier");
+  } finally {
+    t.dispose();
+    process.stdout.write = real;
+  }
+});
+
+test("live resize bursts coalesce to one repaint per event-loop turn", async () => {
+  const t = new TuiLayout({ mode: "api", cols: 40, rows: 10 });
+  t.tty = true;
+  const out: string[] = [];
+  const real = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: unknown) => (out.push(String(chunk)), true)) as typeof process.stdout.write;
+  try {
+    t.mount();
+    const before = out.filter((chunk) => chunk.includes("\x1b[2J")).length;
+    for (let i = 0; i < 100; i++) process.stdout.emit("resize");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const after = out.filter((chunk) => chunk.includes("\x1b[2J")).length;
+    assert.equal(after - before, 1);
+  } finally {
+    t.dispose();
+    process.stdout.write = real;
+  }
+});
+
+test("100 mount/dispose cycles have zero listener growth and duplicate mount is idempotent", () => {
+  const t = new TuiLayout({ mode: "api", cols: 40, rows: 12 });
+  t.tty = true;
+  const real = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (() => true) as typeof process.stdout.write;
+  const baseline = {
+    resize: process.stdout.listenerCount("resize"),
+    exit: process.listenerCount("exit"),
+    sigint: process.listenerCount("SIGINT"),
+    sigterm: process.listenerCount("SIGTERM"),
+  };
+  try {
+    for (let i = 0; i < 100; i++) {
+      t.mount();
+      t.mount();
+      t.unmount();
+      t.unmount();
+    }
+    assert.deepEqual(
+      {
+        resize: process.stdout.listenerCount("resize"),
+        exit: process.listenerCount("exit"),
+        sigint: process.listenerCount("SIGINT"),
+        sigterm: process.listenerCount("SIGTERM"),
+      },
+      baseline,
+    );
+  } finally {
+    t.unmount();
     process.stdout.write = real;
   }
 });

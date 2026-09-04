@@ -13,6 +13,7 @@ import type { AppContext } from "../src/core/context.js";
 import type { Brain, TaskCommand } from "../src/core/brain.js";
 import type { BrainEvent } from "../src/core/brain_protocol.js";
 import type { ToolResult } from "../src/core/tool_executor.js";
+import { MeaningfulProgressTimeoutError } from "../src/core/errors.js";
 
 /**
  * A brain that emits one tool_call and then parks forever, exactly like the
@@ -95,4 +96,64 @@ test("without a signal a local turn still completes normally", async () => {
   brain.close(); // stand in for the real brain finishing its wait
   await turn;
   assert.equal(brain.closed, true);
+});
+
+test("a local brain parked before its first event is bounded and closed", async () => {
+  let closes = 0;
+  const brain: Brain = {
+    run(): AsyncIterable<BrainEvent> {
+      return {
+        [Symbol.asyncIterator]() {
+          return {
+            next: () => new Promise<IteratorResult<BrainEvent>>(() => {}),
+            return: () => { throw new Error("cleanup must not replace timeout"); },
+          };
+        },
+      };
+    },
+    sendToolResult() {},
+    control() {},
+    close() { closes++; },
+  };
+
+  await assert.rejects(
+    () => runLocalTurn(ctx(), "park forever", undefined, {
+      brain,
+      exec: noExec,
+      meaningfulProgressTimeoutMs: 15,
+    }),
+    MeaningfulProgressTimeoutError,
+  );
+  assert.ok(closes >= 1, "timeout reaches brain cleanup");
+});
+
+test("a local tool that ignores abort cannot strand the turn", async () => {
+  let toolSignal: AbortSignal | undefined;
+  const brain: Brain = {
+    run(): AsyncIterable<BrainEvent> {
+      return (async function* (): AsyncGenerator<BrainEvent> {
+        yield { type: "tool_call", id: "hung", name: "read_file", args: { path: "a.ts" } };
+        await new Promise<void>(() => {});
+      })();
+    },
+    sendToolResult() {},
+    control() {},
+    close() {},
+  };
+  const exec = {
+    executeAsync: async (_name: string, _args: Record<string, unknown>, options?: { signal?: AbortSignal }): Promise<ToolResult> => {
+      toolSignal = options?.signal;
+      return new Promise<ToolResult>(() => {});
+    },
+  };
+
+  await assert.rejects(
+    () => runLocalTurn(ctx(), "hung tool", undefined, {
+      brain,
+      exec,
+      meaningfulProgressTimeoutMs: 15,
+    }),
+    MeaningfulProgressTimeoutError,
+  );
+  assert.equal(toolSignal?.aborted, true, "tool receives the same timed-out signal");
 });

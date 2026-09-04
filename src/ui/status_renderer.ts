@@ -47,6 +47,10 @@ const CLR_LINE = "\r" + ESC + "2K"; // carriage-return + clear-to-EOL
 const HIDE = ESC + "?25l";
 const SHOW = ESC + "?25h";
 
+function finiteNonNegative(value: number): number {
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
 export interface StatusRendererOptions {
   quiet?: boolean;
   /** "local" hides the UVT figure; "api" shows used/cap. */
@@ -130,7 +134,7 @@ export class StatusRenderer {
   }
   /** Cumulative output tokens streamed this run (telemetry.tokens). */
   setStreamed(n: number): void {
-    this.streamed = n;
+    this.streamed = finiteNonNegative(n);
     this.repaint();
   }
   /** Current stage-animation frame (from AnimationController.onFrame). */
@@ -139,8 +143,8 @@ export class StatusRenderer {
     this.repaint();
   }
   setProgress(used: number, cap: number): void {
-    this.used = used;
-    this.cap = cap;
+    this.used = finiteNonNegative(used);
+    this.cap = finiteNonNegative(cap);
     this.repaint();
   }
   /** A compact, pre-styled multi-task counter pinned alongside the stage. */
@@ -238,9 +242,10 @@ export class StatusRenderer {
   }
 
   private bar(width = 12): string {
-    const frac = this.cap > 0 ? Math.min(1, this.used / this.cap) : 0;
-    const f = Math.round(frac * width);
-    return "▓".repeat(f) + "░".repeat(Math.max(0, width - f));
+    const safeWidth = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
+    const frac = this.cap > 0 ? (this.used >= this.cap ? 1 : this.used / this.cap) : 0;
+    const filled = Math.max(0, Math.min(safeWidth, Math.round(frac * safeWidth)));
+    return "▓".repeat(filled) + "░".repeat(safeWidth - filled);
   }
 
   /** Guarded cursor-restore for SIGINT only (see onSigint below). Public-ish for tests. */

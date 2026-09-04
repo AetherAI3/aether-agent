@@ -59,6 +59,8 @@ const COMMAND_MARKERS = [
   "<!-- GENERATED-COMMAND-REFERENCE:START -->",
   "<!-- GENERATED-COMMAND-REFERENCE:END -->",
 ] as const;
+const CLI_INDEX_MARKERS = ["<!-- CLI-COMMANDS:START -->", "<!-- CLI-COMMANDS:END -->"] as const;
+const SLASH_INDEX_MARKERS = ["<!-- SLASH-COMMANDS:START -->", "<!-- SLASH-COMMANDS:END -->"] as const;
 const CATALOGUE_MARKERS = [
   "<!-- MODEL-CATALOGUE:START -->",
   "<!-- MODEL-CATALOGUE:END -->",
@@ -75,9 +77,9 @@ const PRICING_ASSERTION = /(?:[$€£]\s*\d|\b(?:usd|eur|gbp)\b|\b(?:price|prici
 const MARKDOWN_INJECTION = /(?:<\/?[A-Za-z][^>]*>|\[[^\]\n]*\]\([^)]*\)|!\[|`|\*|__|(?:^|[\s(])_[^_\n]+_(?=$|[\s).,;:!?])|^\s{0,3}#{1,6}(?:\s|$))/m;
 const COMMAND_PLACEHOLDERS = new Set([
   "command", "connect|status|disconnect", "desc|view|start|pause|resume|cancel|complete|note",
-  "element", "file", "guidance", "id", "id|all", "lang", "login|status|token|refresh|logout",
+  "element", "file", "guidance", "id", "id|all", "id|section", "lang", "login|status|token|refresh|logout",
   "model", "msg", "n", "name", "neo|kronus", "note", "n|id", "order-id", "path", "prompt",
-  "q", "subcommand", "tag", "target", "task", "title", "topic", "type", "uvt",
+  "q", "section", "subcommand", "tag", "target", "task", "title", "topic", "type", "uvt", "value",
 ]);
 
 export function normalizeEol(value: string): string { return value.replace(/\r\n?/g, "\n"); }
@@ -329,6 +331,19 @@ function replaceBounded(text: string, markers: readonly [string, string], body: 
   return `${normalized.slice(0, start + markers[0].length)}\n${body.trim()}\n${normalized.slice(end)}`;
 }
 
+/** Deterministic canonical index for the short registry summary in
+ * COMMANDS.md. The detailed reference and these indexes now share one
+ * manifest-owned generator/check path. */
+export function renderRegistryIndex(
+  commands: readonly CommandManifestEntry[],
+  surface: "shell" | "slash",
+): string {
+  const names = commands.filter((entry) => entry.surface === surface && !entry.hidden).map((entry) => `\`${entry.name}\``);
+  const lines: string[] = [];
+  for (let at = 0; at < names.length; at += 12) lines.push(names.slice(at, at + 12).join(", "));
+  return lines.join(",\n");
+}
+
 export function buildGeneratedOutputs(options: GenerateDocsOptions): GeneratedOutput[] {
   const root = resolve(options.root);
   const commands = options.commands ?? COMMAND_MANIFEST;
@@ -346,12 +361,23 @@ export function buildGeneratedOutputs(options: GenerateDocsOptions): GeneratedOu
   const commandBody = "The complete manifest-derived reference is [docs/generated/commands.md](docs/generated/commands.md). Regenerate it with `npm run docs:generate`; verify drift with `npm run docs:check`.";
   const catalogueBody = `A dated, sanitized ${catalogue.offlineFallback ? "offline fallback " : ""}snapshot is available as [HTML](docs/model-catalogue/index.html), [JSON](docs/model-catalogue/catalogue.json), and [Markdown](docs/generated/model-catalogue.md). It was generated at \`${catalogue.generatedAt}\` from Cloud public projection \`${catalogue.source.version}\` with verified digest \`${catalogue.source.digest}\`. Listed availability is not an account entitlement; use \`aether models\` while signed in.`;
   const json = `${JSON.stringify(catalogue, null, 2)}\n`;
+  const indexedCommandsDoc = replaceBounded(
+    replaceBounded(
+      replaceBounded(commandsDoc, COMMAND_MARKERS, commandBody, "COMMANDS.md"),
+      CLI_INDEX_MARKERS,
+      renderRegistryIndex(commands, "shell"),
+      "COMMANDS.md",
+    ),
+    SLASH_INDEX_MARKERS,
+    renderRegistryIndex(commands, "slash"),
+    "COMMANDS.md",
+  );
   return [
     { path: "docs/generated/commands.md", content: commandReference },
     { path: "docs/generated/model-catalogue.md", content: renderCatalogueMarkdown(catalogue) },
     { path: "docs/model-catalogue/catalogue.json", content: json },
     { path: "docs/model-catalogue/index.html", content: renderCatalogueHtml(catalogue) },
-    { path: "COMMANDS.md", content: replaceBounded(commandsDoc, COMMAND_MARKERS, commandBody, "COMMANDS.md") },
+    { path: "COMMANDS.md", content: indexedCommandsDoc },
     { path: "README.md", content: replaceBounded(readme, CATALOGUE_MARKERS, catalogueBody, "README.md") },
   ];
 }

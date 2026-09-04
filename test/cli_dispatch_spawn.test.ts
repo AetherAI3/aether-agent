@@ -76,6 +76,26 @@ test("a dispatch-table command runs the command, not chat", async (t) => {
   });
 });
 
+test("settings and Voice dispatch without falling through to a hosted chat", async (t) => {
+  await withCli(t, ["settings", "list", "Voice", "--json"], (r) => {
+    assert.equal(r.exit, 0);
+    const report = JSON.parse(r.out) as { protocol: string; command: string; data: { settings: unknown[] } };
+    assert.equal(report.protocol, "aether.settings/1");
+    assert.equal(report.command, "list");
+    assert.ok(report.data.settings.length > 0);
+    assert.doesNotMatch(r.err, /ECONNREFUSED|chat/i);
+  });
+
+  await withCli(t, ["voice", "status", "--json"], (r) => {
+    assert.equal(r.exit, 0);
+    const report = JSON.parse(r.out) as { command: string; state: string; runtime: string };
+    assert.equal(report.command, "voice.status");
+    assert.equal(report.state, "off");
+    assert.equal(report.runtime, "unavailable");
+    assert.doesNotMatch(r.err, /ECONNREFUSED|chat/i);
+  });
+});
+
 test("--live reaches the command and produces the live report", async (t) => {
   // Regression pin. main.ts parses non-strictly, so before the flag table
   // `--live` was captured as an undeclared global and stripped from the argv

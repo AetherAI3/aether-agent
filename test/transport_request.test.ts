@@ -62,6 +62,40 @@ test("ApiClient.getJson times out on a stalled connection instead of hanging for
   }
 });
 
+test("ApiClient.getJson timeout covers a successful response body after headers", async () => {
+  const restoreFetch = mockFetch((async () =>
+    new Response(new ReadableStream<Uint8Array>(), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch);
+  try {
+    const api = new ApiClient("https://api.example", new StaticTokenStore(""));
+    await assert.rejects(
+      () => api.getJson("/models", undefined, 5),
+      (err: unknown) => err instanceof RequestTimeoutError,
+    );
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("ApiClient.getJson timeout covers a non-2xx error body after headers", async () => {
+  const restoreFetch = mockFetch((async () =>
+    new Response(new ReadableStream<Uint8Array>(), {
+      status: 402,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch);
+  try {
+    const api = new ApiClient("https://api.example", new StaticTokenStore(""));
+    await assert.rejects(
+      () => api.getJson("/models", undefined, 5),
+      (err: unknown) => err instanceof RequestTimeoutError,
+    );
+  } finally {
+    restoreFetch();
+  }
+});
+
 test("ApiClient.postJson (used by device-poll and vault/workflow calls) times out on a stalled connection", async () => {
   // Mirrors device.ts's pollForToken -> api.postJson(DEVICE_TOKEN_PATH, ...)
   // call, which passes no signal at all — the exact call site the finding
@@ -140,10 +174,10 @@ test("defaultRequestTimeoutMs: unset env falls back to DEFAULT_REQUEST_TIMEOUT_M
   }
 });
 
-test("defaultRequestTimeoutMs: '0' means disabled, not the 30s default", () => {
+test("defaultRequestTimeoutMs: production env cannot disable the finite bound", () => {
   const restore = setEnvTimeout("0");
   try {
-    assert.equal(defaultRequestTimeoutMs(), 0);
+    assert.equal(defaultRequestTimeoutMs(), DEFAULT_REQUEST_TIMEOUT_MS);
   } finally {
     restore();
   }

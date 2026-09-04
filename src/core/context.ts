@@ -29,6 +29,9 @@ export interface GlobalFlags {
   /** Output path (--out) for the commands that write a file. Global for the
    *  same reason as --all. */
   out?: string;
+  /** Requested configuration scope (--scope), consumed by skills/settings
+   * without reparsing argv. */
+  scope?: string;
   /** The verification command (--test-cmd), handed to the VerifyRunner. */
   testCmd?: string;
   /** Prior session requested by --resume. Headless surfaces must explicitly

@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decodeSse, normalizeFrame, parseEvent } from "../src/core/stream.js";
+import {
+  MAX_SSE_EVENT_BYTES,
+  decodeSse,
+  normalizeFrame,
+  parseEvent,
+} from "../src/core/stream.js";
+import { StreamEventTooLargeError } from "../src/core/errors.js";
 
 test("normalizeFrame done maps token fields and carries no signature", () => {
   const f = normalizeFrame({
@@ -104,6 +110,28 @@ test("decodeSse handles a frame split across chunks", async () => {
   const frames = [];
   for await (const f of decodeSse(bytes())) frames.push(f);
   assert.deepEqual(frames, [{ type: "delta", text: "split" }]);
+});
+
+test("decodeSse rejects an oversized delimiter-free event and closes its source", async () => {
+  let closed = false;
+  async function* bytes(): AsyncGenerator<Uint8Array> {
+    try {
+      yield new Uint8Array(MAX_SSE_EVENT_BYTES + 1).fill(0x61);
+      yield new TextEncoder().encode("\n\n");
+    } finally {
+      closed = true;
+    }
+  }
+  await assert.rejects(
+    async () => {
+      for await (const _frame of decodeSse(bytes())) {
+        assert.fail("an oversized event must not yield a frame");
+      }
+    },
+    (error: unknown) =>
+      error instanceof StreamEventTooLargeError && error.maxBytes === MAX_SSE_EVENT_BYTES,
+  );
+  assert.equal(closed, true, "decoder failure closes the owned source iterator");
 });
 
 test("memory extract frame parses with subtype, text, kind, confidence", () => {

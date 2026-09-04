@@ -35,7 +35,13 @@ function fixtureRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "aether-docgen-"));
   mkdirSync(join(root, "docs", "model-catalogue"), { recursive: true });
   writeFileSync(join(root, "README.md"), "# Readme\n\n<!-- MODEL-CATALOGUE:START -->\nold\n<!-- MODEL-CATALOGUE:END -->\n", "utf8");
-  writeFileSync(join(root, "COMMANDS.md"), "# Commands\n\n<!-- GENERATED-COMMAND-REFERENCE:START -->\nold\n<!-- GENERATED-COMMAND-REFERENCE:END -->\n", "utf8");
+  writeFileSync(
+    join(root, "COMMANDS.md"),
+    "# Commands\n\n<!-- GENERATED-COMMAND-REFERENCE:START -->\nold\n<!-- GENERATED-COMMAND-REFERENCE:END -->\n\n" +
+      "<!-- CLI-COMMANDS:START -->\nold\n<!-- CLI-COMMANDS:END -->\n\n" +
+      "<!-- SLASH-COMMANDS:START -->\nold\n<!-- SLASH-COMMANDS:END -->\n",
+    "utf8",
+  );
   writeFileSync(join(root, "docs", "model-catalogue", "catalogue.source.json"), `${JSON.stringify(source)}\n`, "utf8");
   return root;
 }
@@ -46,6 +52,7 @@ test("generated command reference is deterministic and sourced from the canonica
   assert.equal(first, second);
   assert.match(first, /manifest-digest: sha256:[a-f0-9]{64}/);
   assert.match(first, /`aether agent \[task\]`/);
+  assert.match(first, /reset <section> \[--scope global\|project\] \[--preview\]/);
   assert.match(first, /`\/model <n\|id>`/);
   assert.match(first, /Permission: `local-write`/);
   assert.match(first, /Requires: `aether\.hosted-or-local`/);
