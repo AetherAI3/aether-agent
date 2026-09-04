@@ -203,7 +203,7 @@ test("the dated release log has an entry for this version, and the index links i
 
 test("the post-tag v0.3.2 documentation is not claimed by the published archive", () => {
   const datedRelease = read("docs", "releases", "2026-09-03.md");
-  assert.match(datedRelease, /documentation changes landed after the v0\.3\.2 tag and are not in its published archive/u);
+  assert.match(datedRelease, /documentation changes landed after the v0\.3\.2 tag and are not in its\s+published archive/u);
 });
 
 test("the current operator packet is frozen prerelease evidence and v0.3.0 retains historical provenance", () => {
