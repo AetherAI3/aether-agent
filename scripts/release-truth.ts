@@ -67,6 +67,24 @@ function parseJson(text: string | undefined): Record<string, unknown> | null {
   catch { return null; }
 }
 const headingVersion = (text: string | undefined): string | null => text?.split(/\r?\n/).find((line) => /^#\s+\S/.test(line))?.match(/\bv(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\b/)?.[1] ?? null;
+const releaseHeadingVersion = (line: string): string | null => line.match(/^#\s+Aether Agent v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\b/)?.[1] ?? null;
+const firstVersionedHeading = (text: string | undefined): string | null => text?.split(/\r?\n/).map(releaseHeadingVersion).find((value) => value !== null) ?? null;
+function packetEvidenceState(text: string | undefined): "candidate" | "frozen-prerelease" | null {
+  if (text === undefined) return null;
+  const rows = text.split(/\r?\n/).filter((line) => /^\|\s*Evidence state\s*\|/u.test(line));
+  if (rows.length !== 1) return null;
+  return rows[0]!.match(/^\|\s*Evidence state\s*\|\s*`(candidate|frozen-prerelease)`\s*\|\s*$/u)?.[1] as "candidate" | "frozen-prerelease" | undefined ?? null;
+}
+function releaseNotesOrderingFailure(text: string | undefined): string | null {
+  if (text === undefined) return null;
+  const headings = text.split(/\r?\n/).filter((line) => /^#\s+\S/.test(line));
+  const unreleased = headings.map((line, index) => /^#\s+Unreleased\b/i.test(line) ? index : -1).filter((index) => index >= 0);
+  const versioned = headings.findIndex((line) => releaseHeadingVersion(line) !== null);
+  if (unreleased.length > 1) return "RELEASE_NOTES.md contains multiple Unreleased sections";
+  return unreleased.length === 1 && versioned >= 0 && unreleased[0]! > versioned
+    ? "RELEASE_NOTES.md places Unreleased below a versioned release"
+    : null;
+}
 const sourceVersion = (text: string | undefined): string | null => text?.match(/export\s+const\s+VERSION\s*=\s*["']([^"']+)["']/)?.[1] ?? null;
 function check(id: string, failures: readonly string[], success: string, remediation: string): ReleaseTruthCheck {
   return failures.length ? { id, status: "fail", summary: failures[0]!, remediation, evidence: [...failures] } : { id, status: "pass", summary: success, remediation, evidence: [] };
@@ -235,11 +253,15 @@ export function evaluateReleaseTruth(input: ReleaseTruthInput): ReleaseTruthResu
   if (lock?.["version"] !== version) versions.push("package-lock.json root version differs from package.json");
   if (lockRoot?.["version"] !== version) versions.push('package-lock.json packages[""] version differs from package.json');
   if (sourceVersion(input.files["src/version.ts"]) !== version) versions.push("src/version.ts differs from package.json");
-  if (headingVersion(input.files["RELEASE_NOTES.md"]) !== version) versions.push(`RELEASE_NOTES.md does not lead with v${String(version)}`);
+  if (firstVersionedHeading(input.files["RELEASE_NOTES.md"]) !== version) versions.push(`RELEASE_NOTES.md does not lead with versioned release v${String(version)}`);
+  const releaseNotesOrder = releaseNotesOrderingFailure(input.files["RELEASE_NOTES.md"]); if (releaseNotesOrder) versions.push(releaseNotesOrder);
+  let currentPacketState: "candidate" | "frozen-prerelease" | null = null;
   if (version) {
     const packetPath = `docs/releases/OPERATOR-PACKET-v${version}.md`; const packet = input.files[packetPath];
     if (headingVersion(packet) !== version) versions.push(`${packetPath} does not lead with v${version}`);
     if (packet && !new RegExp("\\|\\s*Proposed tag\\s*\\|\\s*`v" + version.replaceAll(".", "\\.") + "`").test(packet)) versions.push(`${packetPath} does not bind proposed tag v${version}`);
+    currentPacketState = packetEvidenceState(packet);
+    if (packet && currentPacketState === null) versions.push(`${packetPath} has no valid Evidence state`);
   }
   const packed = new Set(input.packedFiles.map((path) => path.replaceAll("\\", "/").replace(/^\.\//, "")));
   const publicDocs = ["README.md", "COMMANDS.md"].filter((path) => input.files[path] === undefined || !packed.has(path)).map((path) => `${path} must exist in the repository and packed package`);
@@ -294,8 +316,11 @@ export function evaluateReleaseTruth(input: ReleaseTruthInput): ReleaseTruthResu
       if (item.publicClaim.sourceVersion !== null && item.publicClaim.sourceVersion !== item.sourceVersion) failures.push(`public source-build claim ${item.publicClaim.sourceVersion} differs from the package version ${item.sourceVersion}`);
       for (const claim of item.publicClaim.pinnedRegistryClaims) failures.push(`packed public docs pin registry state that publishing invalidates: ${claim}`);
       if (item.latest !== null && !item.publishedVersions.includes(item.latest)) failures.push(`observed latest dist-tag ${item.latest} is not among published versions`);
+      const sourceIsPublished = item.publishedVersions.includes(item.sourceVersion);
+      if (sourceIsPublished && currentPacketState !== "frozen-prerelease") failures.push("published source version requires a frozen-prerelease operator packet");
+      if (!sourceIsPublished && currentPacketState !== "candidate") failures.push("unpublished source version requires a candidate operator packet");
       return failures;
-    }, "packed public docs track registry state instead of pinning it", "Report npm state with the live npm badge and `npm view aether-agents version`; never hard-code a dist-tag version in packed documentation."),
+    }, "packed public docs and operator evidence state track registry truth", "Report npm state with live registry evidence; never hard-code a dist-tag version; mark unpublished packets candidate and published packets frozen-prerelease."),
   ];
   return resultFromChecks(version, checks);
 }
