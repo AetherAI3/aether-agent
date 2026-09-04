@@ -59,7 +59,7 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit
 
       - name: Build and test
         run: npm test
@@ -73,7 +73,7 @@ jobs:
 
   supply-chain:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -103,10 +103,68 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies without lifecycle scripts
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit
+
+      - name: Test npm bulk audit retry
+        run: node --test scripts/npm-bulk-audit.test.mjs
 
       - name: Audit dependencies
-        run: npm audit --audit-level=high
+        shell: bash
+        run: |
+          set -o pipefail
+          audit_json="${RUNNER_TEMP}/npm-audit.json"
+          audit_stderr="${RUNNER_TEMP}/npm-audit.stderr"
+          set +e
+          npm audit --audit-level=high --json --fetch-retries=0 --fetch-timeout=300000 >"$audit_json" 2>"$audit_stderr"
+          audit_status=$?
+          set -e
+          cat "$audit_json"
+          cat "$audit_stderr" >&2
+
+          set +e
+          node scripts/npm-bulk-audit.mjs --classify-npm-audit-result "$audit_status" "$audit_json" > aether-npm-audit-classification.json
+          classification_status=$?
+          set -e
+          cat aether-npm-audit-classification.json
+
+          case "$classification_status" in
+            0)
+              exit 0
+              ;;
+            10)
+              echo "::warning title=npm audit compressed request unavailable::Retrying the same npm bulk advisory endpoint with an identity-encoded exact-lock superset; only an empty advisory map can pass."
+              bulk_stderr="${RUNNER_TEMP}/npm-bulk-audit.stderr"
+              set +e
+              node scripts/npm-bulk-audit.mjs > aether-npm-bulk-audit.json 2>"$bulk_stderr"
+              bulk_status=$?
+              set -e
+              cat aether-npm-bulk-audit.json
+              cat "$bulk_stderr" >&2
+              if [ "$bulk_status" -ne 0 ]; then
+                exit "$bulk_status"
+              fi
+              ;;
+            *)
+              if [ "$audit_status" -eq 0 ]; then
+                exit 1
+              fi
+              exit "$audit_status"
+              ;;
+          esac
+
+      - name: Upload dependency-audit evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aether-dependency-audit-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/npm-audit.json
+            ${{ runner.temp }}/npm-audit.stderr
+            ${{ runner.temp }}/npm-bulk-audit.stderr
+            aether-npm-audit-classification.json
+            aether-npm-bulk-audit.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Type-check exact head
         run: npm run typecheck

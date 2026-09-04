@@ -1,20 +1,6 @@
-# Aether Agent v0.3.2 — one line again
+# Unreleased — terminal convergence (landed on main)
 
-**September 3, 2026**
-
-- **The v0.3.1 fixes are on `main`.** v0.3.1 was released from a branch that was
-  never merged, so `main` moved forward without its browser-launcher
-  verification and browser-login recovery path — while still declaring `0.3.0`,
-  a version older than the one on the registry. That line is merged, and the
-  declared version leads the published one again.
-- **Browser sign-in reports what actually happened.** Opening the sign-in page
-  now waits for the operating system launcher to start or fail, so a machine
-  with no browser says so instead of reporting a launch it only attempted.
-- **No new surface.** This patch adds no command, flag, or contract of its own.
-
----
-
-# Unreleased — terminal convergence (review only)
+**Merged September 4, 2026 in PR #134; not part of v0.3.2.**
 
 - **Typed developer settings.** `aether settings` and `/settings` expose one
   staged settings model with explicit scope/source/precedence, doctors,
@@ -28,15 +14,35 @@
 - **Visible terminal outcomes.** Hosted and local chat turns now share a typed
   lifecycle and emit one terminal outcome, including structured JSON failures
   for incomplete and zero-UVT streams without silently changing backend.
-- **Release status.** These changes are an unmerged review candidate. No
-  version bump, package publish, tag, deployment, billing change, or production
-  migration is included.
+- **Release status.** The reviewed head
+  [`69c726c7874a7f32e4c406a13ddb730e26bbca7b`](https://github.com/AetherAI3/aether-agent/commit/69c726c7874a7f32e4c406a13ddb730e26bbca7b)
+  landed on `main` in merge commit
+  [`160ed5d5a3a30d600b0765dedbd9b2df2a52696e`](https://github.com/AetherAI3/aether-agent/commit/160ed5d5a3a30d600b0765dedbd9b2df2a52696e);
+  current `main` remains its descendant. This merge included no version bump,
+  package publish, tag, deployment, billing change, or production migration.
+
+---
+
+# Aether Agent v0.3.2 — one line again
+
+**September 3, 2026**
+
+- **The v0.3.1 fixes are on `main`.** v0.3.1 was released from a branch that was
+  never merged, so `main` moved forward without its browser-launcher
+  verification and browser-login recovery path — while still declaring `0.3.0`,
+  a version older than the one on the registry. That line was merged, and at
+  release the declared version was brought back in line with the package being
+  published.
+- **Browser sign-in reports what actually happened.** Opening the sign-in page
+  now waits for the operating system launcher to start or fail, so a machine
+  with no browser says so instead of reporting a launch it only attempted.
+- **No new surface.** This patch adds no command, flag, or contract of its own.
 
 ---
 
 # Aether Agent v0.3.1 — first-run recovery
 
-**August 28, 2026**
+**August 29, 2026**
 
 - **Clearer first-run recovery.** The CLI now stops before executing on an
   unsupported Node.js runtime and prints the upgrade path. Browser-based sign-in

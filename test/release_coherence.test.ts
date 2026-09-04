@@ -61,12 +61,13 @@ const EXPECTED_LINUX_PACKED = 835_957;
 const EXPECTED_WINDOWS_PACKED = 836_234;
 const V032_PACKET = {
   "Package": "`aether-agents`",
+  "Evidence state": "`frozen-prerelease`",
   "Proposed tag": "`v0.3.2`",
   "Release line base": "`c4a16242ad117a499f91e3b531baa80f1a3ff0bd` (`v0.3.1`)",
   "Candidate branch": "`fix/reconcile-v031-into-main`",
-  "Archive evidence": "No release archive exists. The recorded reconciliation-candidate Windows `npm pack --dry-run --json --ignore-scripts` reported `aether-agents-0.3.2.tgz`, 1,387,500 packed bytes, 4,461,548 unpacked bytes, `shasum` `3e22664fe2bc647efe87a72a4d4fb95cb5566e83`, and integrity `sha512-AKvvYi40h64DvOylTk3qDKbs6k+MLP5kt3tUBtoQUDLcu+nTOiEnPxYDbmcmelynROKZjPVnsKxzlOCFJfodow==`; dry-run metadata is not a release checksum or provenance attestation and does not describe later source heads.",
+  "Archive evidence": "At candidate capture, no release archive existed. The recorded reconciliation-candidate Windows `npm pack --dry-run --json --ignore-scripts` reported `aether-agents-0.3.2.tgz`, 1,387,500 packed bytes, 4,461,548 unpacked bytes, `shasum` `3e22664fe2bc647efe87a72a4d4fb95cb5566e83`, and integrity `sha512-AKvvYi40h64DvOylTk3qDKbs6k+MLP5kt3tUBtoQUDLcu+nTOiEnPxYDbmcmelynROKZjPVnsKxzlOCFJfodow==`; dry-run metadata is not a release checksum or provenance attestation and does not describe later source heads.",
   "Package manifest": "That recorded reconciliation candidate contained 673 entries. Each later convergence head requires independent hosted package evidence before release.",
-  "Provenance evidence": "Pending the trusted-publishing workflow — no v0.3.2 provenance attestation exists yet.",
+  "Provenance evidence": "At candidate capture, trusted-publishing provenance was pending. v0.3.2 was subsequently published with [npm SLSA provenance](https://registry.npmjs.org/-/npm/v1/attestations/aether-agents@0.3.2); this frozen packet does not replace that registry evidence.",
 } as const;
 
 function parsePacketRows(packet: string): PacketRows {
@@ -158,14 +159,17 @@ test("the lockfile names the same version as the manifest, in both places", () =
   assert.equal(lock.packages[""]?.version, VERSION, 'package-lock.json packages[""] version drifted');
 });
 
-test("RELEASE_NOTES.md leads with the version the package declares", () => {
+test("RELEASE_NOTES.md leads with Unreleased and then the version the package declares", () => {
   const notes = read("RELEASE_NOTES.md");
-  const firstHeading = notes.split(/\r?\n/).find((line) => /^#\s+\S/.test(line));
-  assert.ok(firstHeading, "RELEASE_NOTES.md has no heading");
+  const headings = notes.split(/\r?\n/).filter((line) => /^#\s+\S/.test(line));
+  assert.match(headings[0] ?? "", /^# Unreleased\b/u);
+  const firstVersionedHeading = headings.find((line) => /^# Aether Agent v\d+\.\d+\.\d+\b/u.test(line));
+  assert.ok(firstVersionedHeading, "RELEASE_NOTES.md has no versioned heading");
   assert.ok(
-    firstHeading.includes(`v${VERSION}`),
-    `RELEASE_NOTES.md leads with ${JSON.stringify(firstHeading)}, which does not name v${VERSION}`,
+    firstVersionedHeading.includes(`v${VERSION}`),
+    `RELEASE_NOTES.md leads with versioned heading ${JSON.stringify(firstVersionedHeading)}, which does not name v${VERSION}`,
   );
+  assert.match(notes, /not part of v0\.3\.2/u);
 });
 
 test("the dated release log has an entry for this version, and the index links it", () => {
@@ -182,8 +186,9 @@ test("the dated release log has an entry for this version, and the index links i
   assert.ok(file, `the newest index row links no dated file: ${head}`);
   const path = join(root, "docs", "releases", file);
   assert.ok(existsSync(path), `docs/releases/${file} is linked from the index but does not exist`);
+  const datedRelease = readFileSync(path, "utf8");
   assert.ok(
-    readFileSync(path, "utf8").includes(`v${VERSION}`),
+    datedRelease.includes(`v${VERSION}`),
     `docs/releases/${file} does not name v${VERSION}`,
   );
 
@@ -196,7 +201,12 @@ test("the dated release log has an entry for this version, and the index links i
   }
 });
 
-test("the current operator packet identifies the candidate and v0.3.0 retains its historical provenance", () => {
+test("the post-tag v0.3.2 documentation is not claimed by the published archive", () => {
+  const datedRelease = read("docs", "releases", "2026-09-03.md");
+  assert.match(datedRelease, /documentation changes landed after the v0\.3\.2 tag and are not in its\s+published archive/u);
+});
+
+test("the current operator packet is frozen prerelease evidence and v0.3.0 retains historical provenance", () => {
   const path = join(root, "docs", "releases", `OPERATOR-PACKET-v${VERSION}.md`);
   assert.ok(existsSync(path), `no docs/releases/OPERATOR-PACKET-v${VERSION}.md`);
   const current = readFileSync(path, "utf8");
@@ -205,6 +215,8 @@ test("the current operator packet identifies the candidate and v0.3.0 retains it
   for (const [label, expected] of Object.entries(V032_PACKET)) {
     assert.equal(onlyPacketRow(currentRows, label), expected, `the current packet has the wrong ${label}`);
   }
+  assert.match(current, /Frozen historical prerelease evidence/u);
+  assert.match(current, /PR #134 and its terminal[\s>]+convergence work landed afterward/u);
   assert.doesNotMatch(current, /aether-agents-0\.3\.0\.tgz|6176172deb15eea57519408d93f23b3fac8ab5e2b2e541adddc34b4e5fb4c33d/);
   const packet = read("docs", "releases", "OPERATOR-PACKET-v0.3.0.md");
   assertV030PacketProvenance(packet);
@@ -215,6 +227,24 @@ test("the current operator packet identifies the candidate and v0.3.0 retains it
   assert.match(packet, /\| Historical archive \| `aether-agents-0\.3\.0\.tgz` — 739,977 bytes packed \/ 3,022,168 unpacked \/ 575 entries \|/);
   assert.match(packet, /\| Historical archive sha256 \| `70a48aca8baa8b63f551980256eafa42531cd22fc5ca1146829d31f8b4bd2e4d` \|/);
   assert.doesNotMatch(packet, /fb96ee44[^\n]*(?:ancestor of #96|ancestor of current `main`)/);
+});
+
+test("the v0.3.1 operator packet remains frozen prerelease evidence for its published tag", () => {
+  const packet = read("docs", "releases", "OPERATOR-PACKET-v0.3.1.md");
+  const rows = parsePacketRows(packet);
+  assert.equal(onlyPacketRow(rows, "Evidence state"), "`frozen-prerelease`");
+  assert.match(packet, /c4a16242ad117a499f91e3b531baa80f1a3ff0bd/u);
+  assert.match(packet, /registry\.npmjs\.org\/-\/npm\/v1\/attestations\/aether-agents@0\.3\.1/u);
+  assert.match(packet, /At candidate capture, no release archive existed/u);
+  assert.match(packet, /At candidate capture, trusted-publishing provenance was pending/u);
+
+  const index = read("docs", "releases", "README.md");
+  assert.match(index, /released \*\*v0\.3\.1\*\*: actionable\r?\n\s+Node\.js-version recovery and browser-login fallback\. Frozen prerelease packet:/u);
+  assert.match(index, /\[2026-08-29\]\(2026-08-29\.md\)/u);
+
+  const publication = read("docs", "releases", "2026-08-29.md");
+  assert.match(publication, /eca608a4d9b0ce286592c3ddd8901588a4e74475/u);
+  assert.match(publication, /sha512-sAErJLskGa6j1CTqzBXXxANlYnkIWMcUJGfKx1HLe0uqYuaXcvNQjgalexdyGgNFlK\+tloMkB7\/hOzOZrWX5pA==/u);
 });
 
 test("the operator packet fails closed on contradictory release-evidence mutations", () => {

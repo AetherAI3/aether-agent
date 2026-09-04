@@ -187,12 +187,12 @@ The repository and the published package are versioned independently.
 |---|---:|---|
 | npm `latest` | [![npm latest](https://img.shields.io/npm/v/aether-agents?label=&color=14b8a6)](https://www.npmjs.com/package/aether-agents) | The published package; the badge resolves the live dist-tag. |
 | PyPI `aether-agent` | [![PyPI latest](https://img.shields.io/pypi/v/aether-agent?label=&color=3775a9)](https://pypi.org/project/aether-agent/) | A launcher that installs and runs the npm CLI. It follows npm `latest` unless you pin one. |
-| `main` source build | **0.3.2** | This repository's source: the 0.3 workflow plus every 0.3.1 maintenance fix. |
+| `main` source build | **0.3.2** | The declared and published base plus the terminal, settings, and voice convergence tracked explicitly as [Unreleased](RELEASE_NOTES.md). |
 
 - **[Release notes](RELEASE_NOTES.md)** — one entry per release, in plain language.
-- **[Patch-note log](docs/releases/README.md)** — one dated file per release day,
-  one sentence per pull request, plus the operator packet that records the exact
-  commit, tarball digest, and evidence behind each tag.
+- **[Release log](docs/releases/README.md)** — dated candidate, publication, and
+  documentation events, plus operator packets that freeze prerelease
+  qualification and link the authoritative tag and registry evidence.
 - **[Releases and tags](https://github.com/AetherAI3/aether-agent/releases)** —
   every published version.
 

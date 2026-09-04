@@ -31,6 +31,7 @@ function validInput(): ReleaseTruthInput {
   const packet = [
     "# Operator packet — Aether Agent v0.3.0",
     "",
+    "| Evidence state | `candidate` |",
     "| Proposed tag | `v0.3.0` |",
   ].join("\n");
   const commandsDoc = [
@@ -91,6 +92,82 @@ test("version disagreement fails with exact evidence and remediation", () => {
   assert.match(finding?.evidence.join("\n") ?? "", /src\/version\.ts differs/);
   assert.match(finding?.remediation ?? "", /both lock fields/);
   assert.match(result.humanSummary.join("\n"), /remediation:/);
+});
+
+test("an Unreleased section may lead, but never trail, the current versioned release", () => {
+  const leading = validInput();
+  leading.files = {
+    ...leading.files,
+    "RELEASE_NOTES.md": "# Unreleased — targeting v0.4.0\n\n# Aether Agent v0.3.0 — release truth\n",
+  };
+  assert.equal(String(leading.files["RELEASE_NOTES.md"]).startsWith("# Unreleased"), true);
+  assert.equal(evaluateReleaseTruth(leading).checks.find((item) => item.id === "version.agreement")?.status, "pass");
+
+  const trailing = validInput();
+  trailing.files = {
+    ...trailing.files,
+    "RELEASE_NOTES.md": "# Aether Agent v0.3.0 — release truth\n\n# Unreleased — misplaced\n",
+  };
+  const finding = evaluateReleaseTruth(trailing).checks.find((item) => item.id === "version.agreement");
+  assert.equal(finding?.status, "fail");
+  assert.match(finding?.evidence.join("\n") ?? "", /places Unreleased below/u);
+
+  const duplicated = validInput();
+  duplicated.files = {
+    ...duplicated.files,
+    "RELEASE_NOTES.md": "# Unreleased — next\n\n# Aether Agent v0.3.0 — release truth\n\n# Unreleased — duplicate\n",
+  };
+  const duplicateFinding = evaluateReleaseTruth(duplicated).checks.find((item) => item.id === "version.agreement");
+  assert.equal(duplicateFinding?.status, "fail");
+  assert.match(duplicateFinding?.evidence.join("\n") ?? "", /multiple Unreleased sections/u);
+});
+
+test("operator packet evidence state must be present exactly once", () => {
+  for (const packet of [
+    "# Operator packet — Aether Agent v0.3.0\n\n| Proposed tag | `v0.3.0` |\n",
+    "# Operator packet — Aether Agent v0.3.0\n\n| Evidence state | `candidate` |\n| Evidence state | `frozen-prerelease` |\n| Proposed tag | `v0.3.0` |\n",
+    "# Operator packet — Aether Agent v0.3.0\n\n| Evidence state | `candidate` |\n| Evidence state | `candidate-ish` |\n| Proposed tag | `v0.3.0` |\n",
+  ]) {
+    const input = validInput();
+    input.files = { ...input.files, "docs/releases/OPERATOR-PACKET-v0.3.0.md": packet };
+    const finding = evaluateReleaseTruth(input).checks.find((item) => item.id === "version.agreement");
+    assert.equal(finding?.status, "fail");
+    assert.match(finding?.evidence.join("\n") ?? "", /has no valid Evidence state/u);
+  }
+});
+
+test("operator packet evidence state follows observed publication state", () => {
+  const publishedCandidate = validInput();
+  publishedCandidate.registry = {
+    state: "available",
+    value: {
+      sourceVersion: "0.3.0",
+      publishedVersions: ["0.1.0", "0.3.0"],
+      latest: "0.3.0",
+      publicClaim: { sourceVersion: "0.3.0", pinnedRegistryClaims: [] },
+    },
+  };
+  let finding = evaluateReleaseTruth(publishedCandidate).checks.find((item) => item.id === "registry.source-truth");
+  assert.equal(finding?.status, "fail");
+  assert.match(finding?.evidence.join("\n") ?? "", /requires a frozen-prerelease/u);
+
+  const publishedFrozen = validInput();
+  publishedFrozen.files = {
+    ...publishedFrozen.files,
+    "docs/releases/OPERATOR-PACKET-v0.3.0.md": String(publishedFrozen.files["docs/releases/OPERATOR-PACKET-v0.3.0.md"]).replace("`candidate`", "`frozen-prerelease`"),
+  };
+  publishedFrozen.registry = publishedCandidate.registry;
+  finding = evaluateReleaseTruth(publishedFrozen).checks.find((item) => item.id === "registry.source-truth");
+  assert.equal(finding?.status, "pass");
+
+  const unpublishedFrozen = validInput();
+  unpublishedFrozen.files = {
+    ...unpublishedFrozen.files,
+    "docs/releases/OPERATOR-PACKET-v0.3.0.md": String(unpublishedFrozen.files["docs/releases/OPERATOR-PACKET-v0.3.0.md"]).replace("`candidate`", "`frozen-prerelease`"),
+  };
+  finding = evaluateReleaseTruth(unpublishedFrozen).checks.find((item) => item.id === "registry.source-truth");
+  assert.equal(finding?.status, "fail");
+  assert.match(finding?.evidence.join("\n") ?? "", /requires a candidate/u);
 });
 
 test("required public docs must exist in the actual packed file list", () => {

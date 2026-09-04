@@ -1,24 +1,27 @@
 # Release notes
 
-Dated patch-note log for Aether Agent. One file per release day, named
-`YYYY-MM-DD.md`, each summarizing the PRs that landed that day — one sentence
-per PR.
+Dated release log for Aether Agent. Files are named `YYYY-MM-DD.md` and record
+the release, candidate, publication, or documentation events that occurred on
+that date.
 
 For the live command reference, see [COMMANDS.md](../../COMMANDS.md).
 
-Each release also carries an operator packet — `OPERATOR-PACKET-v<version>.md` —
-recording the commit the tag must point at, the packed tarball's digest and file
-manifest, the evidence gathered, and the founder-owned steps that publish it.
+Each release line also carries an operator packet —
+`OPERATOR-PACKET-v<version>.md`. Before publication it records candidate
+qualification and founder-owned publish steps; after publication it is frozen
+as prerelease evidence while the registry and tag remain authoritative.
 
 ## Index
 
-- [2026-09-03](2026-09-03.md) — **v0.3.2** patch candidate: the v0.3.1
+- [2026-09-03](2026-09-03.md) — released **v0.3.2**: the v0.3.1
   maintenance line merged back into `main`, restoring the browser-launcher
-  verification and putting the declared version ahead of the published one.
-  Packet: [OPERATOR-PACKET-v0.3.2.md](OPERATOR-PACKET-v0.3.2.md).
-- [2026-08-28](2026-08-28.md) — **v0.3.1** patch candidate: actionable
-  Node.js-version recovery and browser-login fallback. Packet:
+  verification and bringing the declared version back in line for publication.
+  Frozen prerelease packet: [OPERATOR-PACKET-v0.3.2.md](OPERATOR-PACKET-v0.3.2.md).
+- [2026-08-29](2026-08-29.md) — released **v0.3.1**: actionable
+  Node.js-version recovery and browser-login fallback. Frozen prerelease packet:
   [OPERATOR-PACKET-v0.3.1.md](OPERATOR-PACKET-v0.3.1.md).
+- [2026-08-28](2026-08-28.md) — **v0.3.1 prerelease candidate** record
+  retained separately from the August 29 publication evidence.
 - [v0.3.0 release body](RELEASE-BODY-v0.3.0.md) — publish-ready user-facing
   notes for the GitHub release. It deliberately makes no pre-publication npm
   claim; the dated publication record is added only after registry verification.
