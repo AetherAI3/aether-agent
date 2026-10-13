@@ -57,7 +57,7 @@ jobs:
       - name: Upload exact-source evidence
         id: exact_source_upload
         if: ${{ env.AETHER_LOG_ONLY_RELEASE_PR != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         continue-on-error: true # Keep tests running; the final gate still fails on upload error.
         with:
           name: aether-exact-head-test-${{ matrix.os }}-${{ github.event.pull_request.head.sha || github.sha }}
@@ -125,7 +125,7 @@ jobs:
       - name: Upload ATS execution parity evidence
         id: parity_upload
         if: ${{ env.AETHER_LOG_ONLY_RELEASE_PR != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         continue-on-error: true
         with:
           name: aether-ats-execution-parity-${{ matrix.os }}-${{ github.event.pull_request.head.sha || github.sha }}
@@ -298,7 +298,7 @@ jobs:
       - name: Upload exact-source evidence
         id: exact_source_upload
         if: ${{ env.AETHER_LOG_ONLY_RELEASE_PR != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         continue-on-error: true
         with:
           name: aether-exact-head-supply-chain-${{ github.event.pull_request.head.sha || github.sha }}
@@ -365,7 +365,7 @@ jobs:
       - name: Upload dependency-audit evidence
         id: audit_upload
         if: ${{ always() && env.AETHER_LOG_ONLY_RELEASE_PR != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         continue-on-error: true
         with:
           name: aether-dependency-audit-${{ github.event.pull_request.head.sha || github.sha }}
@@ -399,7 +399,7 @@ jobs:
       - name: Upload SBOM
         id: sbom_upload
         if: ${{ env.AETHER_LOG_ONLY_RELEASE_PR != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         continue-on-error: true
         with:
           name: aether-agents-sbom-${{ github.event.pull_request.head.sha || github.sha }}
@@ -440,7 +440,7 @@ jobs:
       - name: Upload exact-source evidence
         id: exact_source_upload
         if: ${{ env.AETHER_LOG_ONLY_RELEASE_PR != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         continue-on-error: true
         with:
           name: aether-exact-head-pypi-launcher-${{ github.event.pull_request.head.sha || github.sha }}
