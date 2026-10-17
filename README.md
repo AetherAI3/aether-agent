@@ -75,8 +75,6 @@ aether agent --test-cmd "npm test" "fix the failing test"
 
 Replace `npm test` with your project's test command. `aether agent "your task"` runs file tools and checks on your machine, with model-requested actions subject to permission checks. Inspect the result with `aether review`.
 
-Want to explore first? Use `aether agent --planning "Explain this repository and suggest a first task"` for a read-only plan.
-
 For interactive chat, run `aether`, then try `/help` or `/models`. With the default settings, signed-in chat uses the Cloud chat service; use **`aether agent "your task"`** for work in your local checkout.
 
 ### Other install options
@@ -110,6 +108,8 @@ Use `aether-agent` in place of `aether` throughout this README. The launcher ins
 
 ## What you can do
 
+The features below describe the current `main` source. Check `aether --version` and [Versions](#versions) when comparing your installation; published packages can differ from source builds.
+
 | Workflow | Start here |
 |---|---|
 | **Code and verify** | `aether agent "your task"` — search files, make edits, and run your checks. |
@@ -126,6 +126,8 @@ Use `aether-agent` in place of `aether` throughout this README. The launcher ins
 </p>
 
 ## What's new in v4.21.0
+
+These source-build highlights require v4.21.0. The [live npm badge](#versions) shows the current published CLI.
 
 - **Faster input:** described slash commands, Ctrl+R prompt search, and multiline editing with undo and yank.
 - **More control over context:** pin files, inspect what reached the model, and run a trusted skill for one local turn.
@@ -169,7 +171,7 @@ A dated, sanitized offline fallback snapshot is available as [HTML](docs/model-c
 |---|---|
 | Open interactive chat and help | `aether`, then `/help` |
 | Run a coding task in your checkout | `aether agent "your task"` |
-| Plan without editing files | `aether agent --planning "your task"` |
+| Plan without editing files (v4.21.0) | `aether agent --planning "your task"` |
 | Continue a project session | `aether sessions` |
 | Review changes and verification | `aether review` |
 | Connect or diagnose tools | `aether mcp`, `aether skills` |
@@ -181,7 +183,7 @@ A dated, sanitized offline fallback snapshot is available as [HTML](docs/model-c
 Use `aether help <command>` or the [complete command reference](docs/generated/commands.md) for flags and slash commands.
 
 <details>
-<summary>Longer tasks, planning, and verification</summary>
+<summary>Prompt files and planning (v4.21.0), plus verification</summary>
 
 Save a multiline specification in `task.md` and run `aether agent --prompt-file task.md`. You can also pipe UTF-8 text to `aether agent --prompt-file -`. The whole input is one literal coding task. [Input limits and flag conflicts](COMMANDS.md#aether-code-task--autonomous-coding-agent)
 
@@ -260,7 +262,7 @@ ATS is the trading adapter for account agents. `aether agent create ATS Atlas` s
 | Browser observation | Read-only view; requires a separately running Agent Browser runtime. |
 | Market-data execution and orders | Production runtime wiring and managed-agent order execution are unavailable. |
 
-ATS requires the separate Python engine and policy consent. Setup and observation do not enable model-controlled broker actions or automatic live orders.
+ATS requires the separate Python engine and policy consent. This build does not yet provide model-controlled broker actions or automatic live orders. Setup and observation do not grant trading authority.
 
 [Account agents and ATS guide](docs/ACCOUNT_AGENTS_AND_ATS.md) · [ATS policy](ATS_ACCEPTABLE_USE_POLICY.md) · [Release qualification](docs/releases/OPERATOR-PACKET-v4.20.0.md)
 
