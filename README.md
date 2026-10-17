@@ -9,84 +9,129 @@
 An open-source coding agent that reads your repository, makes changes, and runs your checks.
 Choose hosted models or local Ollama. Keep working in the same terminal.
 
-[![CI](https://github.com/AetherAI3/aether-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AetherAI3/aether-agent/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/aether-agents?label=npm)](https://www.npmjs.com/package/aether-agents)
-[![PyPI](https://img.shields.io/pypi/v/aether-agent?label=PyPI&color=3775a9)](https://pypi.org/project/aether-agent/)
-[![Node 24+](https://img.shields.io/badge/node-24%2B-14b8a6)](https://nodejs.org/)
-[![License](https://img.shields.io/badge/license-Apache--2.0-06b6d4)](LICENSE)
+[![CI on main](https://img.shields.io/github/actions/workflow/status/AetherAI3/aether-agent/ci.yml?branch=main&style=flat-square&label=CI&logo=github&labelColor=17222f)](https://github.com/AetherAI3/aether-agent/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/aether-agents?style=flat-square&label=npm&logo=npm&labelColor=17222f&color=14b8a6)](https://www.npmjs.com/package/aether-agents)
+[![PyPI launcher version](https://img.shields.io/pypi/v/aether-agent?style=flat-square&label=PyPI&logo=python&logoColor=white&labelColor=17222f&color=3775a9)](https://pypi.org/project/aether-agent/)
+[![Node.js 24 or newer required](https://img.shields.io/badge/Node.js-24%2B-14b8a6?style=flat-square&logo=nodedotjs&logoColor=white&labelColor=17222f)](https://nodejs.org/en/download)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-06b6d4?style=flat-square&labelColor=17222f)](LICENSE)
 
-[Quickstart](#quickstart) · [v4.21.0 update](#whats-new-in-v4210) · [Features](#what-you-can-do) · [Models](#choose-your-model) · [Terminal](#chat-and-terminal) · [Docs](#documentation) · [Contribute](#build-and-contribute)
-
-<img width="820" alt="Aether Agent startup, command help, and model picker" src="assets/aether-agent-demo.gif" />
-
-<sub>Install → launch → /help → /models</sub>
+[**Install**](#quickstart) · [**Sign in**](#2-sign-in) · [**Local Ollama**](#choose-your-model) · [Commands](#everyday-commands) · [Docs](#documentation) · [Contribute](#build-and-contribute)
 
 </div>
 
 <!-- SOURCE-0.3-WORKFLOWS:START -->
 
+## Quickstart
+
+Works on **Windows, macOS, and Linux**. Install [Node.js 24 or newer](https://nodejs.org/en/download), which includes npm, then open your terminal (PowerShell on Windows).
+
+### 1. Install
+
+```sh
+npm install -g aether-agents@latest --ignore-scripts
+aether --version
+```
+
+The npm package is **`aether-agents`**; the command is **`aether`**. Already installed? The same install command updates it. [Other install options ↓](#other-install-options)
+
+### 2. Sign in
+
+For hosted models, run:
+
+```sh
+aether auth login
+```
+
+Open the sign-in page shown in your terminal, enter the displayed code if asked, and approve access. The CLI opens your browser automatically when available; wait for **`✓ Logged in.`** before continuing.
+
+```sh
+aether auth status
+aether models
+```
+
+`auth status` checks your sign-in; `models` lists the models available to your account. **Prefer local models?** Skip sign-in and follow [Local Ollama](#choose-your-model)—no Aether account required.
+
+<details>
+<summary>Browser did not open, or signing in over SSH?</summary>
+
+```sh
+aether auth login --no-browser
+```
+
+Open the printed URL on a device with a browser and enter the code. Keep the terminal running while you approve. If the code expires, run the command again.
+
+For token-based automation, see the [authentication reference](COMMANDS.md#aether-auth-subcommand--credentials).
+
+</details>
+
+### 3. Run your first task
+
+Move into your project folder (replace `your-project` with its path), then ask for a change:
+
+```sh
+cd your-project
+aether agent --test-cmd "npm test" "fix the failing test"
+```
+
+Replace `npm test` with your project's test command. `aether agent "your task"` runs file tools and checks on your machine, with model-requested actions subject to permission checks. Inspect the result with `aether review`.
+
+Want to explore first? Use `aether agent --planning "Explain this repository and suggest a first task"` for a read-only plan.
+
+For interactive chat, run `aether`, then try `/help` or `/models`. With the default settings, signed-in chat uses the Cloud chat service; use **`aether agent "your task"`** for work in your local checkout.
+
+### Other install options
+
+<details>
+<summary>Python / pipx</summary>
+
+Requires **Python 3.10+, pipx, and Node.js 24+ with npm on PATH**. This installs a launcher for the same CLI:
+
+```sh
+pipx install aether-agent
+aether-agent auth login
+aether-agent --version
+```
+
+Use `aether-agent` in place of `aether` throughout this README. The launcher installs the CLI on first use if needed; `aether-agent self install` updates the managed CLI. [Python setup and troubleshooting](packages/pypi-cli/README.md)
+
+</details>
+
+[Download releases and view tags](https://github.com/AetherAI3/aether-agent/releases) · [Build from source](#build-and-contribute) · [Published and source versions](#versions)
+
+### Need a hand?
+
+| What you see | What to do |
+|---|---|
+| `node` or `npm` is missing, or Node is too old | Install [Node.js 24+](https://nodejs.org/en/download), reopen your terminal, and check `node --version` and `npm --version`. |
+| `aether` is not found after installing | Reopen your terminal and check npm's global bin directory is on PATH: the `bin` subdirectory of `npm prefix -g` on macOS/Linux, or the prefix itself on Windows. With pipx, use `aether-agent`. |
+| Browser login does not open | Run `aether auth login --no-browser` and use the printed URL and code. |
+| Signed in, but requests still fail | Run `aether auth status`, then `aether doctor --live`. An old `AETHER_TOKEN` environment variable overrides a saved login; see [auth troubleshooting](COMMANDS.md#aether-auth-subcommand--credentials). |
+| Unsure what is configured | Run `aether doctor` for local diagnostics or `aether help <command>` for usage. |
+
 ## What you can do
 
-| Workflow | What you get |
+| Workflow | Start here |
 |---|---|
-| **Code and verify** | Repository search, file edits, Git tools, and checks with real exit codes. |
+| **Code and verify** | `aether agent "your task"` — search files, make edits, and run your checks. |
 | **Chat and use your shell** | Run `!commands` between messages; open an interactive terminal on Linux. [Terminal guide ↓](#chat-and-terminal) |
-| **Choose your model** | Hosted account models or local Ollama with no account required. [Model setup ↓](#choose-your-model) |
+| **Choose your model** | Hosted account models or local Ollama. [Model setup ↓](#choose-your-model) |
 | **Continue your work** | Resume project sessions, review changes, and export redacted handoffs. [Commands ↓](#everyday-commands) |
 | **Connect tools** | MCP servers, agent skills, and local development previews. [Command reference](docs/generated/commands.md) |
 | **Use account agents** | Shared Online conversations and guided ATS workspace setup. [Account agents ↓](#account-agents-and-ats) |
 
-## Quickstart
-
-**Node.js 24+ required.** Run inside the repository you want to work on:
-
-```bash
-npm install -g aether-agents@latest --ignore-scripts
-aether auth login
-aether
-```
-
-Type `/help` for commands or `/models` to choose a model. For a coding task with a specific check:
-
-```bash
-aether agent --test-cmd "npm test" "fix the failing test"
-```
-
-For a multiline task, save the specification in `task.md` and run
-`aether agent --prompt-file task.md`. You can also pipe UTF-8 text to
-`aether agent --prompt-file -` (for example,
-`cat task.md | aether agent --prompt-file -`). The whole input is one literal
-coding task; see [prompt input rules](COMMANDS.md#aether-code-task--autonomous-coding-agent)
-for the size limit and flag conflicts.
-
-To inspect the current checkout and receive a plan without changing it, run
-`aether agent --planning "outline the migration"`, or use `/plan <topic>` in a
-local interactive session. Planning permits only file reading, directory
-listing, and repository search; it skips worktree creation and verification.
-Save a plan or execute a phase later through the explicit goal controls.
-The cloud chat route refuses `/plan` because its tools execute on the server.
-
-A completed check records its exit code. Changing the repository makes that verification stale until you run it again.
-
-The [npm version badge](#versions) shows the published CLI version. Run
-`aether --version` to check your installation. For the latest published build,
-use `npm install -g aether-agents@latest --ignore-scripts`.
-
-Prefer Python? `pipx install aether-agent` installs a launcher for the same CLI. [Python setup](packages/pypi-cli/README.md).
+<p align="center">
+  <img width="820" alt="Aether Agent startup, command help, and model picker" src="assets/aether-agent-demo.gif" />
+  <br />
+  <sub>Interactive console → /help → /models</sub>
+</p>
 
 ## What's new in v4.21.0
 
-- **Find and enter commands faster.** The idle composer describes slash
-  commands, searches earlier prompts with Ctrl+R, and supports multiline
-  editing with undo and yank.
-- **Keep task context under your control.** Pin bounded files for a coding turn,
-  inspect what reached the model, and run a trusted skill for one local turn.
-- **Use safer task inputs.** `aether agent --prompt-file` accepts one literal
-  specification, while planning runs with read-only host tools. Tool denials
-  carry the operator's feedback into the failed result.
+- **Faster input:** described slash commands, Ctrl+R prompt search, and multiline editing with undo and yank.
+- **More control over context:** pin files, inspect what reached the model, and run a trusted skill for one local turn.
+- **Clearer task controls:** literal prompt files, read-only planning, and feedback when you decline a tool call.
 
-See the [full v4.21.0 release notes](RELEASE_NOTES.md)
-for fixes, install options, and qualification limits.
+[Full release notes](RELEASE_NOTES.md) · [Version and release status](#versions)
 
 ## Choose your model
 
@@ -94,16 +139,18 @@ for fixes, install options, and qualification limits.
 |---|---|
 | Sign in with `aether auth login`. | No Aether account required. |
 | `aether models` shows your account's available models. | Use a model installed at your Ollama endpoint. |
-| Coding tasks send prompts and selected context to Aether; tools and checks run in your checkout through `aether agent`. | Inference stays at your configured endpoint, which defaults to loopback. |
+| With `aether agent "your task"`, prompts and selected context go to Aether; tools and checks run in your checkout. | Inference stays at your configured endpoint, which defaults to loopback. |
 
-To use [Ollama](https://ollama.com/), install and start it, then run:
+For **local Ollama**, install and start [Ollama](https://ollama.com/), then run:
 
-```bash
-aether setup --local
+```sh
 aether local pull qwen2.5-coder:7b --yes
 aether local use qwen2.5-coder:7b --yes
+aether setup --local
 aether agent --local --test-cmd "npm test" "fix the failing test"
 ```
+
+The pull command downloads the model. Choose a model that fits your machine and replace the test command for your project. Setup and model selection do not change your backend; keep **`--local`** on coding tasks to select Ollama explicitly.
 
 If you set `OLLAMA_HOST` to a remote endpoint, prompts go there. Network tools have their own permissions.
 
@@ -116,72 +163,13 @@ A dated, sanitized offline fallback snapshot is available as [HTML](docs/model-c
 
 </details>
 
-## Chat and terminal
-
-In the local coding console, switch between conversation and your own commands:
-
-```text
-Explain the failing test
-!npm test
-/shell-result
-/shell-result lines
-/shell-result drop 8-10
-/shell-result send
-```
-
-`!commands` run locally with **zero model API calls**. Output streams into the console with an exit code. `/shell-result` stages and previews the exact bounded attachment, including the command, captured directory, exit status, and any omitted bytes. Edit it with `drop`, `replace`, `mask`, or `redact`, then choose `/shell-result send` or `/shell-result cancel`. Redaction helps identify common secrets but does not guarantee their removal. A later shell command cannot change the staged attachment. For pipes and JSON sessions, `/shell-result send` is the explicit one-step send form.
-
-| Platform | Local shell | Interactive programs |
-|---|---|---|
-| **Linux** | Persistent Bash: keeps cwd, exports, and functions. | `/terminal python3` starts a terminal with input and resize support. Requires Python 3 and TTY input/output. |
-| **macOS** | Persistent Bash: keeps cwd, exports, and functions. | Use an external terminal. |
-| **Windows** | One-shot `cmd.exe` by default. `/shell-profile use powershell` explicitly starts a persistent PowerShell session for cwd, environment values, and functions. | Use an external terminal. |
-
-On Windows, run `/shell-profile list` to see the installed executable and version before choosing PowerShell. `/shell-profile status` shows the active profile and cwd; `/shell-profile use cmd` returns to the compatibility profile. Switching or `/shell-reset` discards shell state without replaying commands. PowerShell commands keep their own quoting and syntax; Bash commands are not translated.
-
-**Shell:** Ctrl+C cancels the command; `/shell-reset` starts fresh after cancellation or failure. Commands wait for an active model/tool turn to finish.
-**Linux terminal:** Ctrl+] returns to chat; `/terminal-attach` reconnects; `/terminal-stop` ends it. Local tools pause while that terminal is running, including when detached.
-
-Shell and terminal output stays out of saved chat history and automatic hosted prompts. Account-agent DMs use a separate console. [Full shell and Linux guide](docs/LOCAL_SHELL_SESSION.md).
-
-In the raw terminal composer, Ctrl+J adds a newline, Enter submits, Ctrl+_
-undoes recent edits, and Ctrl+Y restores killed text. The single-row input
-shows newlines as `⏎` with a line count. If your terminal sends LF for Enter,
-set `aether config set lfSubmits true` to keep LF as submit. [Composer details](COMMANDS.md#aether--interactive-repl).
-
-Ctrl+R searches this workspace's submitted prompts newest first. Type to narrow
-matches, repeat Ctrl+R for older ones, Enter to insert a match for editing, or
-Escape to restore your draft. `AETHER_NO_HISTORY=1` disables prompt history.
-
-If you decline a model-requested tool call, you can add one short instruction
-for that denial, such as `Use the offline unit suite.` The tool stays blocked;
-the instruction is returned once with its failed result. Enter skips the note,
-and Escape cancels it. [Approval details](COMMANDS.md#aether-config-showgetset--local-settings).
-
-Type `/` at an idle raw terminal prompt to browse described commands. Use
-arrows or Tab to choose, Enter to insert editable command text, then Enter
-again to run it; Escape restores your earlier draft.
-
-On a local model, `/skill user/fix-ci Investigate the failing unit test` uses
-that trusted skill for one idle task, then restores your normal skill defaults.
-The task text stays literal; the run header shows the resolved skill digest and
-host tool limits. Busy, queued, line-input, `--no-skills`, and server-executed
-cloud chat invocations are refused. [Skill details](COMMANDS.md#aether-skills-subcommand--inspect-trust-and-manage-agent-skills).
-
-Use `/pin src/guide.md` to attach that file's complete, bounded UTF-8 content
-to each admitted coding turn. The file is read from the execution checkout, so
-a worktree turn uses its own copy. `/context` shows what the last turn actually
-included, with digests and omissions but no file bodies; `/context next <task>`
-previews a draft, and `/context content src/guide.md` explicitly previews local
-admitted content. `/drop src/guide.md` stops automatic inclusion on later turns.
-Server-executed cloud chat reports pin delivery as unsupported when the local
-host cannot inspect it. [Limits and details](COMMANDS.md#context--limits).
-
 ## Everyday commands
 
 | Goal | Command |
 |---|---|
-| Run a coding task | `aether agent "your task"` |
+| Open interactive chat and help | `aether`, then `/help` |
+| Run a coding task in your checkout | `aether agent "your task"` |
+| Plan without editing files | `aether agent --planning "your task"` |
 | Continue a project session | `aether sessions` |
 | Review changes and verification | `aether review` |
 | Connect or diagnose tools | `aether mcp`, `aether skills` |
@@ -190,28 +178,80 @@ host cannot inspect it. [Limits and details](COMMANDS.md#context--limits).
 | Configure the CLI | `aether settings` |
 | Preview and approve a branch and PR | `aether ship` |
 
-Use `aether help <command>` or the [complete command reference](docs/generated/commands.md) for flags and slash commands. PC diagnostics and approved browser helpers have platform-specific limits; see the [PC guide](docs/pc-capability-plane.md).
+Use `aether help <command>` or the [complete command reference](docs/generated/commands.md) for flags and slash commands.
+
+<details>
+<summary>Longer tasks, planning, and verification</summary>
+
+Save a multiline specification in `task.md` and run `aether agent --prompt-file task.md`. You can also pipe UTF-8 text to `aether agent --prompt-file -`. The whole input is one literal coding task. [Input limits and flag conflicts](COMMANDS.md#aether-code-task--autonomous-coding-agent)
+
+Planning permits only file reading, directory listing, and repository search; it skips worktree creation and verification. Use `--planning` with a task, or `/plan <topic>` in a local interactive session. Cloud chat refuses `/plan` because its tools execute on the server. Save a plan or execute a phase later through the explicit goal controls.
+
+A completed check records its exit code. Changing the repository makes that verification stale until you run it again.
+
+</details>
+
+## Chat and terminal
+
+Run your own commands between messages, then choose whether to share their output:
+
+```text
+!npm test
+/shell-result
+/shell-result send
+```
+
+`!commands` run locally with **zero model API calls**. Output streams into the console with an exit code. `/shell-result` lets you preview and edit the bounded attachment; `send` shares it with the model and `cancel` discards the draft. Shell and terminal output stays out of saved chat history and automatic hosted prompts until explicitly shared.
+
+| Platform | Local shell | Interactive programs |
+|---|---|---|
+| **Linux** | Persistent Bash: keeps cwd, exports, and functions. | `/terminal python3` supports input and resize. Requires Python 3 and TTY input/output. |
+| **macOS** | Persistent Bash: keeps cwd, exports, and functions. | Use an external terminal. |
+| **Windows** | One-shot `cmd.exe` by default. Use `/shell-profile use powershell` for persistent cwd, environment values, and functions. | Use an external terminal. |
+
+**Shell:** Ctrl+C cancels a command; `/shell-reset` starts fresh. Commands wait for an active model/tool turn to finish.
+**Linux terminal:** Ctrl+] returns to chat; `/terminal-attach` reconnects; `/terminal-stop` ends it. Local tools pause while that terminal is running, including when detached.
+
+<details>
+<summary>Editing, history, context, and shell controls</summary>
+
+| In the interactive console | Control |
+|---|---|
+| Browse described commands | Type `/`; arrows or Tab select, Enter inserts, Enter again runs. Escape restores your draft. |
+| Write a multiline prompt | Ctrl+J adds a newline; Enter submits. Ctrl+_ undoes; Ctrl+Y restores killed text. |
+| Search earlier prompts | Ctrl+R searches this workspace; type to narrow, Ctrl+R for older matches, Enter to insert, Escape to cancel. |
+| Attach or remove a file | `/pin src/guide.md` and `/drop src/guide.md` |
+| Inspect model context | `/context` shows the last turn; `/context next <task>` previews a draft. |
+| Use one trusted skill | `/skill user/fix-ci Investigate the failing unit test` on a local model |
+
+The editing shortcuts and picker require the raw terminal composer. Newlines appear as `⏎` with a line count. If your terminal sends LF for Enter, set `aether config set lfSubmits true`. `AETHER_NO_HISTORY=1` disables prompt history. [Composer details](COMMANDS.md#aether--interactive-repl)
+
+Pinned files are read from the execution checkout, including its worktree when used. `/context` lists digests and omissions without file bodies; `/context content src/guide.md` explicitly previews admitted local content. Cloud chat cannot confirm local pin delivery. [Context limits](COMMANDS.md#context--limits)
+
+A one-turn skill restores your normal defaults afterward and shows its digest and host tool limits. Busy, queued, line-input, `--no-skills`, and Cloud chat invocations are refused. [Skill details](COMMANDS.md#aether-skills-subcommand--inspect-trust-and-manage-agent-skills)
+
+For shell attachments, use `/shell-result lines`, then `drop`, `replace`, `mask`, or `redact` before sending. Review the exact command, captured directory, exit status, and omitted bytes; redaction does not guarantee secret removal. A later shell command cannot change the staged attachment. For pipes and JSON sessions, `/shell-result send` is the explicit one-step send form.
+
+On Windows, `/shell-profile list` shows installed shells and versions, `/shell-profile status` shows the active profile and cwd, and `/shell-profile use cmd` restores the compatibility profile. Switching or resetting discards state without replaying commands. PowerShell keeps its own syntax; Bash commands are not translated.
+
+When declining a model-requested tool call, add a short instruction such as `Use the offline unit suite.` It is returned once with the failed result; the tool stays blocked. Enter skips the note and Escape cancels it. [Approval details](COMMANDS.md#aether-config-showgetset--local-settings)
+
+</details>
+
+Account-agent DMs use a separate console. [Full shell and Linux guide](docs/LOCAL_SHELL_SESSION.md) · [PC and browser guide](docs/pc-capability-plane.md)
 
 ## Account agents and ATS
 
-Use the same managed agents and Online conversations from your terminal:
+Use your managed agents and shared Online conversations from the terminal:
 
-```bash
+```sh
 aether agent list
 aether agent chat
 ```
 
-`aether agent list` and `show` report fresh registry, DM, and model/UVT
-readiness for the signed-in account. `aether doctor --live` checks the same
-read-only Cloud contract; plain `aether doctor` leaves account readiness
-unverified. A saved DM is reported as admitted only when Cloud confirms
-message admission.
-In `aether agent chat`, in-chat help lists controls for the selected agent and
-can refresh the shared conversation. The header shows Cloud DM sync
-separately from ATS local setup. Transcript messages show their time and any
-reported admission state; a saved message is not an admitted run.
+`list` and `show` report account readiness; `aether doctor --live` checks the same read-only Cloud contract. In-chat help lists controls for the selected agent and can refresh its shared conversation. A saved message counts as admitted only when Cloud confirms admission.
 
-ATS is the trading adapter for account agents. Create a workspace with `aether agent create ATS Atlas`; guided setup covers memory, strategies, and data settings.
+ATS is the trading adapter for account agents. `aether agent create ATS Atlas` starts guided workspace setup for memory, strategies, and data settings.
 
 | Capability | Current status |
 |---|---|
@@ -220,7 +260,7 @@ ATS is the trading adapter for account agents. Create a workspace with `aether a
 | Browser observation | Read-only view; requires a separately running Agent Browser runtime. |
 | Market-data execution and orders | Production runtime wiring and managed-agent order execution are unavailable. |
 
-ATS requires the separate Python engine and policy consent. This build does not yet provide model-controlled broker actions or automatic live orders. Setup and observation do not grant trading authority.
+ATS requires the separate Python engine and policy consent. Setup and observation do not enable model-controlled broker actions or automatic live orders.
 
 [Account agents and ATS guide](docs/ACCOUNT_AGENTS_AND_ATS.md) · [ATS policy](ATS_ACCEPTABLE_USE_POLICY.md) · [Release qualification](docs/releases/OPERATOR-PACKET-v4.20.0.md)
 
@@ -230,12 +270,19 @@ ATS requires the separate Python engine and policy consent. This build does not 
 
 [**Aether Code**](https://app.aethersystems.net/) is the browser coding app alongside Web Chat and Design Lab. It uses the same Aether account; the CLI also works independently with local Ollama. Coding sessions stay on their host, while managed agents share their Online conversations.
 
-**Remote viewing (`aether rc`) is included in v4.20.0.** A live Cloud viewer journey (Windows and Linux hosts, phone viewer) was recorded on 2026-10-06. `aether rc start` requests a separate owner-scoped RC identity and does not require operator device enrollment; an ordinary-account deployed journey still needs qualification. It is designed to let a browser or phone watch a redacted terminal run through a link or QR code. The viewer has observation access only. [Remote viewing status and controls](docs/REMOTE_VIEWING.md).
+**Remote viewing (`aether rc`)** lets a browser or phone observe a redacted terminal run through a link or QR code. It requests a separate owner-scoped RC identity without operator device enrollment; viewers have observation access only.
+
+<details>
+<summary>Remote viewing qualification</summary>
+
+Remote viewing is included in v4.20.0. A live Cloud viewer journey with Windows and Linux hosts and a phone viewer was recorded on 2026-10-06. An ordinary-account deployed journey still needs qualification. [Remote viewing status and controls](docs/REMOTE_VIEWING.md)
+
+</details>
 
 ## Privacy and control
 
 - **You choose the workspace.** File tools enforce its boundaries. Shell commands run with your user's permissions; the workspace directory is not an OS sandbox.
-- **You control execution.** Model tools pass host permission gates. Running your own shell command does not authorize future model actions.
+- **You control local execution.** Model tools in `aether agent "your task"` pass host permission gates. Running your own shell command does not authorize future model actions.
 - **You choose what to share.** Hosted coding sends task context to Aether. Local Ollama uses your configured endpoint. Shell output requires explicit sharing; credentials and session records live outside the repository.
 - **You review before publishing.** `aether ship` shows the branch, commit, destination, and PR plan before approval. `--yes` alone cannot authorize publication.
 
@@ -243,9 +290,11 @@ ATS requires the separate Python engine and policy consent. This build does not 
 
 ## Documentation
 
-| Start here | Reference |
+| Find help with | Guide |
 |---|---|
+| Sign-in and token automation | [Authentication](COMMANDS.md#aether-auth-subcommand--credentials) |
 | Commands and configuration | [Command reference](docs/generated/commands.md) |
+| Python launcher | [pipx setup and diagnostics](packages/pypi-cli/README.md) |
 | Shell and Linux terminal | [Local shell guide](docs/LOCAL_SHELL_SESSION.md) |
 | Account agents and ATS | [Setup, browser controls, and execution status](docs/ACCOUNT_AGENTS_AND_ATS.md) |
 | PC and browser capabilities | [PC guide](docs/pc-capability-plane.md) |
@@ -257,12 +306,12 @@ ATS requires the separate Python engine and policy consent. This build does not 
 
 Build from source with Node.js 24+:
 
-```bash
+```sh
 git clone https://github.com/AetherAI3/aether-agent.git
 cd aether-agent
 npm ci --ignore-scripts
 npm run build
-npm link
+npm link --ignore-scripts
 ```
 
 Start with [CONTRIBUTING.md](CONTRIBUTING.md) for the repository map, development workflow, and required checks. Bug reports and feature requests go to [GitHub issues](https://github.com/AetherAI3/aether-agent/issues).
@@ -270,7 +319,7 @@ Start with [CONTRIBUTING.md](CONTRIBUTING.md) for the repository map, developmen
 <details>
 <summary>Development checks</summary>
 
-```bash
+```sh
 npm run typecheck
 npm test
 npm run smoke
@@ -288,8 +337,8 @@ The runtime bundles reviewed ATS adapter code and pinned browser/context depende
 
 | Install | Version | What it is |
 |---|---:|---|
-| npm `latest` | [![npm latest](https://img.shields.io/npm/v/aether-agents?label=&color=14b8a6)](https://www.npmjs.com/package/aether-agents) | Published CLI; the badge resolves the live dist-tag. |
-| PyPI `aether-agent` | [![PyPI latest](https://img.shields.io/pypi/v/aether-agent?label=&color=3775a9)](https://pypi.org/project/aether-agent/) | Python launcher for npm `latest`, unless pinned. |
+| npm `latest` | [![npm latest](https://img.shields.io/npm/v/aether-agents?style=flat-square&label=&color=14b8a6)](https://www.npmjs.com/package/aether-agents) | Published CLI; the badge resolves the live dist-tag. |
+| PyPI `aether-agent` | [![PyPI latest](https://img.shields.io/pypi/v/aether-agent?style=flat-square&label=&color=3775a9)](https://pypi.org/project/aether-agent/) | Python launcher for npm `latest`, unless pinned or an existing CLI is on PATH. |
 | `main` source build | **4.21.0** | See the [v4.21.0 notes](RELEASE_NOTES.md) and [operator packet](docs/releases/OPERATOR-PACKET-v4.21.0.md). |
 
 [Release notes](RELEASE_NOTES.md) · [Release log](docs/releases/README.md) · [Releases and tags](https://github.com/AetherAI3/aether-agent/releases)

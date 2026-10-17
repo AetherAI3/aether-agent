@@ -407,26 +407,47 @@ aether models use sonnet
 Lists only the orchestrators (Neo / Kronus), filtered from the same catalog.
 
 ### `aether auth <subcommand>` — credentials
-Modeled on GitHub's `gh auth`. One credential for the CLI, desktop, and web.
+Sign in with your Aether account to use hosted models.
 `aether login` / `aether logout` are aliases for `auth login` / `auth logout`.
 
 | Subcommand | Does |
 |---|---|
-| `aether auth login` | Default: open `aethersystems.net/platform`, paste the CLI token. |
+| `aether auth login` | Open the device-approval page, wait for browser approval, then save the CLI credential. |
 | `aether auth logout` | Clear the stored credential (best-effort server notify). |
-| `aether auth status` | Show login state: token type (API token `aek_` vs session), masked token, base URL, tier. |
-| `aether auth token` | Print the stored token (for scripts / CI). |
+| `aether auth status` | Verify the active credential and show its source, type, API URL, and available account/model details without printing the token. |
+| `aether auth token` | Print the active token (for scripts / CI). |
 | `aether auth refresh` | Refresh a session token (API tokens don't expire). |
 
+The default login prints a URL and a short code. Approve the request in the
+opened browser; if you open the printed URL yourself, enter the displayed
+code. Keep the terminal open until it reports `Logged in.` No token needs to
+be copied back into the terminal.
+
+```bash
+aether auth login
+aether auth status
+aether models
+```
+
 `auth login` flags:
+
 | Flag | Meaning |
 |---|---|
-| *(none)* | Browser OAuth: open the platform, paste the token. |
+| *(none)* | Request a device code, open the approval page, and wait for approval. |
 | `--with-token` | Read the token from **stdin** (`aether auth login --with-token < token.txt`). |
-| `--token <t>` | Store a token directly. |
+| `--token <t>` | Store a token directly; prefer `--with-token` to keep it out of command-line arguments and shell history. |
 | `--username <u> --password <p>` | Headless credential login. |
 | `--license-key <k>` | Supply a license key alongside credentials. |
-| `--no-browser` | Print the URL instead of opening a browser. |
+| `--no-browser` | Print the URL and code without opening a browser; approve from another browser while the CLI waits. |
+
+Token-input modes store the supplied credential; run `aether auth status`
+afterward to verify it. Status exits `0` only when verified; `--json` returns
+credential diagnostics without token contents. A rejected credential, denied
+account access, and an unavailable server are reported separately.
+
+If a new login still fails, check the credential source in `aether auth status`:
+`AETHER_TOKEN` overrides saved logins in new processes. Follow the displayed
+recovery command, or use `aether doctor --live` for broader connection checks.
 
 ### `aether audit [limit]` — recent receipts
 Lists recent chain-of-custody entries for your account (default 50). Each row:
